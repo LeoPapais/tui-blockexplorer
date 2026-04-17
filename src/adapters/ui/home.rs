@@ -18,6 +18,7 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{Block, Borders, Paragraph},
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
@@ -116,23 +117,62 @@ fn format_u64(n: u64) -> String {
     out
 }
 
+/// Receiving end of the channel that feeds the Home screen with fresh
+/// view-model snapshots. Constructed via [`home_feed`].
+pub struct HomeFeed {
+    rx: UnboundedReceiver<HomeViewModel>,
+}
+
+/// Sending end of the channel. Owned by the runtime's background
+/// refresh task.
+#[derive(Clone)]
+pub struct HomeFeedSender {
+    tx: UnboundedSender<HomeViewModel>,
+}
+
+impl HomeFeedSender {
+    /// Push an update onto the feed. Errors mean the receiver was
+    /// dropped (the screen is gone), in which case the runtime task
+    /// should terminate. The returned boxed view is the one that
+    /// failed to deliver, useful when callers want to log it.
+    pub fn send(&self, view: HomeViewModel) -> Result<(), Box<HomeViewModel>> {
+        self.tx.send(view).map_err(|e| Box::new(e.0))
+    }
+}
+
+/// Build a new `(HomeFeed, HomeFeedSender)` pair.
+#[must_use]
+pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
+    let (tx, rx) = unbounded_channel();
+    (HomeFeed { rx }, HomeFeedSender { tx })
+}
+
 /// Screen-level wrapper around [`render`].
 ///
-/// Holds the current [`HomeViewModel`] and routes key events to
-/// [`Command`]s. This phase of the runtime serves the view model from
-/// hardcoded data set at construction; phase 2 of the plan replaces the
-/// constructor with one that owns a `HomeSession` and subscribes to a
-/// background refresher task.
+/// Holds the current [`HomeViewModel`] and optionally a [`HomeFeed`]
+/// that delivers updates from a background refresher task. See
+/// `plan/14-config-and-credentials.md` section 3.
 pub struct HomeScreen {
     view: HomeViewModel,
+    feed: Option<HomeFeed>,
 }
 
 impl HomeScreen {
-    /// Build a `HomeScreen` that renders whatever [`HomeViewModel`] it
-    /// receives.
+    /// Build a `HomeScreen` that renders a fixed view model with no
+    /// background updates.
     #[must_use]
     pub fn new(view: HomeViewModel) -> Self {
-        Self { view }
+        Self { view, feed: None }
+    }
+
+    /// Build a `HomeScreen` that starts with `initial` and then
+    /// absorbs updates delivered through `feed` on every tick.
+    #[must_use]
+    pub fn with_feed(initial: HomeViewModel, feed: HomeFeed) -> Self {
+        Self {
+            view: initial,
+            feed: Some(feed),
+        }
     }
 
     /// Placeholder view-model used by `cargo run -- --demo` until the
@@ -183,5 +223,22 @@ impl Screen for HomeScreen {
             KeyCode::Esc => Command::Pop,
             _ => Command::None,
         }
+    }
+
+    fn tick(&mut self) -> Command {
+        if let Some(feed) = self.feed.as_mut() {
+            loop {
+                match feed.rx.try_recv() {
+                    Ok(update) => self.view = update,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        // The sender is gone; stop trying.
+                        self.feed = None;
+                        break;
+                    }
+                }
+            }
+        }
+        Command::None
     }
 }

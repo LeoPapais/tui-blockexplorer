@@ -8,5 +8,5 @@
 pub mod home;
 pub mod screen;
 
-pub use home::HomeScreen;
+pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
 pub use screen::{Command, Screen, ScreenStack};

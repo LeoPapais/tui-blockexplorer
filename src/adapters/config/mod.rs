@@ -1,4 +1,8 @@
 //! Config adapter.
 //!
-//! Reads and writes `~/.config/blockexplorer-tui/config.toml` via the
-//! `directories` crate. Implements `ConfigPort`.
+//! Hosts ChainRegistry implementations and (in a later plan) the
+//! real TOML config adapter that implements `ConfigPort`.
+
+pub mod chain_registry;
+
+pub use chain_registry::InMemoryChainRegistry;
