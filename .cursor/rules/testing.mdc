@@ -1,0 +1,70 @@
+---
+description: Testing strategy. TDD for functional tests, BDD for e2e. No live network in tests.
+globs:
+alwaysApply: true
+---
+
+# Testing
+
+The project uses three layers of tests. All of them run without network access.
+
+## Layers
+
+- **E2E (BDD)**: `cucumber` crate. One `.feature` file per screen under
+  `tests/e2e/features/`. Step definitions under `tests/e2e/steps/`. A `World`
+  struct under `tests/e2e/world.rs` holds stubbed ports and the in-memory screen
+  stack. Scenarios walk the application the way a user would.
+- **Functional (TDD)**: per-use-case tests under `tests/functional/`. Use
+  `rstest` for parameterized cases. Each use case has at least one happy path
+  and one failure path before merge.
+- **Unit**: domain types and pure helpers. Plain `#[test]`. No mocks.
+
+## Stubs and fixtures
+
+- Every outbound port has a stub implementation under `tests/support/stubs.rs`
+  (`StubTxReader`, `StubGasOracle`, ...). Stubs hold a map from input to
+  fixture file name and return deserialized fixtures.
+- Fixtures live under `tests/fixtures/` and are named
+  `{adapter}__{method}__{case}.json`. Example:
+  `rpc__eth_getTransactionByHash__usdc_transfer.json`.
+- A fixture corresponds to exactly one scenario. Do not share fixtures across
+  scenarios: copy and adjust instead.
+- Fixture loader is `tests/support/fixture_loader.rs::load_json(path: &str)`.
+
+## Rules
+
+- No test makes a real HTTP or WebSocket call. CI runs with network access
+  disabled; violations must fail the build loudly.
+- Every public function gets a red test before any production code is written.
+  "Red" here means the compiler forces you to implement the thing.
+- Every BDD scenario is runnable in isolation. A failing scenario points at the
+  exact step line.
+- Every use case has at least one `Scenario:` in its `.feature` file; if a
+  behaviour is not described by a scenario, it is not part of the product.
+- Assertions use `assert_matches!` for enum shapes and `pretty_assertions`
+  (`assert_eq!`) for structured data. Avoid bare `assert!(a == b)`.
+- Time is injected. Never call `SystemTime::now()` inside application code; use
+  a `Clock` port. Tests pass a `FrozenClock` stub.
+- Randomness is injected. Never call the OS RNG directly; use an `Rng` port.
+  Tests pass a seeded stub.
+
+## Test naming
+
+- Functional tests: `tests/functional/{use_case}.rs`, test name
+  `it_{behaviour}_when_{precondition}`.
+- Feature files: `tests/e2e/features/{screen}.feature`.
+- Step definitions: `tests/e2e/steps/{screen}.rs`.
+
+## Coverage gate
+
+- Every use case must have a happy path and a failure path before its
+  implementation is merged.
+- Every adapter method must have a fixture for a happy response and at least
+  one error response (for example a 429 and a 500 case).
+- Every screen must have a "not found / empty state" scenario.
+
+## Running
+
+- `cargo test` runs unit + functional.
+- `cargo test --test e2e` runs BDD scenarios.
+- `cargo deny check` enforces dependency rules.

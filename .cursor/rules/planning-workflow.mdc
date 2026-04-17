@@ -1,0 +1,46 @@
+---
+description: Planning-first workflow. Plan files drive design, tests and code.
+globs:
+alwaysApply: true
+---
+
+# Planning workflow
+
+This project follows a strict pipeline. Skipping a stage is a review-blocker.
+
+```
+0. General plan        -> plan/0-general-architecture.md
+1. Use case detail     -> plan/{N}-{scope}.md
+2. Architecture        -> ports, adapters, module layout (in the same plan file)
+3. E2E tests (BDD)     -> tests/e2e/features/*.feature (+ step defs)
+4. Functional tests    -> tests/functional/*.rs (per use case)
+5. Implementation      -> src/**/*.rs
+```
+
+## Rules
+
+- Do not open a coding PR without an accepted plan section. If a behaviour is not
+  in `plan/`, propose a plan edit first.
+- Tests come before code. Functional tests must compile and fail for the right
+  reason (unimplemented) before any production code is written for that use case.
+- Every use case must map 1:1 to a file under
+  `src/application/use_cases/{snake_case_use_case}.rs` and appear in at least one
+  `.feature` scenario.
+- Every port defined in a plan file must exist as a trait under
+  `src/application/ports/{snake_case_port}.rs` with a doc comment referencing the
+  plan section (for example `/// See plan/6-address-detail.md#5-ports-required`).
+- Every adapter method must reference the exact Alchemy / Etherscan / openchain /
+  Samczsun endpoint it targets in its doc comment.
+- The plan is the source of truth. When the code and the plan disagree, fix the
+  plan first and then the code.
+- Plan files are English-only. Same for code, comments, test names and commit
+  messages.
+
+## When proposing a new feature
+
+1. Ask whether it should become a new `plan/{N}-{scope}.md` file, a new section in
+   an existing file, or the "Deferred" section of `plan/README.md`.
+2. If new file: use the template from `plan/README.md` section "How to add a new
+   plan file".
+3. List the use cases, ports, data sources, BDD scenarios, functional tests and
+   fixtures before writing any code.

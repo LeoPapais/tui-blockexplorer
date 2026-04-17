@@ -1,0 +1,95 @@
+---
+description: TUI conventions for ratatui screens, widgets, input routing.
+globs: "src/adapters/ui/**/*.rs"
+alwaysApply: true
+---
+
+# TUI conventions
+
+The UI is a `ratatui` + `crossterm` adapter over the application core. It must
+never talk to other adapters directly and never perform network I/O on its
+render path.
+
+## Libraries
+
+- `ratatui` for widgets.
+- `crossterm` for terminal control and keyboard events.
+- `arboard` for clipboard access.
+- Optional image rendering (future): `ratatui-image` with sixel or kitty
+  protocol. Not MVP.
+
+## Screen model
+
+- Every screen implements a `Screen` trait:
+
+  ```rust
+  pub trait Screen {
+      fn title(&self) -> &'static str;
+      fn render(&self, frame: &mut Frame<'_>, area: Rect);
+      fn handle_event(&mut self, evt: &AppEvent) -> Option<Command>;
+      fn tick(&mut self, delta: Duration) -> Option<Command>;
+  }
+  ```
+
+- `Command` is an enum consumed by the dispatcher (`Push`, `Pop`, `Replace`,
+  `OpenModal`, `CloseModal`, `Switch`, `Refresh`, `Quit`).
+- Screens never mutate the stack directly; they emit commands.
+
+## Navigation stack
+
+- A central `ScreenStack` owns `Vec<Box<dyn Screen>>` and a modal slot.
+- `push` / `pop` / `replace` are the only mutators.
+- The stack is read by the UI task each frame through an `Arc<RwLock<...>>`
+  snapshot or a lock-free double buffer.
+
+## Keybindings
+
+- Bindings are data, not scattered `match` arms.
+- A `KeyMap` maps `(ScreenId, KeyEvent)` to an `Action`. Actions are resolved
+  first against screen-specific bindings, then against the global map.
+- Config overrides the default map. Conflicts are detected on config load and
+  rejected with a clear error.
+
+## Layout
+
+- Use `Layout` with `Constraint::Length`, `Constraint::Percentage`,
+  `Constraint::Min`. Avoid hard-coded `Rect` math.
+- Header, breadcrumb and status bar are rendered by the shell, not by
+  individual screens. Screens own the content area only.
+- Narrow-terminal fallback: screens with multi-column layouts stack vertically
+  when the width is below a threshold defined per screen.
+
+## Data delivery
+
+- Screens subscribe to data via `tokio::sync::mpsc` channels handed to them by
+  the dispatcher. They never `await` inside `render` or `handle_event`.
+- Long-running tasks are spawned by the dispatcher and tied to the screen's
+  lifetime; dropping the screen cancels the task.
+
+## Widgets
+
+- Custom widgets live in `src/adapters/ui/widgets/`.
+- Colours are semantic tokens (`Theme::accent`, `Theme::warning`,
+  `Theme::success`) resolved against the current palette. No raw RGB in
+  widgets.
+- Tables use the `ratatui` `Table` widget with row-level highlighting for the
+  selected row; column widths are computed from data when possible.
+
+## Input
+
+- Keyboard events are normalised to the application's `Action` enum before
+  being dispatched.
+- Mouse is out of scope for MVP.
+
+## Rendering budget
+
+- Target 60 fps maximum; more typically 10 fps on idle and up to 30 fps on
+  active scroll / animation.
+- No screen should need more than one `render` pass per frame.
+
+## Testing
+
+- Screens are tested at the functional level by instantiating them with
+  stubbed ports and asserting on `handle_event` outputs.
+- The rendered output itself is snapshot-tested with
+  `ratatui::backend::TestBackend` for a few representative frames per screen.

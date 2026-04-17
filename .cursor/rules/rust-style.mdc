@@ -1,0 +1,76 @@
+---
+description: Rust coding conventions for blockexplorer-tui.
+globs: "src/**/*.rs,tests/**/*.rs"
+alwaysApply: true
+---
+
+# Rust style
+
+## Toolchain
+
+- Edition `2024`.
+- MSRV pinned in `rust-toolchain.toml`. Prefer the latest stable that builds on
+  Debian 12.
+- `rustfmt` on default settings, run in pre-commit.
+- `clippy`: `-D warnings`. `clippy::pedantic` is opt-in per module with
+  `#![warn(clippy::pedantic)]` where it does not become noisy.
+
+## Error handling
+
+- Domain errors: `thiserror`-derived enums.
+- Adapter errors: local `thiserror` enums, mapped into `DomainError` at the
+  application boundary.
+- Use `anyhow` only at the `main`/`infra` edges. Never in `domain/` or
+  `application/`.
+- Never `unwrap()` or `expect()` outside tests and the composition root. Prefer
+  `?` with a meaningful error variant.
+- Panics are for invariants that are impossible to reach (for example internal
+  assertion that a map lookup built from the same iteration yields Some); add a
+  `// unreachable: <reason>` comment.
+
+## Async
+
+- Single Tokio multi-thread runtime.
+- Port traits declare `async fn` directly (edition 2024 supports it in traits).
+  Fall back to `-> impl Future` if generic object safety is needed.
+- Avoid blocking calls. If unavoidable, wrap in `spawn_blocking`.
+
+## Naming and API shape
+
+- Newtype pattern for every primitive that carries semantics (`Address`,
+  `Wei`, `BlockNumber`, ...).
+- Conversions: `From` for infallible, `TryFrom` for fallible. Avoid ad-hoc
+  `from_x` constructors once a `TryFrom` exists.
+- Builders for structs with more than 3 optional fields.
+- Public items are documented with `///` and, when relevant, reference the plan
+  section (for example `/// See plan/4-tx-detail.md#41-loadtxoverview`).
+
+## Collections and allocation
+
+- Prefer slices (`&[T]`) and iterators in function signatures.
+- Avoid `clone()` unless the type is `Copy` or cloning is intentional and
+  justified in a comment.
+- Use `SmallVec` or `tinyvec` for small, stack-allocated lists only when
+  profiling demonstrates the need.
+
+## Modules
+
+- One concept per file. Module names are snake_case singular
+  (`address.rs`, `block_reader.rs`).
+- Re-exports live at the `mod.rs` of each layer.
+- Visibility is minimised. `pub(crate)` is the default; `pub` is reserved for
+  items intended to leave the crate.
+
+## Formatting details
+
+- Line width 100.
+- Let `rustfmt` decide the rest.
+- Imports are grouped by `std`, external crates, crate-local; blank lines
+  separate the groups.
+
+## Lints to keep on
+
+- `clippy::dbg_macro`: deny.
+- `clippy::todo`: warn. Every `todo!()` must reference a plan section.
+- `clippy::unwrap_used` and `clippy::expect_used`: warn outside tests and
+  composition root.

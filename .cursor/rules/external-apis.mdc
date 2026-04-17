@@ -1,0 +1,81 @@
+---
+description: External provider choices, credentials, retry and fallback policies.
+globs: "src/adapters/**/*.rs"
+alwaysApply: true
+---
+
+# External APIs
+
+There is no in-house indexer. All on-chain data comes from external providers.
+
+## Providers
+
+- **Alchemy** (primary): Node API (JSON-RPC + WebSocket), Data API (Transfers,
+  Portfolio, Prices, Token, NFT), Simulation API, Beacon API, Trace / Debug
+  namespaces. Adapter: `src/adapters/rpc/`.
+- **Etherscan V2** (source + labels): `getsourcecode`, `getabi`, label lookup.
+  Multichain endpoint. Adapter: `src/adapters/etherscan/`.
+- **openchain.xyz** (signatures): primary 4byte / event topic resolver.
+- **Samczsun signature DB** (signatures): fallback for openchain misses.
+  Adapter: `src/adapters/signatures/` implements both.
+- **ENS** via `eth_call` on the ENS Registry using Alchemy RPC. No dedicated
+  SaaS. Adapter: `src/adapters/ens/`.
+
+## Credentials
+
+- Sources in order: environment variable, then config file. Config keys:
+  `[credentials]` section with `alchemy_api_key`, `etherscan_api_key`,
+  `openchain_api_key` (optional).
+- Env variables: `ALCHEMY_API_KEY`, `ETHERSCAN_API_KEY`, `OPENCHAIN_API_KEY`.
+- Secrets are never logged. The logger must mask any field whose key contains
+  `key`, `token` or `secret`.
+- Adapters accept an injected `ApiCredentials` struct, never read env / config
+  themselves. That keeps them testable.
+
+## Rate limits and retries
+
+- Default retry policy: exponential backoff with jitter, 3 attempts, on HTTP
+  429 and 5xx (or JSON-RPC `-32005`/rate-limit errors).
+- Each adapter defines a `cost_hint` on its methods. The application layer may
+  batch work via Alchemy batch requests or `eth_callMany` to stay under the
+  compute-unit budget.
+- Per-adapter circuit breaker: after N consecutive failures the adapter opens
+  the circuit for a cool-down window and fast-fails downstream calls with
+  `DomainError::ProviderUnavailable`.
+
+## Signature-decoding fallback chain
+
+Use this exact order for decoding selectors and event topics:
+
+1. Contract ABI (via Etherscan `getsourcecode` or `getabi`).
+2. openchain.xyz signature lookup.
+3. Samczsun signature DB.
+4. Raw rendering with the selector or topic preserved.
+
+The choice of source must be surfaced in the domain type
+(`SignatureSource::Abi { address } | Openchain | Samczsun | Raw`).
+
+## ENS
+
+- Forward: call `resolver(node)` and then `addr(node)` on the ENS Registry at
+  `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`.
+- Reverse: hash the address with `.addr.reverse`, resolve the resolver, call
+  `name(node)`, then re-forward-resolve to confirm.
+- All ENS calls go through the Alchemy RPC adapter; no extra adapter is added.
+- ENS results are cached with a 5-minute TTL.
+
+## Chains
+
+- Multichain via Alchemy's multi-network endpoints. Each `Chain` knows its URL
+  template and websocket template.
+- MVP chains (enabled by default): Ethereum mainnet, Ethereum Sepolia,
+  Base mainnet, Polygon mainnet, Optimism mainnet, Arbitrum One.
+- Chains are enabled or disabled in Settings without code changes; the
+  `ChainRegistry` is data, not hard-coded logic.
+
+## Testing contract
+
+- Adapters must not call the network during tests. The `reqwest` client is
+  injected; in tests it is replaced by a stub that serves fixture files.
+- Every adapter method has at least two fixture files: one happy response and
+  one error response.

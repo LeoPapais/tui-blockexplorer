@@ -1,0 +1,160 @@
+# 3 — Block Detail
+
+Everything about one specific block. Reached from Search or from any screen that
+links to a block (Tx overview, Address transfers). Tabs are used to keep the view
+compact: Overview, Transactions, Blobs / Withdrawals.
+
+## 1. Purpose and user goals
+
+- Give the full technical picture of a block without leaving the terminal.
+- Let the user drill into any of the block's transactions in one keystroke.
+- Navigate chronologically with `[` and `]`.
+
+## 2. Layout
+
+```
++-- Breadcrumb ----------------------------------------------------+
+| Home > Block #21,345,678                                         |
++-- Tabs ----------------------------------------------------------+
+| [Overview]  Transactions  Blobs / Withdrawals                    |
++-- Content -------------------------------------------------------+
+| Hash       0x...                                                 |
+| Parent     0x...                                                 |
+| Timestamp  2024-06-01 10:12:43 UTC  (3m 12s ago)                 |
+| Validator  0xAbCd...  (Lido: Validator 7)                        |
+| Gas used   12,432,110 / 30,000,000   (41.4%)                     |
+| Base fee   11.4 gwei      Burned   0.142 ETH                     |
+| Size       102 kB         Txs     142                            |
+| Extra data 0x...                                                 |
+| Withdrawals count 16       Blob txs 3                            |
++-- Status bar ----------------------------------------------------+
+| [ prev   ] next   Enter open tx   y copy hash                    |
++------------------------------------------------------------------+
+```
+
+Tabs:
+
+- **Overview**: header fields as above.
+- **Transactions**: compact table of the txs in the block (`index`, `hash`, `from`,
+  `to`, `value`, `gas used`, `status`).
+- **Blobs / Withdrawals**: two sub-panels. Withdrawals list (validator index, amount,
+  address). Blob-carrying txs (tx hash, blob count, blob gas used, blob gas price).
+
+## 3. Keybindings
+
+| Key       | Action                                       |
+|-----------|----------------------------------------------|
+| `Tab`     | Next tab                                     |
+| `Shift+T` | Previous tab                                 |
+| `[`       | Previous block                               |
+| `]`       | Next block                                   |
+| `Enter`   | Open selected transaction (Transactions tab) |
+| `y`       | Copy block hash                              |
+| `Y`       | Copy block number                            |
+
+## 4. Use cases
+
+### 4.1 `LoadBlockOverview`
+
+- **Input**: block identifier (number or hash), chain.
+- **Output**: `BlockOverview` (fields as laid out in section 2).
+- **Ports**: `BlockReaderPort::get(id, chain)`.
+- **Behaviour**: fetches the block once, maps to domain entity. For the validator
+  label, asks `LabelPort` but failure is non-fatal (returns raw address).
+
+### 4.2 `LoadBlockTransactions`
+
+- **Input**: block identifier, chain, pagination cursor.
+- **Output**: a page of `TxSummary` rows.
+- **Ports**: `BlockReaderPort::get_with_full_txs(id, chain)`,
+  `BlockReceiptsPort::get_receipts(id, chain)`.
+- **Behaviour**: fetches txs and receipts in parallel, merges for status and gas used.
+
+### 4.3 `LoadBlockWithdrawals`
+
+- **Input**: block identifier, chain.
+- **Output**: `Vec<Withdrawal>` plus `Vec<BlobCarryingTx>`.
+- **Ports**: `BlockReaderPort::get(id, chain)`, `BeaconPort::get_blob_sidecars(id)`
+  (optional; missing adapter is acceptable for non-Ethereum chains).
+
+## 5. Ports required
+
+- `BlockReaderPort`: `get_by_number`, `get_by_hash`, `get_with_full_txs`.
+- `BlockReceiptsPort`: `get_receipts(id, chain)` (single batched call using
+  `eth_getBlockReceipts`).
+- `BeaconPort` (optional): `get_blob_sidecars(block_id)`.
+- `LabelPort`: `label_for(address, chain)`.
+
+## 6. Data sources
+
+All via Alchemy unless noted:
+
+- `eth_getBlockByNumber` / `eth_getBlockByHash` (with `fullTxs=true` for the
+  Transactions tab).
+- `eth_getBlockReceipts`.
+- `eth_blobBaseFee` for the blob panel base rate.
+- Beacon API `/v1/beacon/blob_sidecars/{block_id}` for blob sidecar metadata (only
+  Ethereum mainnet).
+- Etherscan V2 label lookup for the validator / fee recipient.
+
+## 7. BDD scenarios (`tests/e2e/features/block_detail.feature`)
+
+```gherkin
+Feature: Block detail
+
+  Background:
+    Given the user is on Home
+    And the active chain is "ethereum"
+
+  Scenario: Load block by number
+    When the user opens Search with "21345678"
+    And selects the block candidate
+    Then the BlockDetail screen shows the Overview tab
+    And the hash, parent hash and gas used match the stub
+
+  Scenario: Paginate transactions tab
+    Given the user is on BlockDetail for block 21345678
+    When the user switches to the Transactions tab
+    Then the first page of transactions is shown
+    When the user scrolls past the end of the first page
+    Then the next page is requested once and merged
+
+  Scenario: Open a transaction from the block
+    Given the user is on the Transactions tab of BlockDetail 21345678
+    When the user selects the second transaction and presses Enter
+    Then the TxDetail screen is pushed
+    And pressing Esc returns to BlockDetail on the Transactions tab
+
+  Scenario: Handle missing block
+    When the user opens BlockDetail for block 99999999999
+    Then an error modal appears with text "block not found"
+    And pressing Esc returns to the previous screen
+
+  Scenario: Previous and next navigation
+    Given the user is on BlockDetail for block 21345678
+    When the user presses "["
+    Then BlockDetail loads block 21345677 without pushing a new screen
+    When the user presses "]"
+    Then BlockDetail loads block 21345678 again
+```
+
+## 8. Functional tests
+
+- `LoadBlockOverview`: happy path by number; by hash; missing block returns
+  `DomainError::NotFound`; label lookup failure does not fail the overall call.
+- `LoadBlockTransactions`: receipts merged correctly; pagination cursor correctness;
+  cancellation on rapid tab changes.
+- `LoadBlockWithdrawals`: no blob sidecar adapter configured degrades gracefully.
+
+## 9. Fixtures
+
+- `rpc__eth_getBlockByNumber__21345678_full.json`
+- `rpc__eth_getBlockByNumber__not_found.json`
+- `rpc__eth_getBlockReceipts__21345678.json`
+- `beacon__blob_sidecars__21345678.json`
+- `etherscan__label__validator_0xabcd.json`
+
+## 10. Open questions
+
+- Do we precompute transaction categorisation (transfer vs contract interaction vs
+  deployment) inside `LoadBlockTransactions`? Yes, based on `to` and input bytes.

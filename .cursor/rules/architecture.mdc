@@ -1,0 +1,102 @@
+---
+description: Hexagonal architecture, DDD primitives, module boundaries. No in-house indexer.
+globs:
+alwaysApply: true
+---
+
+# Architecture
+
+This project is a Rust TUI built with hexagonal architecture and a DDD-flavoured
+domain. There is no indexer; every piece of on-chain data is obtained live from an
+external API.
+
+## Layers
+
+- **Domain** (`src/domain/`): pure types and invariants. No I/O, no serialization,
+  no async. Contains value objects (`Address`, `TxHash`, `BlockNumber`, `Chain`,
+  `Wei`, `Gwei`, `UnixTimestamp`, ...), entities (`Block`, `Transaction`,
+  `Account`, `Contract`, `TokenMetadata`, ...), and `DomainError`.
+- **Application** (`src/application/`): orchestration. Defines ports as `trait`s
+  under `ports/` and implements use cases under `use_cases/`. Use cases depend on
+  ports, never on concrete adapters.
+- **Adapters** (`src/adapters/`): concrete implementations of ports. Owns HTTP /
+  JSON-RPC clients, serde types, retry policies, and maps raw responses into
+  domain types.
+- **Infra** (`src/infra/`): composition root. Loads config, constructs adapters,
+  wires them into use cases, boots the Tokio runtime, starts the TUI loop.
+
+## Module boundary rules
+
+- `domain` imports nothing internal.
+- `application` imports `domain` only.
+- `adapters::*` import `domain` and `application`.
+- `adapters::ui` must not import other `adapters::*`. The UI depends on the
+  application through ports passed in by `infra`.
+- `infra` is the only module that may import everything.
+
+Violations are review-blockers. Prefer `cargo-modules` and targeted `use`
+discipline over runtime dependency injection frameworks.
+
+## Dependency inversion
+
+Use cases receive their dependencies as generic bounds or `Arc<dyn PortTrait>`.
+They never construct concrete clients.
+
+```rust
+pub struct LoadTxOverview<R, S, D>
+where
+    R: TxReaderPort,
+    S: ContractSourcePort,
+    D: SignatureDirectoryPort,
+{
+    reader: R,
+    sources: S,
+    signatures: D,
+}
+```
+
+Prefer generics for performance-critical hot paths, `Arc<dyn ...>` for screens
+that need to carry ports around as runtime state.
+
+## DDD primitives
+
+- Value objects are newtypes with validation in their constructor:
+
+  ```rust
+  pub struct Address([u8; 20]);
+
+  impl Address {
+      pub fn from_hex(s: &str) -> Result<Self, DomainError> { /* ... */ }
+  }
+  ```
+
+- Never leak primitive types (`String`, `u64`, `[u8; N]`) into application APIs
+  when a newtype exists.
+- All fallible constructors return `Result<Self, DomainError>`; infallible
+  constructors use `From`.
+- Equality and ordering are explicit (`#[derive(PartialEq, Eq, Hash)]` only when
+  the domain semantics are that strict).
+
+## No indexer
+
+- No SQLite, no RocksDB, no custom indexer, no event-sourced persistence for
+  on-chain data. MVP stays external-only.
+- Cache is allowed, but it must be in-memory and TTL-based (`adapters/cache/`).
+- Persistence is limited to the config file and, later, a small key-value store
+  for UI preferences.
+
+## Error model
+
+- Domain-level errors are `DomainError` variants defined in
+  `src/domain/errors.rs`.
+- Adapter-level errors are `thiserror` enums local to each adapter module; they
+  are mapped into `DomainError` at the application boundary.
+- Use `Result<T, DomainError>` in all port signatures.
+
+## Runtime
+
+- Single Tokio multi-thread runtime, owned by `infra`.
+- UI task never blocks on I/O. Data is produced by use-case tasks and delivered
+  through `tokio::sync::mpsc` channels.
+- Subscriptions are owned by screen-scoped tasks and dropped when the screen is
+  popped from the stack.
