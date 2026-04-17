@@ -72,3 +72,6 @@ mod alchemy_proxy_detector;
 
 #[path = "functional/load_token_overview.rs"]
 mod load_token_overview;
+
+#[path = "functional/alchemy_token_reader.rs"]
+mod alchemy_token_reader;

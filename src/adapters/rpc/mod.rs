@@ -14,6 +14,7 @@ pub mod ens;
 pub mod gas_oracle;
 pub mod network_status;
 pub mod proxy_detection;
+pub mod token_reader;
 pub mod tx_lookup;
 pub mod tx_reader;
 
@@ -26,5 +27,6 @@ pub use ens::AlchemyEnsResolver;
 pub use gas_oracle::AlchemyGasOracleAdapter;
 pub use network_status::AlchemyNetworkStatusAdapter;
 pub use proxy_detection::AlchemyProxyDetector;
+pub use token_reader::AlchemyTokenReader;
 pub use tx_lookup::AlchemyTxLookup;
 pub use tx_reader::AlchemyTxReader;

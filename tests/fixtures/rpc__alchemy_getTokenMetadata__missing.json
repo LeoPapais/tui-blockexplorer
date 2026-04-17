@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "name": null,
+    "symbol": null,
+    "decimals": null,
+    "logo": null
+  }
+}
