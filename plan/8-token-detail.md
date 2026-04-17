@@ -1,9 +1,11 @@
 # 8 — Token Detail
 
-Status: in progress. MVP slice ships the Overview tab with metadata +
-total supply only. Price and market-cap need the Prices API adapter;
-Transfers and Chart tabs need the Transfers API adapter. Both live in
-section 12.4 as follow-up work.
+Status: **done** (MVP scope) — Overview tab with metadata + totalSupply
+is live, both BDD scenarios in
+`tests/e2e/features/token_detail.feature` are green. Search now
+opens a real TokenDetailScreen for token candidates. Price, market
+cap, Transfers tab, Chart tab and Holders tab all remain deferred
+(section 12.4).
 
 Page for an ERC-20 token. Tabs in MVP: Overview, Transfers, Chart. The Holders tab is
 documented as deferred (section 11).

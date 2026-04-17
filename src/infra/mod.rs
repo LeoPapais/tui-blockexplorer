@@ -15,6 +15,7 @@ mod home_feed;
 mod mempool_feed;
 mod runtime;
 mod search_feed;
+mod token_feed;
 mod tx_feed;
 
 use anyhow::{Context, Result};
@@ -27,14 +28,14 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemyTxLookup,
-            AlchemyTxReader, RpcClient,
+            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemyTokenReader,
+            AlchemyTxLookup, AlchemyTxReader, RpcClient,
         },
         ui::{
             AddressDetailScreen, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, HomeScreen, MempoolScreen, Screen, ScreenStack,
-            SearchScreen, TxDetailScreen, address_feed, block_feed, contract_feed,
-            search_feed, tx_feed,
+            SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed, block_feed,
+            contract_feed, search_feed, token_feed, tx_feed,
         },
     },
     application::{
@@ -82,6 +83,19 @@ fn live_contract_detail_screen(
     let (feed, sender) = contract_feed();
     std::mem::drop(contract_feed::spawn(chain, reader, detector, sender));
     Box::new(ContractDetailScreen::loading(chain, address, feed))
+}
+
+/// Build a live `TokenDetailScreen` backed by a dedicated
+/// token-reader task.
+fn live_token_detail_screen(
+    chain: Chain,
+    address: crate::domain::Address,
+    rpc: RpcClient,
+) -> Box<dyn Screen> {
+    let reader = AlchemyTokenReader::new(rpc);
+    let (feed, sender) = token_feed();
+    std::mem::drop(token_feed::spawn(chain, reader, sender));
+    Box::new(TokenDetailScreen::loading(chain, address, feed))
 }
 
 /// Stub token search used until the Etherscan adapter lands. Returns
@@ -222,6 +236,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                                 live_address_detail_screen(chain, address, rpc.clone())
                             }
                         },
+                        ResolvedEntity::Token(meta) => {
+                            live_token_detail_screen(chain, meta.address, rpc.clone())
+                        }
                         other => Box::new(DetailPlaceholderScreen::new(other)),
                     }
                 })

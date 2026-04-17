@@ -13,6 +13,7 @@ pub mod home;
 pub mod mempool;
 pub mod screen;
 pub mod search;
+pub mod token_detail;
 pub mod tx_detail;
 
 pub use address_detail::{
@@ -32,4 +33,5 @@ pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen,
     search_feed,
 };
+pub use token_detail::{TokenDetailScreen, TokenFeed, TokenFeedSender, token_feed};
 pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};
