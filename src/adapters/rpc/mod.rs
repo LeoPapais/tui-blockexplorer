@@ -13,6 +13,7 @@ pub mod ens;
 pub mod gas_oracle;
 pub mod network_status;
 pub mod tx_lookup;
+pub mod tx_reader;
 
 pub use address_lookup::AlchemyAddressLookup;
 pub use block_lookup::AlchemyBlockLookup;
@@ -22,3 +23,4 @@ pub use ens::AlchemyEnsResolver;
 pub use gas_oracle::AlchemyGasOracleAdapter;
 pub use network_status::AlchemyNetworkStatusAdapter;
 pub use tx_lookup::AlchemyTxLookup;
+pub use tx_reader::AlchemyTxReader;

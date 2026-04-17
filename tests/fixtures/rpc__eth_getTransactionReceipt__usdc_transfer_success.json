@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "0x1",
+    "gasUsed": "0xcc75"
+  }
+}

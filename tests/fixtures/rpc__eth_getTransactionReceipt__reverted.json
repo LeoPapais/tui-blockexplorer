@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "0x0",
+    "gasUsed": "0x5208",
+    "revertReason": "InsufficientBalance()"
+  }
+}

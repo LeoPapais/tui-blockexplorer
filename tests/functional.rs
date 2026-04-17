@@ -51,3 +51,6 @@ mod alchemy_block_reader;
 
 #[path = "functional/load_tx_overview.rs"]
 mod load_tx_overview;
+
+#[path = "functional/alchemy_tx_reader.rs"]
+mod alchemy_tx_reader;
