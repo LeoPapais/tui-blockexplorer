@@ -11,6 +11,7 @@ mod address_feed;
 mod block_feed;
 pub mod config;
 mod contract_feed;
+mod gas_feed;
 mod home_feed;
 mod mempool_feed;
 mod runtime;
@@ -33,9 +34,9 @@ use crate::{
         },
         ui::{
             AddressDetailScreen, BlockDetailScreen, ContractDetailScreen,
-            DetailPlaceholderScreen, HomeScreen, MempoolScreen, Screen, ScreenStack,
-            SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed, block_feed,
-            contract_feed, search_feed, token_feed, tx_feed,
+            DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
+            ScreenStack, SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed,
+            block_feed, contract_feed, gas_feed, search_feed, token_feed, tx_feed,
         },
     },
     application::{
@@ -271,11 +272,27 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         })
     };
 
+    let gas_factory = {
+        let rpc = rpc.clone();
+        Box::new(move || -> Box<dyn Screen> {
+            let oracle = AlchemyGasOracleAdapter::new(rpc.clone());
+            let (feed, sender) = gas_feed();
+            std::mem::drop(gas_feed::spawn(
+                chain,
+                oracle,
+                sender,
+                gas_feed::DEFAULT_REFRESH_PERIOD,
+            ));
+            Box::new(GasTrackerScreen::new(chain, None, feed))
+        })
+    };
+
     let mut stack = ScreenStack::new();
     stack.push(Box::new(
         HomeScreen::with_feed(loading_view(chain), feed)
             .with_search_factory(search_factory)
-            .with_mempool_factory(mempool_factory),
+            .with_mempool_factory(mempool_factory)
+            .with_gas_factory(gas_factory),
     ));
     stack
 }

@@ -161,6 +161,10 @@ pub type SearchFactory =
 pub type MempoolFactory =
     Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
+/// Factory for the Gas Tracker screen.
+pub type GasTrackerFactory =
+    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+
 /// Screen-level wrapper around [`render`].
 ///
 /// Holds the current [`HomeViewModel`] and optionally a [`HomeFeed`]
@@ -171,6 +175,7 @@ pub struct HomeScreen {
     feed: Option<HomeFeed>,
     search_factory: Option<SearchFactory>,
     mempool_factory: Option<MempoolFactory>,
+    gas_factory: Option<GasTrackerFactory>,
 }
 
 impl HomeScreen {
@@ -183,6 +188,7 @@ impl HomeScreen {
             feed: None,
             search_factory: None,
             mempool_factory: None,
+            gas_factory: None,
         }
     }
 
@@ -195,6 +201,7 @@ impl HomeScreen {
             feed: Some(feed),
             search_factory: None,
             mempool_factory: None,
+            gas_factory: None,
         }
     }
 
@@ -211,6 +218,14 @@ impl HomeScreen {
     #[must_use]
     pub fn with_mempool_factory(mut self, factory: MempoolFactory) -> Self {
         self.mempool_factory = Some(factory);
+        self
+    }
+
+    /// Equip the home screen with a factory that produces a Gas
+    /// Tracker screen when the user presses `g`.
+    #[must_use]
+    pub fn with_gas_factory(mut self, factory: GasTrackerFactory) -> Self {
+        self.gas_factory = Some(factory);
         self
     }
 
@@ -265,6 +280,10 @@ impl Screen for HomeScreen {
                 None => Command::None,
             },
             KeyCode::Char('m') => match self.mempool_factory.as_ref() {
+                Some(factory) => Command::Push(factory()),
+                None => Command::None,
+            },
+            KeyCode::Char('g') => match self.gas_factory.as_ref() {
                 Some(factory) => Command::Push(factory()),
                 None => Command::None,
             },

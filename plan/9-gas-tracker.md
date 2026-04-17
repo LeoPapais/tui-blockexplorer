@@ -1,5 +1,11 @@
 # 9 — Gas Tracker
 
+Status: **done** (MVP scope) — `g` on Home opens a Gas Tracker
+screen that renders `slow / average / fast / base fee / trend` from
+the shared `GasOraclePort`. Live mode polls Alchemy every 6s via a
+dedicated feed task. The unit converter modal, percentile histogram
+and pending base-fee prediction remain deferred (section 11.2).
+
 Full-screen gas dashboard. Reached from Home (`Enter` on the Gas card) or via the
 command palette. Shares the `GasOraclePort` with Home.
 
@@ -114,3 +120,30 @@ Feature: Gas tracker
   recompute.
 - Should we show the pending base fee prediction for the next block (EIP-1559
   formula)? Yes, computed locally from the latest base fee and gas usage ratio.
+
+## 11. Implementation plan
+
+One slice — the port and domain already exist (shared with Home).
+
+### 11.1 Slice — UI + feed + BDD
+
+- `src/adapters/ui/gas_tracker.rs` — `GasTrackerScreen` with a feed
+  channel, three speed cards, a base-fee trend line and a raw-gwei
+  readout. Deferred UI: unit converter modal, percentile histogram.
+- `src/infra/gas_feed.rs` — `spawn` helper that owns a
+  `GasOraclePort`, polls at the same 6s interval the Home session
+  uses, and publishes `GasSnapshot` updates into the screen's
+  channel.
+- Home gains an optional `gas_factory` bound to the `g` key that
+  pushes a fresh `GasTrackerScreen`.
+- BDD `tests/e2e/features/gas_tracker.feature`:
+  - From Home, press `g` and assert a "Gas Tracker" screen is on
+    top with the primed snapshot's slow/average/fast values.
+  - After the stub publishes a new snapshot, assert the screen
+    updates.
+
+### 11.2 Deferred
+
+- Unit converter modal (`u`).
+- Base-fee prediction for the pending block.
+- Percentile histogram widget.

@@ -9,6 +9,7 @@ pub mod address_detail;
 pub mod block_detail;
 pub mod contract_detail;
 pub mod detail_placeholder;
+pub mod gas_tracker;
 pub mod home;
 pub mod mempool;
 pub mod screen;
@@ -26,6 +27,7 @@ pub use contract_detail::{
     ContractDetailScreen, ContractFeed, ContractFeedSender, contract_feed,
 };
 pub use detail_placeholder::DetailPlaceholderScreen;
+pub use gas_tracker::{GasFeed, GasFeedSender, GasTrackerScreen, gas_feed};
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
 pub use mempool::{MempoolScreen, OpenPendingTxFactory};
 pub use screen::{Command, Screen, ScreenStack};

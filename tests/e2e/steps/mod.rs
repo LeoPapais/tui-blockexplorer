@@ -8,6 +8,7 @@
 pub mod address_detail;
 pub mod block_detail;
 pub mod contract_detail;
+pub mod gas_tracker;
 pub mod home;
 pub mod mempool;
 pub mod search;
