@@ -18,7 +18,7 @@ pub mod timestamp;
 pub mod token;
 pub mod tx;
 
-pub use address::Address;
+pub use address::{Address, AddressOverview};
 pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary};
 pub use chain::Chain;
 pub use errors::DomainError;

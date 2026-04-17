@@ -1,5 +1,10 @@
 # 6 — Address Detail
 
+Status: in progress. The MVP slice ships the Overview tab only; every
+other tab needs adapters we have not built yet (TransfersPort,
+PortfolioPort, PricesPort, LabelPort). Full status tracked in
+section 12.
+
 Account dossier. Active tabs in MVP: Overview, Transactions, Tokens, Activity, and
 Contract (only when the address has code). The NFTs tab is documented in section 11
 as future work but is not delivered in MVP.
@@ -183,3 +188,69 @@ Feature: Address detail
   `plan/11-nfts.md`.
 - Approvals panel with "revoke" action.
 - Charts of historical balance.
+
+## 12. Implementation plan
+
+Three slices; only the Overview tab lands in this pass. The richer
+tabs (Transactions, Tokens, Activity, Contract, NFTs) wait for the
+Transfers / Portfolio / Prices / Etherscan adapters that are not in
+the codebase yet.
+
+### 12.1 Slice A — domain + port + use case + stubs
+
+Domain additions (`src/domain/`):
+
+- `address.rs` gains `AddressOverview { chain, address, balance, nonce,
+  kind, ens_name }`. `kind` reuses the existing `AddressKind` enum;
+  `ens_name` stays `None` in MVP until reverse-ENS lookup ships.
+
+Port (`src/application/ports/address_reader.rs`):
+
+```rust
+pub trait AddressReaderPort: Send + Sync {
+    async fn get(&self, address: Address, chain: Chain)
+        -> Result<Option<AddressOverview>, DomainError>;
+}
+```
+
+Use case `load_address_overview` is a passthrough that maps `Ok(None)`
+to `DomainError::NotFound`.
+
+Stub `StubAddressReaderPort` with `insert(overview)` keyed by address.
+
+Functional tests `tests/functional/load_address_overview.rs`:
+- happy path for an EOA,
+- happy path for a contract (kind = Contract, ens = None),
+- missing address returns `NotFound`.
+
+### 12.2 Slice B — Alchemy adapter
+
+`src/adapters/rpc/address_reader.rs` issues `eth_getBalance`,
+`eth_getTransactionCount` and `eth_getCode` in parallel via
+`tokio::join!`, then assembles the `AddressOverview`. Reverse-ENS
+stays deferred.
+
+Tests `tests/functional/alchemy_address_reader.rs` use wiremock with
+three canned responses per scenario. Fixtures:
+- `rpc__eth_getBalance__0xd8da.json`
+- `rpc__eth_getTransactionCount__0xd8da.json`
+- `rpc__eth_getCode__0xd8da_eoa.json`
+- `rpc__eth_getCode__0xa0b8_contract.json`
+
+### 12.3 Slice C — UI + wiring + BDD
+
+- `src/adapters/ui/address_detail.rs` with an Overview-only screen
+  that renders address, kind label, ENS (when present), balance in
+  wei/gwei/ether, and nonce.
+- `src/infra/address_feed.rs` — same shape as `block_feed.rs`:
+  channel pair, spawn helper that owns an `AddressReaderPort`.
+- `infra::run` and the search detail factory in `tests/e2e/steps/search.rs`
+  route `ResolvedEntity::Address` to the new screen (previously a
+  `DetailPlaceholderScreen`).
+- BDD `tests/e2e/features/address_detail.feature`:
+  - Open address detail for an EOA and assert the header kind says EOA.
+  - Open address detail for a contract and assert the header kind
+    says Contract.
+
+Acceptance: plan flipped to `done (MVP)`, clippy clean, all tests
+green.

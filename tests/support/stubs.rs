@@ -13,14 +13,14 @@ use std::{
 
 use blockexplorer_tui::{
     application::ports::{
-        AddressLookupPort, BlockLookupPort, BlockReaderPort, ChainRegistryPort,
-        EnsResolverPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort,
-        TokenSearchPort, TxLookupPort, TxReaderPort,
+        AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
+        ChainRegistryPort, EnsResolverPort, GasOraclePort, NetworkStatusPort,
+        PendingTxStreamPort, TokenSearchPort, TxLookupPort, TxReaderPort,
     },
     domain::{
-        Address, AddressKind, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
-        DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx, PendingTxEvent,
-        PendingTxFilter, TokenMetadata, Transaction, TxHash, TxSummary, Wei,
+        Address, AddressKind, AddressOverview, Block, BlockHash, BlockId, BlockNumber,
+        BlockSummary, Chain, DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx,
+        PendingTxEvent, PendingTxFilter, TokenMetadata, Transaction, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -597,5 +597,41 @@ impl PendingTxStreamPort for StubPendingTxStreamPort {
         let mut senders = self.inner.lock().expect("stub lock poisoned");
         senders.push(tx);
         Ok(rx)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: AddressReaderPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct AddressReaderState {
+    by_address: HashMap<Address, AddressOverview>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubAddressReaderPort {
+    inner: Arc<Mutex<AddressReaderState>>,
+}
+
+impl StubAddressReaderPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, overview: AddressOverview) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(overview.address, overview);
+    }
+}
+
+impl AddressReaderPort for StubAddressReaderPort {
+    async fn get(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<AddressOverview>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned())
     }
 }

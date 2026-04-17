@@ -57,3 +57,6 @@ mod alchemy_tx_reader;
 
 #[path = "functional/observe_pending_txs.rs"]
 mod observe_pending_txs;
+
+#[path = "functional/load_address_overview.rs"]
+mod load_address_overview;

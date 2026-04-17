@@ -2,6 +2,7 @@
 //!
 //! Each file mirrors a use case named in a plan file under `plan/`.
 
+pub mod load_address_overview;
 pub mod load_block_overview;
 pub mod load_tx_overview;
 pub mod observe_gas_oracle;

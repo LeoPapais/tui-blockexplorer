@@ -4,6 +4,7 @@
 //! section that introduced it.
 
 pub mod address_lookup;
+pub mod address_reader;
 pub mod block_lookup;
 pub mod block_reader;
 pub mod chain_registry;
@@ -16,6 +17,7 @@ pub mod tx_lookup;
 pub mod tx_reader;
 
 pub use address_lookup::AddressLookupPort;
+pub use address_reader::AddressReaderPort;
 pub use block_lookup::BlockLookupPort;
 pub use block_reader::BlockReaderPort;
 pub use chain_registry::ChainRegistryPort;

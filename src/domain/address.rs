@@ -1,8 +1,10 @@
-//! 20-byte account identifier shared by EOAs and contracts.
+//! 20-byte account identifier shared by EOAs and contracts plus the
+//! account overview consumed by the Address Detail screen.
 //!
-//! See `plan/2-search.md` section 10.1.
+//! See `plan/2-search.md` section 10.1 and `plan/6-address-detail.md`
+//! section 12.1.
 
-use crate::domain::DomainError;
+use crate::domain::{AddressKind, Chain, DomainError, Wei};
 
 /// An Ethereum-style address. Stored as the raw 20 bytes and exposed
 /// through lowercase `0x`-prefixed hex for human display.
@@ -43,6 +45,20 @@ impl Address {
         out.push_str(&hex::encode(self.0));
         out
     }
+}
+
+/// Snapshot of an account shown on the Address Detail Overview tab.
+/// See `plan/6-address-detail.md` section 12.1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressOverview {
+    pub chain: Chain,
+    pub address: Address,
+    pub balance: Wei,
+    pub nonce: u64,
+    pub kind: AddressKind,
+    /// Populated when a reverse-ENS lookup succeeds. Stays `None`
+    /// until the reverse-resolver adapter lands.
+    pub ens_name: Option<String>,
 }
 
 #[cfg(test)]
