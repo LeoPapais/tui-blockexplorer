@@ -33,7 +33,7 @@ external-only data policy).
 | 7  | [7-contract-detail.md](7-contract-detail.md)                   | Contract detail           | done (MVP) |
 | 8  | [8-token-detail.md](8-token-detail.md)                         | Token detail              | done (MVP) |
 | 9  | [9-gas-tracker.md](9-gas-tracker.md)                           | Gas tracker               | done (MVP) |
-| 10 | [10-settings.md](10-settings.md)                               | Settings                  | draft  |
+| 10 | [10-settings.md](10-settings.md)                               | Settings                  | done (MVP) |
 | 11 | [11-rust-scaffolding.md](11-rust-scaffolding.md)               | Rust project scaffolding  | draft  |
 | 12 | [12-screen-runtime.md](12-screen-runtime.md)                   | TUI runtime + demo mode   | done   |
 | 13 | [13-alchemy-adapter.md](13-alchemy-adapter.md)                 | Alchemy HTTP adapters     | done   |

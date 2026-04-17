@@ -12,5 +12,6 @@ pub mod gas_tracker;
 pub mod home;
 pub mod mempool;
 pub mod search;
+pub mod settings;
 pub mod token_detail;
 pub mod tx_detail;

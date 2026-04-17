@@ -33,10 +33,11 @@ use crate::{
             AlchemyTxLookup, AlchemyTxReader, RpcClient,
         },
         ui::{
-            AddressDetailScreen, BlockDetailScreen, ContractDetailScreen,
+            AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
-            ScreenStack, SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed,
-            block_feed, contract_feed, gas_feed, search_feed, token_feed, tx_feed,
+            ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen, TxDetailScreen,
+            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed,
+            tx_feed,
         },
     },
     application::{
@@ -287,12 +288,26 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         })
     };
 
+    let settings_factory = {
+        let snapshot = AppConfigSnapshot {
+            chain,
+            alchemy_key_present: config.has_alchemy_key(),
+            config_path_hint: Some(
+                "~/.config/blockexplorer-tui/config.toml (via XDG)".to_string(),
+            ),
+        };
+        Box::new(move || -> Box<dyn Screen> {
+            Box::new(SettingsScreen::new(snapshot.clone()))
+        })
+    };
+
     let mut stack = ScreenStack::new();
     stack.push(Box::new(
         HomeScreen::with_feed(loading_view(chain), feed)
             .with_search_factory(search_factory)
             .with_mempool_factory(mempool_factory)
-            .with_gas_factory(gas_factory),
+            .with_gas_factory(gas_factory)
+            .with_settings_factory(settings_factory),
     ));
     stack
 }

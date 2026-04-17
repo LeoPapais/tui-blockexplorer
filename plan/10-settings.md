@@ -1,5 +1,11 @@
 # 10 — Settings
 
+Status: **done** (MVP scope) — read-only Settings screen is live
+behind `s` on Home; both BDD scenarios in
+`tests/e2e/features/settings.feature` are green. Editing
+credentials / chains / theme / keybinds / cache all remain deferred
+(section 11.2).
+
 Configuration UI. Key management, chain registry, theme, keybinds, cache, secondary
 providers. Reads and writes `~/.config/blockexplorer-tui/config.toml`.
 
@@ -141,3 +147,31 @@ Feature: Settings
   variable when on a shared machine.
 - Should we support multiple Alchemy apps per chain? No in MVP; one app covers every
   chain via the Alchemy multichain endpoint.
+
+## 11. Implementation plan
+
+Single slice — the config loader already exists (`plan/14`). This slice
+only adds a read-only screen and a Home keybinding.
+
+### 11.1 Slice — UI + Home binding + BDD
+
+- `src/adapters/ui/settings.rs` — `SettingsScreen` that receives an
+  `AppConfigSnapshot` (simple view-model) and renders:
+  - active chain slug,
+  - Alchemy key presence ("configured" | "not set"),
+  - config-file path hint,
+  - explicit note listing what editing remains deferred.
+- Home gains an optional `settings_factory` bound to the `s` key.
+- `infra::run` passes a snapshot of the loaded `AppConfig` into the
+  factory so the screen shows the same values the runtime booted
+  with.
+- BDD `tests/e2e/features/settings.feature`: one scenario where
+  pressing `s` from Home shows the key status as "configured" once
+  the world has primed a fake key.
+
+### 11.2 Deferred
+
+- Editing credentials / chains / theme / keybinds (requires
+  persistent write + validation pipeline).
+- Ctrl+T "test credentials" round-trip.
+- Cache size display and reset.

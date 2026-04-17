@@ -29,6 +29,8 @@ Inside the TUI:
 | `Esc`     | Pop current screen (exits when the stack is empty)       |
 | `/`       | Open universal search (Home)                             |
 | `m`       | Open Mempool (Home)                                      |
+| `g`       | Open Gas Tracker (Home)                                  |
+| `s`       | Open Settings (Home)                                     |
 | `Enter`   | Open selected candidate, transaction or mempool tx       |
 | `Up/Down` | Move selection (lists)                                   |
 | `Tab`     | Next tab (Block / Tx detail)                             |
@@ -77,12 +79,13 @@ No test performs live network calls: adapters are exercised against
 
 ## Status
 
-Home, universal Search, Block detail, Transaction detail (MVP),
-Mempool (MVP) and Address detail (MVP) are wired end to end. The
-Mempool screen currently shows a "waiting..." empty state in live
-mode because the Alchemy WebSocket adapter has not landed yet;
-Address detail renders the Overview tab (address, kind, balance,
-nonce) — Transactions / Tokens / Activity / Contract tabs are
-deferred. Contract / Token detail pages still open as placeholder
-screens. Gas Tracker, Settings and the deferred screens (NFTs,
-Watchlist, Simulator, Validators) are planned but not yet built.
+Every MVP screen defined in `plan/*.md` sections 1-10 is wired:
+Home, Search, Block detail, Tx detail, Address detail, Contract
+detail, Token detail, Mempool, Gas Tracker and Settings — all
+reachable from Home with `/`, Enter or a single-letter key (see the
+table above). Each screen ships the minimum useful view and
+explicitly lists its deferred pieces at the bottom of its plan
+file. Mempool opens an empty "waiting..." state in live mode
+because the Alchemy WebSocket adapter has not landed yet.
+Watchlist, Simulator, Validators and NFT-specific screens remain
+out of scope and will arrive as new plan files when prioritised.
