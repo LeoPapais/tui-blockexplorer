@@ -5,6 +5,7 @@
 
 pub mod address_lookup;
 pub mod block_lookup;
+pub mod block_reader;
 pub mod chain_registry;
 pub mod ens_resolver;
 pub mod gas_oracle;
@@ -14,6 +15,7 @@ pub mod tx_lookup;
 
 pub use address_lookup::AddressLookupPort;
 pub use block_lookup::BlockLookupPort;
+pub use block_reader::BlockReaderPort;
 pub use chain_registry::ChainRegistryPort;
 pub use ens_resolver::EnsResolverPort;
 pub use gas_oracle::GasOraclePort;

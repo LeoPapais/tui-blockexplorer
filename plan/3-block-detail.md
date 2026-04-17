@@ -1,5 +1,9 @@
 # 3 — Block Detail
 
+Status: in progress. Slices A (domain + use case + stubs) and B
+(Alchemy adapter) landed first; Slice C (UI + BDD) finishes the
+plan. Full status tracked in section 11.
+
 Everything about one specific block. Reached from Search or from any screen that
 links to a block (Tx overview, Address transfers). Tabs are used to keep the view
 compact: Overview, Transactions, Blobs / Withdrawals.
@@ -158,3 +162,95 @@ Feature: Block detail
 
 - Do we precompute transaction categorisation (transfer vs contract interaction vs
   deployment) inside `LoadBlockTransactions`? Yes, based on `to` and input bytes.
+
+## 11. Implementation plan
+
+Delivered in three slices, each its own commit with the red->green loop.
+
+### 11.1 Slice A — domain + port + use case + stubs
+
+Scope kept tight: Overview tab only plus a flat transaction list (tx
+hashes). Blobs / Withdrawals / Beacon / Label integration are all
+deferred to a later phase since they require extra adapters we do
+not own yet.
+
+Domain additions (`src/domain/`):
+
+- `timestamp.rs` — `UnixTimestamp(u64)` newtype with `seconds` /
+  `from_seconds` helpers. Used by the Block entity.
+- `block.rs` — `BlockId { Number(BlockNumber), Hash(BlockHash) }` plus a
+  rich `Block` entity:
+  - `chain`, `number`, `hash`, `parent_hash`.
+  - `timestamp` (unix), `miner` (Address).
+  - `gas_used`, `gas_limit`, `base_fee` (optional pre-1559 / some L2s).
+  - `size` (bytes), `extra_data` (raw bytes).
+  - `tx_hashes: Vec<TxHash>` — flat list; receipt / from-to / status
+    enrichment waits for the receipts adapter.
+
+Port (`src/application/ports/block_reader.rs`):
+
+```rust
+pub trait BlockReaderPort: Send + Sync {
+    async fn get(&self, id: BlockId, chain: Chain)
+        -> Result<Option<Block>, DomainError>;
+}
+```
+
+Use case (`src/application/use_cases/load_block_overview.rs`): simple
+passthrough that translates the port's `Ok(None)` into
+`DomainError::NotFound` so the UI can show a "block not found"
+message without null-checking further.
+
+Stubs (`tests/support/stubs.rs::StubBlockReaderPort`): in-memory map
+keyed by both number and hash for each inserted `Block`.
+
+Functional tests (`tests/functional/load_block_overview.rs`):
+
+- happy path by number.
+- happy path by hash.
+- missing block returns `DomainError::NotFound`.
+- multiple blocks inserted: lookup by either key works independently.
+
+### 11.2 Slice B — Alchemy adapter
+
+New adapter `src/adapters/rpc/block_reader.rs` implementing
+`BlockReaderPort` via `eth_getBlockByNumber` / `eth_getBlockByHash`
+with `fullTransactions=false`. Response parsing pulls every field
+listed under 11.1, mapping hex numbers and byte arrays onto the
+domain types.
+
+Tests `tests/functional/alchemy_block_reader.rs` use wiremock:
+happy path by number, happy path by hash, null result maps to
+`Ok(None)`. Fixture
+`tests/fixtures/rpc__eth_getBlockByNumber__21345678_full.json`.
+
+### 11.3 Slice C — UI and navigation
+
+- `src/adapters/ui/block_detail.rs` hosting `BlockDetailScreen`.
+  - Tabs: Overview (rendered from the `Block` entity), Transactions
+    (list of `tx_hashes` with index + short hash).
+  - Keybindings: `Tab`/`Shift+T` switch tabs; `[` / `]` trigger
+    prev/next block loads through a feed channel; `Enter` on a
+    transaction pushes a `DetailPlaceholderScreen` until plan/4
+    replaces it; `y` / `Y` copy hash / number via arboard.
+- `src/infra/block_feed.rs` — spawn helper that owns a
+  `BlockReaderPort`, receives `BlockId` requests on an input channel,
+  and sends fresh `Block` values back on an output channel. Mirrors
+  `search_feed.rs`.
+- Search integration: the `DetailFactory` used by the `SearchScreen`
+  now produces a full `BlockDetailScreen` when the resolved entity is
+  a `Block`, falling back to the existing `DetailPlaceholderScreen`
+  for the other kinds.
+- BDD adjustments in `tests/e2e/features/block_detail.feature`:
+  - `Load block by number`.
+  - `Open a transaction from the block` (pushes the placeholder in
+    the MVP slice; will naturally start pushing TxDetail when plan/4
+    lands).
+  - `Handle missing block` (resolve fails -> modal / error banner on
+    the Search screen, which is where the flow starts).
+  - `Previous and next navigation`.
+- Deferred: the Transactions pagination scenario (requires receipts
+  + paging).
+
+Acceptance: every remaining BDD scenario green, plan flipped to
+`done` in `plan/README.md`, clippy clean.

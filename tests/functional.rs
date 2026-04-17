@@ -42,3 +42,6 @@ mod resolve_query;
 
 #[path = "functional/alchemy_lookups.rs"]
 mod alchemy_lookups;
+
+#[path = "functional/load_block_overview.rs"]
+mod load_block_overview;

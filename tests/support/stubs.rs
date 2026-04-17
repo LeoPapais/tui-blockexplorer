@@ -13,12 +13,12 @@ use std::{
 
 use blockexplorer_tui::{
     application::ports::{
-        AddressLookupPort, BlockLookupPort, ChainRegistryPort, EnsResolverPort, GasOraclePort,
-        NetworkStatusPort, TokenSearchPort, TxLookupPort,
+        AddressLookupPort, BlockLookupPort, BlockReaderPort, ChainRegistryPort,
+        EnsResolverPort, GasOraclePort, NetworkStatusPort, TokenSearchPort, TxLookupPort,
     },
     domain::{
-        Address, AddressKind, BlockHash, BlockNumber, BlockSummary, Chain, DomainError,
-        GasSnapshot, Gwei, NetworkStatus, TokenMetadata, TxHash, TxSummary, Wei,
+        Address, AddressKind, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
+        DomainError, GasSnapshot, Gwei, NetworkStatus, TokenMetadata, TxHash, TxSummary, Wei,
     },
 };
 use serde::Deserialize;
@@ -471,5 +471,45 @@ impl TokenSearchPort for StubTokenSearchPort {
             .get(&text.to_lowercase())
             .cloned()
             .unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: BlockReaderPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct BlockReaderState {
+    by_number: HashMap<BlockNumber, Block>,
+    by_hash: HashMap<BlockHash, Block>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubBlockReaderPort {
+    inner: Arc<Mutex<BlockReaderState>>,
+}
+
+impl StubBlockReaderPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Prime the stub with a full [`Block`] reachable through either
+    /// number or hash.
+    pub fn insert(&self, block: Block) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_number.insert(block.number, block.clone());
+        state.by_hash.insert(block.hash, block);
+    }
+}
+
+impl BlockReaderPort for StubBlockReaderPort {
+    async fn get(&self, id: BlockId, _chain: Chain) -> Result<Option<Block>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        let value = match id {
+            BlockId::Number(n) => state.by_number.get(&n).cloned(),
+            BlockId::Hash(h) => state.by_hash.get(&h).cloned(),
+        };
+        Ok(value)
     }
 }
