@@ -69,3 +69,6 @@ mod load_contract_overview;
 
 #[path = "functional/alchemy_proxy_detector.rs"]
 mod alchemy_proxy_detector;
+
+#[path = "functional/load_token_overview.rs"]
+mod load_token_overview;

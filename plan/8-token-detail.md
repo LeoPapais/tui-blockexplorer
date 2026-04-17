@@ -1,5 +1,10 @@
 # 8 — Token Detail
 
+Status: in progress. MVP slice ships the Overview tab with metadata +
+total supply only. Price and market-cap need the Prices API adapter;
+Transfers and Chart tabs need the Transfers API adapter. Both live in
+section 12.4 as follow-up work.
+
 Page for an ERC-20 token. Tabs in MVP: Overview, Transfers, Chart. The Holders tab is
 documented as deferred (section 11).
 
@@ -147,3 +152,75 @@ Feature: Token detail
 - Holders tab (top N holders, distribution chart). Requires data not directly
   provided by Alchemy and is deprioritised for MVP.
 - Multi-chain aggregated view (same token across chains) — future.
+
+## 12. Implementation plan
+
+Three slices. MVP lands the Overview tab with metadata + totalSupply;
+price / market cap / Transfers / Chart require new adapters we have
+not written (Prices API, Transfers API) and stay deferred in 12.4.
+
+### 12.1 Slice A — domain + port + use case + stubs
+
+Domain (`src/domain/token.rs`): existing `TokenMetadata` gains a
+sibling struct
+
+```rust
+pub struct TokenOverview {
+    pub metadata: TokenMetadata,
+    pub total_supply: u128,
+}
+```
+
+Port (`src/application/ports/token_reader.rs`):
+
+```rust
+pub trait TokenReaderPort: Send + Sync {
+    async fn get(&self, address: Address, chain: Chain)
+        -> Result<Option<TokenOverview>, DomainError>;
+}
+```
+
+Use case `load_token_overview`: passthrough that maps `Ok(None)` to
+`DomainError::NotFound`.
+
+Stub `StubTokenReaderPort` + three functional tests (happy path,
+missing token, truncated metadata).
+
+### 12.2 Slice B — Alchemy adapter
+
+`src/adapters/rpc/token_reader.rs` exposes `AlchemyTokenReader`:
+- `alchemy_getTokenMetadata` → `{ name, symbol, decimals, logo }`;
+  missing decimals or symbol short-circuit to `Ok(None)` (the plan
+  describes this as "unsupported token").
+- `eth_call` with the ERC-20 `totalSupply()` selector `0x18160ddd`
+  at the provided address; the 32-byte return decodes as a u128
+  (we truncate anything above the low 128 bits to keep the shape
+  lean — tokens with supplies above 2^128 are real but rare; the
+  UI renders the raw number without unit scaling anyway).
+- Both calls via `tokio::join!`.
+
+Fixtures + wiremock tests cover happy path and missing-metadata.
+
+### 12.3 Slice C — UI + wiring + BDD
+
+- `src/adapters/ui/token_detail.rs` — `TokenDetailScreen` with the
+  Overview tab rendering name, symbol, decimals, contract address
+  and raw `totalSupply()` value. Transfers and Chart tabs show a
+  "deferred" banner.
+- `src/infra/token_feed.rs` — `spawn` helper mirroring the other
+  feeds.
+- Search detail factory now routes `ResolvedEntity::Token` to the
+  new screen. Direct-open step for BDD pushes it without going
+  through Search.
+- BDD `tests/e2e/features/token_detail.feature`:
+  - Open a known token and assert the Overview shows the stub
+    symbol + totalSupply.
+  - Open an address with no metadata and assert the screen renders
+    the "unsupported" fallback.
+
+### 12.4 Deferred (next slices under this plan)
+
+- Prices API adapter feeding the price / market-cap lines.
+- Transfers API adapter feeding the Transfers tab.
+- Historical prices for the Chart tab.
+- Holders tab.

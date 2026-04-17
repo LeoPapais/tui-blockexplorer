@@ -15,13 +15,14 @@ use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
         ChainRegistryPort, EnsResolverPort, GasOraclePort, NetworkStatusPort,
-        PendingTxStreamPort, ProxyDetectionPort, TokenSearchPort, TxLookupPort, TxReaderPort,
+        PendingTxStreamPort, ProxyDetectionPort, TokenReaderPort, TokenSearchPort,
+        TxLookupPort, TxReaderPort,
     },
     domain::{
         Address, AddressKind, AddressOverview, Block, BlockHash, BlockId, BlockNumber,
         BlockSummary, Chain, DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx,
-        PendingTxEvent, PendingTxFilter, ProxyInfo, TokenMetadata, Transaction, TxHash,
-        TxSummary, Wei,
+        PendingTxEvent, PendingTxFilter, ProxyInfo, TokenMetadata, TokenOverview,
+        Transaction, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -670,5 +671,41 @@ impl ProxyDetectionPort for StubProxyDetectionPort {
     ) -> Result<Option<ProxyInfo>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_address.get(&address).copied())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TokenReaderPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TokenReaderState {
+    by_address: HashMap<Address, TokenOverview>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTokenReaderPort {
+    inner: Arc<Mutex<TokenReaderState>>,
+}
+
+impl StubTokenReaderPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, overview: TokenOverview) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(overview.metadata.address, overview);
+    }
+}
+
+impl TokenReaderPort for StubTokenReaderPort {
+    async fn get(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<TokenOverview>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned())
     }
 }

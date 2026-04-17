@@ -29,5 +29,5 @@ pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use network_status::{GasSnapshot, NetworkStatus};
 pub use search::{AddressKind, ResolvedEntity};
 pub use timestamp::UnixTimestamp;
-pub use token::TokenMetadata;
+pub use token::{TokenMetadata, TokenOverview};
 pub use tx::{Transaction, TxHash, TxStatus, TxSummary, TxType};
