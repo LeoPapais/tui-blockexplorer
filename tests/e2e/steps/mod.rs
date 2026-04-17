@@ -1,0 +1,8 @@
+//! Step definitions grouped per screen.
+//!
+//! Every `{screen}.rs` file registers its `#[given] / #[when] / #[then]`
+//! functions against the shared [`crate::world::AppWorld`]. The step
+//! functions stay mostly unimplemented during the scaffolding phase so
+//! scenarios fail loudly with a reference to the plan file they come from.
+
+pub mod home;

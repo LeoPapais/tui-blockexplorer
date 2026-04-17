@@ -34,6 +34,7 @@ external-only data policy).
 | 8  | [8-token-detail.md](8-token-detail.md)                         | Token detail              | draft  |
 | 9  | [9-gas-tracker.md](9-gas-tracker.md)                           | Gas tracker               | draft  |
 | 10 | [10-settings.md](10-settings.md)                               | Settings                  | draft  |
+| 11 | [11-rust-scaffolding.md](11-rust-scaffolding.md)               | Rust project scaffolding  | draft  |
 
 Status values: `draft` (still in planning), `ready` (ready to implement), `done`
 (implemented and covered by passing tests), `deferred`.
