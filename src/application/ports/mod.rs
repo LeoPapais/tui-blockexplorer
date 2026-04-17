@@ -12,6 +12,7 @@ pub mod gas_oracle;
 pub mod network_status;
 pub mod token_search;
 pub mod tx_lookup;
+pub mod tx_reader;
 
 pub use address_lookup::AddressLookupPort;
 pub use block_lookup::BlockLookupPort;
@@ -22,3 +23,4 @@ pub use gas_oracle::GasOraclePort;
 pub use network_status::NetworkStatusPort;
 pub use token_search::TokenSearchPort;
 pub use tx_lookup::TxLookupPort;
+pub use tx_reader::TxReaderPort;

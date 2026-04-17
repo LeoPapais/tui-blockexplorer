@@ -48,3 +48,6 @@ mod load_block_overview;
 
 #[path = "functional/alchemy_block_reader.rs"]
 mod alchemy_block_reader;
+
+#[path = "functional/load_tx_overview.rs"]
+mod load_tx_overview;

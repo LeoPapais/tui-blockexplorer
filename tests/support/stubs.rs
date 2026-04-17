@@ -15,10 +15,12 @@ use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, BlockLookupPort, BlockReaderPort, ChainRegistryPort,
         EnsResolverPort, GasOraclePort, NetworkStatusPort, TokenSearchPort, TxLookupPort,
+        TxReaderPort,
     },
     domain::{
         Address, AddressKind, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
-        DomainError, GasSnapshot, Gwei, NetworkStatus, TokenMetadata, TxHash, TxSummary, Wei,
+        DomainError, GasSnapshot, Gwei, NetworkStatus, TokenMetadata, Transaction, TxHash,
+        TxSummary, Wei,
     },
 };
 use serde::Deserialize;
@@ -511,5 +513,41 @@ impl BlockReaderPort for StubBlockReaderPort {
             BlockId::Hash(h) => state.by_hash.get(&h).cloned(),
         };
         Ok(value)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TxReaderPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TxReaderState {
+    by_hash: HashMap<TxHash, Transaction>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTxReaderPort {
+    inner: Arc<Mutex<TxReaderState>>,
+}
+
+impl StubTxReaderPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, tx: Transaction) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(tx.hash, tx);
+    }
+}
+
+impl TxReaderPort for StubTxReaderPort {
+    async fn get(
+        &self,
+        hash: TxHash,
+        _chain: Chain,
+    ) -> Result<Option<Transaction>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_hash.get(&hash).cloned())
     }
 }

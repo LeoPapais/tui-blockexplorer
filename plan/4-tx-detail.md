@@ -1,5 +1,9 @@
 # 4 — Transaction Detail
 
+Status: in progress. The first MVP slice ships Overview + Raw tabs
+only; the remaining tabs depend on adapters we have not built yet.
+Full status tracked in section 12.
+
 The most feature-dense screen. Six tabs: Overview, Logs, Internal, State Changes,
 Asset Changes, Raw. Heavy reliance on Alchemy's Trace, Debug and Simulation APIs,
 plus Etherscan for ABI and openchain / Samczsun for signature fallback.
@@ -223,3 +227,119 @@ Feature: Transaction detail
   canonical re-serialized domain entity? Decision: raw adapter response.
 - Depth limit for the Internal call tree UI? Default collapse-at-depth=3, expandable
   via `Space`.
+
+## 12. Implementation plan
+
+Delivered in three slices. The MVP intentionally stays narrow so that
+the Tx placeholder pushed from BlockDetail and Search becomes a real
+screen as quickly as possible; the richer tabs arrive in follow-up
+slices once the adapter menagerie (traces, simulation, ABI lookup,
+signature directory) is in place.
+
+### 12.1 Slice A — domain + port + use case + stubs (MVP Overview only)
+
+Domain additions (`src/domain/`):
+
+- Extend `tx.rs` with a full `Transaction` entity and the enums it
+  pulls in: `TxStatus { Success, Failed { reason: Option<String> } }`
+  and `TxType { Legacy, AccessList, DynamicFee, Blob }` (mapped from
+  the raw hex type field).
+- Transaction fields: `chain`, `hash`, `status`, `block_number`,
+  `block_hash`, `tx_index`, `from`, `to` (None for contract creation),
+  `value`, `gas_price`, `gas_used`, `gas_limit`, `nonce`, `tx_type`,
+  `input` (raw bytes), `raw_json` (exact adapter body to back the Raw
+  tab).
+
+Port (`src/application/ports/tx_reader.rs`):
+
+```rust
+pub trait TxReaderPort: Send + Sync {
+    async fn get(&self, hash: TxHash, chain: Chain)
+        -> Result<Option<Transaction>, DomainError>;
+}
+```
+
+Kept separate from `TxLookupPort` (summary only) for the same reason
+`BlockReaderPort` exists next to `BlockLookupPort`: each has a clear
+consumer.
+
+Use case (`src/application/use_cases/load_tx_overview.rs`): missing
+tx surfaces as `DomainError::NotFound`; otherwise returns the full
+`Transaction`.
+
+Stub (`tests/support/stubs.rs::StubTxReaderPort`): in-memory map
+keyed by `TxHash`.
+
+Functional tests (`tests/functional/load_tx_overview.rs`):
+
+- happy path (success tx).
+- reverted tx carries its reason string.
+- missing tx returns `NotFound`.
+
+### 12.2 Slice B — Alchemy adapter
+
+`src/adapters/rpc/tx_reader.rs` exposes `AlchemyTxReader` that issues
+`eth_getTransactionByHash` + `eth_getTransactionReceipt` in parallel
+with `tokio::join!`, merges the two results and keeps the raw
+transaction JSON for the Raw tab. Null response from either call
+maps to `Ok(None)`. Revert reason is parsed from the receipt's
+`revertReason` field when present (Alchemy exposes it on mined
+failed txs); otherwise left as `None` and the UI renders "reverted"
+without a reason string.
+
+Tests `tests/functional/alchemy_tx_reader.rs` drive three wiremock
+cases: success tx, reverted tx, null result. Fixtures:
+
+- `rpc__eth_getTransactionByHash__usdc_transfer.json`
+- `rpc__eth_getTransactionReceipt__usdc_transfer_success.json`
+- `rpc__eth_getTransactionReceipt__reverted.json`
+- `rpc__eth_getTransactionByHash__null.json`
+
+### 12.3 Slice C — UI and wiring
+
+- `src/adapters/ui/tx_detail.rs` — `TxDetailScreen` with two tabs:
+  - **Overview**: hash, status (+ reason if failed), block, from,
+    to, value, gas used/price, fee, nonce, type, first 4 bytes of
+    input displayed as the hex selector. No ABI decoding yet; the
+    line that eventually holds `transfer(address,uint256)` shows the
+    raw selector plus a short excerpt of the calldata.
+  - **Raw**: pretty-printed JSON from the adapter's stored
+    `raw_json`.
+- `src/infra/tx_feed.rs` — spawn helper mirroring `block_feed::spawn`:
+  owns a `TxReaderPort`, consumes `TxHash` requests, publishes
+  `Transaction` values back on the other channel half.
+- Wiring in `infra::run`: the Search detail factory now produces a
+  `TxDetailScreen` when a `ResolvedEntity::Tx` candidate is
+  confirmed, and `BlockDetailScreen`'s `open_tx_factory` produces
+  one for each tx-row Enter. Address / Token / Contract kinds keep
+  the existing placeholder path.
+
+BDD adjustments in `tests/e2e/features/tx_detail.feature`:
+
+- `Open a successful tx from BlockDetail` — replaces the
+  placeholder and asserts the Overview tab shows status "success"
+  plus the stub's tx hash.
+- `Reverted transaction shows reason` — stub serves a failed
+  receipt with a `revertReason`; Overview shows "failed" plus the
+  reason text.
+
+The Gherkin scenarios referencing ABI decoding, Logs, Internal,
+Asset Changes and State Changes stay in section 8 for reference but
+are **not** wired up in this slice.
+
+Acceptance: two new BDD scenarios pass, every previous test stays
+green, plan status flipped to `done` (Overview MVP) in
+`plan/README.md`, clippy clean.
+
+### 12.4 Deferred (future slices under this plan)
+
+Each becomes its own slice, roughly in this order:
+
+1. ABI decoding of the Overview method row: requires
+   `ContractSourcePort` (Etherscan V2) and the signature-directory
+   adapter (openchain + Samczsun).
+2. Logs tab.
+3. Internal-calls tab (Trace namespace + Debug fallback).
+4. Asset Changes tab (Alchemy Simulation).
+5. State Changes tab.
+6. Pending-tx support + `s` re-simulate key.
