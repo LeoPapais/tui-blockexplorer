@@ -1,9 +1,11 @@
 # 7 — Contract Detail
 
-Status: in progress. MVP slice ships the Overview tab with basic
-account info + EIP-1967 proxy detection. Source / ABI / Read / Events
-/ Storage tabs all depend on the Etherscan adapter, which is not in
-the codebase yet. Full status tracked in section 12.
+Status: **done** (MVP scope) — Overview tab with EIP-1967 proxy
+detection is live, the two BDD scenarios in
+`tests/e2e/features/contract_detail.feature` are green. Search
+routes addresses with `kind = Contract` to the new screen. Source /
+ABI / Read / Events / Storage tabs remain deferred pending the
+Etherscan adapter.
 
 Inspect and read a smart contract. Tabs in MVP: Overview, Source, ABI, Read, Events,
 Storage. The Write tab is deferred because it requires a signer.

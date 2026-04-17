@@ -7,6 +7,7 @@
 
 pub mod address_detail;
 pub mod block_detail;
+pub mod contract_detail;
 pub mod detail_placeholder;
 pub mod home;
 pub mod mempool;
@@ -19,6 +20,9 @@ pub use address_detail::{
 };
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
+};
+pub use contract_detail::{
+    ContractDetailScreen, ContractFeed, ContractFeedSender, contract_feed,
 };
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};

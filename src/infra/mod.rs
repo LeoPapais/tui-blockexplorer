@@ -10,6 +10,7 @@
 mod address_feed;
 mod block_feed;
 pub mod config;
+mod contract_feed;
 mod home_feed;
 mod mempool_feed;
 mod runtime;
@@ -26,18 +27,20 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyTxLookup, AlchemyTxReader, RpcClient,
+            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemyTxLookup,
+            AlchemyTxReader, RpcClient,
         },
         ui::{
-            AddressDetailScreen, BlockDetailScreen, DetailPlaceholderScreen, HomeScreen,
-            MempoolScreen, Screen, ScreenStack, SearchScreen, TxDetailScreen,
-            address_feed, block_feed, search_feed, tx_feed,
+            AddressDetailScreen, BlockDetailScreen, ContractDetailScreen,
+            DetailPlaceholderScreen, HomeScreen, MempoolScreen, Screen, ScreenStack,
+            SearchScreen, TxDetailScreen, address_feed, block_feed, contract_feed,
+            search_feed, tx_feed,
         },
     },
     application::{
         ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort,
     },
-    domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
+    domain::{AddressKind, BlockId, Chain, PendingTxFilter, ResolvedEntity},
 };
 use mempool_feed::EmptyPendingTxStream;
 
@@ -65,6 +68,20 @@ fn live_address_detail_screen(
     let (feed, sender) = address_feed();
     std::mem::drop(address_feed::spawn(chain, reader, sender));
     Box::new(AddressDetailScreen::loading(chain, address, feed))
+}
+
+/// Build a live `ContractDetailScreen` backed by address-reader +
+/// proxy-detection tasks.
+fn live_contract_detail_screen(
+    chain: Chain,
+    address: crate::domain::Address,
+    rpc: RpcClient,
+) -> Box<dyn Screen> {
+    let reader = AlchemyAddressReader::new(rpc.clone());
+    let detector = AlchemyProxyDetector::new(rpc);
+    let (feed, sender) = contract_feed();
+    std::mem::drop(contract_feed::spawn(chain, reader, detector, sender));
+    Box::new(ContractDetailScreen::loading(chain, address, feed))
 }
 
 /// Stub token search used until the Etherscan adapter lands. Returns
@@ -197,9 +214,14 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                         ResolvedEntity::Tx { hash, .. } => {
                             live_tx_detail_screen(chain, hash, rpc.clone())
                         }
-                        ResolvedEntity::Address { address, .. } => {
-                            live_address_detail_screen(chain, address, rpc.clone())
-                        }
+                        ResolvedEntity::Address { address, kind, .. } => match kind {
+                            AddressKind::Contract => {
+                                live_contract_detail_screen(chain, address, rpc.clone())
+                            }
+                            AddressKind::Eoa => {
+                                live_address_detail_screen(chain, address, rpc.clone())
+                            }
+                        },
                         other => Box::new(DetailPlaceholderScreen::new(other)),
                     }
                 })

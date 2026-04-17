@@ -16,7 +16,8 @@ use cucumber::World;
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort,
-    StubPendingTxStreamPort, StubTokenSearchPort, StubTxLookupPort, StubTxReaderPort,
+    StubPendingTxStreamPort, StubProxyDetectionPort, StubTokenSearchPort, StubTxLookupPort,
+    StubTxReaderPort,
 };
 
 pub type AppHomeSession =
@@ -47,6 +48,9 @@ pub struct AppWorld {
 
     /// Address-detail stub.
     pub address_reader_stub: StubAddressReaderPort,
+
+    /// Contract-detail proxy stub.
+    pub proxy_detector_stub: StubProxyDetectionPort,
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,
