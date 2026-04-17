@@ -5,6 +5,7 @@
 //! functions stay mostly unimplemented during the scaffolding phase so
 //! scenarios fail loudly with a reference to the plan file they come from.
 
+pub mod address_detail;
 pub mod block_detail;
 pub mod home;
 pub mod mempool;

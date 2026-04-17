@@ -5,6 +5,7 @@
 //!
 //! See `.cursor/rules/tui.mdc` for the detailed contract.
 
+pub mod address_detail;
 pub mod block_detail;
 pub mod detail_placeholder;
 pub mod home;
@@ -13,6 +14,9 @@ pub mod screen;
 pub mod search;
 pub mod tx_detail;
 
+pub use address_detail::{
+    AddressDetailScreen, AddressFeed, AddressFeedSender, address_feed,
+};
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
 };

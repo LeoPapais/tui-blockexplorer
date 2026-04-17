@@ -210,7 +210,7 @@ async fn press_bracket(world: &mut AppWorld, key: String) {
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(regex = r#"^a "([^"]+)" screen is on top$"#)]
+#[then(regex = r#"^an? "([^"]+)" screen is on top$"#)]
 async fn screen_on_top(world: &mut AppWorld, title: String) {
     let stack = world.stack.as_ref().expect("stack");
     assert_eq!(stack.top().unwrap().title(), title);

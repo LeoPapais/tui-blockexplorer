@@ -7,6 +7,7 @@
 //! See `plan/12-screen-runtime.md` (runtime) and
 //! `plan/14-config-and-credentials.md` (credentials + wiring).
 
+mod address_feed;
 mod block_feed;
 pub mod config;
 mod home_feed;
@@ -23,13 +24,14 @@ use crate::{
     adapters::{
         config::InMemoryChainRegistry,
         rpc::{
-            AlchemyAddressLookup, AlchemyBlockLookup, AlchemyBlockReader, AlchemyEnsResolver,
-            AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyTxLookup,
-            AlchemyTxReader, RpcClient,
+            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
+            AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
+            AlchemyNetworkStatusAdapter, AlchemyTxLookup, AlchemyTxReader, RpcClient,
         },
         ui::{
-            BlockDetailScreen, DetailPlaceholderScreen, HomeScreen, MempoolScreen, Screen,
-            ScreenStack, SearchScreen, TxDetailScreen, block_feed, search_feed, tx_feed,
+            AddressDetailScreen, BlockDetailScreen, DetailPlaceholderScreen, HomeScreen,
+            MempoolScreen, Screen, ScreenStack, SearchScreen, TxDetailScreen,
+            address_feed, block_feed, search_feed, tx_feed,
         },
     },
     application::{
@@ -50,6 +52,19 @@ fn live_tx_detail_screen(
     let (feed, sender) = tx_feed();
     std::mem::drop(tx_feed::spawn(chain, reader, sender));
     Box::new(TxDetailScreen::loading(chain, hash, feed))
+}
+
+/// Build a live `AddressDetailScreen` backed by a dedicated
+/// Alchemy address-reader task.
+fn live_address_detail_screen(
+    chain: Chain,
+    address: crate::domain::Address,
+    rpc: RpcClient,
+) -> Box<dyn Screen> {
+    let reader = AlchemyAddressReader::new(rpc);
+    let (feed, sender) = address_feed();
+    std::mem::drop(address_feed::spawn(chain, reader, sender));
+    Box::new(AddressDetailScreen::loading(chain, address, feed))
 }
 
 /// Stub token search used until the Etherscan adapter lands. Returns
@@ -181,6 +196,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                         }
                         ResolvedEntity::Tx { hash, .. } => {
                             live_tx_detail_screen(chain, hash, rpc.clone())
+                        }
+                        ResolvedEntity::Address { address, .. } => {
+                            live_address_detail_screen(chain, address, rpc.clone())
                         }
                         other => Box::new(DetailPlaceholderScreen::new(other)),
                     }

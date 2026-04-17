@@ -1,9 +1,10 @@
 # 6 — Address Detail
 
-Status: in progress. The MVP slice ships the Overview tab only; every
-other tab needs adapters we have not built yet (TransfersPort,
-PortfolioPort, PricesPort, LabelPort). Full status tracked in
-section 12.
+Status: **done** (MVP scope) — Overview tab is live, the two BDD
+scenarios in `tests/e2e/features/address_detail.feature` are green
+and Search opens a real AddressDetailScreen instead of the
+placeholder. Transactions / Tokens / Activity / Contract / NFTs tabs
+remain deferred (section 11).
 
 Account dossier. Active tabs in MVP: Overview, Transactions, Tokens, Activity, and
 Contract (only when the address has code). The NFTs tab is documented in section 11

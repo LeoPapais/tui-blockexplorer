@@ -14,9 +14,9 @@ use blockexplorer_tui::{
 use cucumber::World;
 
 use crate::support::stubs::{
-    StubAddressLookupPort, StubBlockLookupPort, StubBlockReaderPort, StubChainRegistry,
-    StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
-    StubTokenSearchPort, StubTxLookupPort, StubTxReaderPort,
+    StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
+    StubChainRegistry, StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort,
+    StubPendingTxStreamPort, StubTokenSearchPort, StubTxLookupPort, StubTxReaderPort,
 };
 
 pub type AppHomeSession =
@@ -44,6 +44,9 @@ pub struct AppWorld {
 
     /// Mempool stub.
     pub pending_stub: StubPendingTxStreamPort,
+
+    /// Address-detail stub.
+    pub address_reader_stub: StubAddressReaderPort,
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,

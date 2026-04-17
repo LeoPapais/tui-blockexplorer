@@ -9,12 +9,13 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        BlockDetailScreen, Command, DetailPlaceholderScreen, HomeScreen, ScreenStack,
-        SearchScreen, TxDetailScreen, block_feed, home_feed, search_feed, tx_feed,
+        AddressDetailScreen, BlockDetailScreen, Command, DetailPlaceholderScreen, HomeScreen,
+        ScreenStack, SearchScreen, TxDetailScreen, address_feed, block_feed, home_feed,
+        search_feed, tx_feed,
     },
     application::{
         ConnectionStatus, HomeViewModel,
-        ports::{BlockReaderPort, TxReaderPort},
+        ports::{AddressReaderPort, BlockReaderPort, TxReaderPort},
         use_cases::resolve_query::ResolveQuery,
     },
     domain::{
@@ -72,6 +73,7 @@ pub(crate) fn build_search_factory(
     let token = world.token_stub.clone();
     let block_reader = world.block_reader_stub.clone();
     let tx_reader = world.tx_reader_stub.clone();
+    let address_reader = world.address_reader_stub.clone();
 
     Box::new(move || {
         let (feed, sender) = search_feed();
@@ -82,6 +84,7 @@ pub(crate) fn build_search_factory(
         let token = token.clone();
         let block_reader_for_detail = block_reader.clone();
         let tx_reader_for_detail = tx_reader.clone();
+        let address_reader_for_detail = address_reader.clone();
 
         tokio::spawn(async move {
             let blockexplorer_tui::adapters::ui::SearchFeedSender {
@@ -121,6 +124,7 @@ pub(crate) fn build_search_factory(
         > = {
             let block_reader = block_reader_for_detail.clone();
             let tx_reader = tx_reader_for_detail.clone();
+            let address_reader = address_reader_for_detail.clone();
             Box::new(move |entity: ResolvedEntity| match entity {
                 ResolvedEntity::Block { number, .. } => spawn_block_detail(
                     chain,
@@ -130,6 +134,9 @@ pub(crate) fn build_search_factory(
                 ),
                 ResolvedEntity::Tx { hash, .. } => {
                     spawn_tx_detail(chain, hash, tx_reader.clone())
+                }
+                ResolvedEntity::Address { address, .. } => {
+                    spawn_address_detail(chain, address, address_reader.clone())
                 }
                 other => Box::new(DetailPlaceholderScreen::new(other))
                     as Box<dyn blockexplorer_tui::adapters::ui::Screen>,
@@ -167,6 +174,29 @@ pub(crate) fn spawn_block_detail<
     let tx_reader_for_open = tx_reader.clone();
     let open_tx = Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
     Box::new(BlockDetailScreen::loading(chain, id, feed, open_tx))
+}
+
+pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = address_feed();
+    let reader_for_task = reader.clone();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
+            updates_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(addr) = input_rx.recv().await {
+            if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
+                && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+        }
+    });
+    Box::new(AddressDetailScreen::loading(chain, address, feed))
 }
 
 pub(crate) fn spawn_tx_detail<R: TxReaderPort + Clone + 'static>(
