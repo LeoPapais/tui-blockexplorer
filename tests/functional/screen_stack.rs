@@ -29,6 +29,14 @@ impl Screen for LabelScreen {
     fn handle_key(&mut self, _key: KeyEvent) -> Command {
         Command::None
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[test]
@@ -89,6 +97,12 @@ fn top_mut_returns_a_mutable_handle() {
         fn tick(&mut self) -> Command {
             self.ticks += 1;
             Command::None
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
         }
     }
 

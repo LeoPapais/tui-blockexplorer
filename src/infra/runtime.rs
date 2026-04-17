@@ -104,6 +104,11 @@ async fn drive_loop(terminal: &mut Tui, stack: &mut ScreenStack) -> Result<()> {
                 stack.clear();
                 break;
             }
+            Command::Push(screen) => stack.push(screen),
+            Command::Replace(screen) => {
+                stack.pop();
+                stack.push(screen);
+            }
         }
 
         redraw(terminal, stack)?;

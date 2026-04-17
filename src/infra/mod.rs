@@ -10,6 +10,7 @@
 pub mod config;
 mod home_feed;
 mod runtime;
+mod search_feed;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -18,12 +19,42 @@ use url::Url;
 use crate::{
     adapters::{
         config::InMemoryChainRegistry,
-        rpc::{AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, RpcClient},
-        ui::{HomeScreen, ScreenStack},
+        rpc::{
+            AlchemyAddressLookup, AlchemyBlockLookup, AlchemyEnsResolver,
+            AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyTxLookup,
+            RpcClient,
+        },
+        ui::{
+            DetailPlaceholderScreen, HomeScreen, Screen, ScreenStack, SearchScreen,
+            search_feed,
+        },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel},
     domain::Chain,
 };
+
+/// Stub token search used until the Etherscan adapter lands. Returns
+/// no candidates for every query.
+#[derive(Default, Clone, Copy)]
+struct NoopTokenSearch;
+
+impl crate::application::ports::TokenSearchPort for NoopTokenSearch {
+    async fn by_symbol(
+        &self,
+        _symbol: &str,
+        _chain: Chain,
+    ) -> Result<Vec<crate::domain::TokenMetadata>, crate::domain::DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn by_name(
+        &self,
+        _text: &str,
+        _chain: Chain,
+    ) -> Result<Vec<crate::domain::TokenMetadata>, crate::domain::DomainError> {
+        Ok(Vec::new())
+    }
+}
 
 pub use config::{AppConfig, ApiCredentials, ConfigLoader};
 
@@ -85,14 +116,36 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let rpc = RpcClient::new(url, http);
 
     let network = AlchemyNetworkStatusAdapter::new(rpc.clone());
-    let gas = AlchemyGasOracleAdapter::new(rpc);
+    let gas = AlchemyGasOracleAdapter::new(rpc.clone());
     let chains = InMemoryChainRegistry::with_default(chain);
 
     let session = HomeSession::new(network, gas, chains, chain);
-    let (feed, _handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
+    let (feed, _home_handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
+
+    let search_factory = {
+        let rpc = rpc.clone();
+        Box::new(move || -> Box<dyn Screen> {
+            let block = AlchemyBlockLookup::new(rpc.clone());
+            let tx = AlchemyTxLookup::new(rpc.clone());
+            let addr = AlchemyAddressLookup::new(rpc.clone());
+            let ens = AlchemyEnsResolver::new(rpc.clone());
+            let token = NoopTokenSearch;
+            let (search_feed, sender) = search_feed();
+            // JoinHandle intentionally dropped: the task lives for as
+            // long as the receiver end is alive, which matches the
+            // lifetime of the SearchScreen we return.
+            std::mem::drop(search_feed::spawn(chain, block, tx, addr, ens, token, sender));
+            Box::new(SearchScreen::new(
+                search_feed,
+                Box::new(|entity| Box::new(DetailPlaceholderScreen::new(entity))),
+            ))
+        })
+    };
 
     let mut stack = ScreenStack::new();
-    stack.push(Box::new(HomeScreen::with_feed(loading_view(chain), feed)));
+    stack.push(Box::new(
+        HomeScreen::with_feed(loading_view(chain), feed).with_search_factory(search_factory),
+    ));
     stack
 }
 

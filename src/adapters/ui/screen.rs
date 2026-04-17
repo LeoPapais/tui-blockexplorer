@@ -7,8 +7,7 @@ use ratatui::{Frame, layout::Rect};
 
 /// Result of an input handler or tick on a screen. Consumed by the
 /// runtime dispatcher to decide whether to keep going, pop the current
-/// screen or terminate the process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// screen, push a new one or terminate the process.
 pub enum Command {
     /// No state change.
     None,
@@ -19,11 +18,50 @@ pub enum Command {
     Quit,
     /// Ask the screen to refresh its data on its next tick.
     Refresh,
+    /// Push a new screen on top of the stack.
+    Push(Box<dyn Screen>),
+    /// Pop the current screen and push `0` on top atomically. Useful
+    /// when a modal-ish screen wants to hand control to a detail page.
+    Replace(Box<dyn Screen>),
 }
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::None => write!(f, "Command::None"),
+            Command::Pop => write!(f, "Command::Pop"),
+            Command::Quit => write!(f, "Command::Quit"),
+            Command::Refresh => write!(f, "Command::Refresh"),
+            Command::Push(s) => write!(f, "Command::Push({})", s.title()),
+            Command::Replace(s) => write!(f, "Command::Replace({})", s.title()),
+        }
+    }
+}
+
+impl PartialEq for Command {
+    fn eq(&self, other: &Self) -> bool {
+        // Only compare the unit variants; composite variants are
+        // never equal to anything since they carry boxed trait
+        // objects without an intrinsic equality.
+        matches!(
+            (self, other),
+            (Command::None, Command::None)
+                | (Command::Pop, Command::Pop)
+                | (Command::Quit, Command::Quit)
+                | (Command::Refresh, Command::Refresh)
+        )
+    }
+}
+
+impl Eq for Command {}
 
 /// A screen renders itself into a `ratatui::Frame` and receives user
 /// input. Implementations live under `src/adapters/ui/*`.
-pub trait Screen: Send {
+///
+/// Screens must be `'static` so the runtime can keep them on a
+/// heterogeneous stack and so tests can downcast through
+/// [`Screen::as_any`].
+pub trait Screen: Send + 'static {
     /// Short name used on the breadcrumb and for logging.
     fn title(&self) -> &str;
 
@@ -39,6 +77,13 @@ pub trait Screen: Send {
     fn tick(&mut self) -> Command {
         Command::None
     }
+
+    /// Expose the screen as `Any` so tests can downcast to the
+    /// concrete type. Real runtime code never uses this.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Mutable `Any` counterpart of [`Screen::as_any`].
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 /// Push-down stack of screens. The runtime always renders the top of the

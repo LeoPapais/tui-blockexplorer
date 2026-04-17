@@ -147,6 +147,15 @@ pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
     (HomeFeed { rx }, HomeFeedSender { tx })
 }
 
+/// Factory for the search screen, stored on the home screen so that
+/// pressing `/` produces a ready-to-push `Box<dyn Screen>` without the
+/// home screen knowing anything about the search adapters.
+///
+/// `None` means the `/` key is inert (used by demo mode, where there
+/// is no resolver task to back the search screen).
+pub type SearchFactory =
+    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+
 /// Screen-level wrapper around [`render`].
 ///
 /// Holds the current [`HomeViewModel`] and optionally a [`HomeFeed`]
@@ -155,6 +164,7 @@ pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
 pub struct HomeScreen {
     view: HomeViewModel,
     feed: Option<HomeFeed>,
+    search_factory: Option<SearchFactory>,
 }
 
 impl HomeScreen {
@@ -162,7 +172,11 @@ impl HomeScreen {
     /// background updates.
     #[must_use]
     pub fn new(view: HomeViewModel) -> Self {
-        Self { view, feed: None }
+        Self {
+            view,
+            feed: None,
+            search_factory: None,
+        }
     }
 
     /// Build a `HomeScreen` that starts with `initial` and then
@@ -172,7 +186,16 @@ impl HomeScreen {
         Self {
             view: initial,
             feed: Some(feed),
+            search_factory: None,
         }
+    }
+
+    /// Equip the home screen with a factory that produces a search
+    /// screen when the user presses `/`. Returns `self` for chaining.
+    #[must_use]
+    pub fn with_search_factory(mut self, factory: SearchFactory) -> Self {
+        self.search_factory = Some(factory);
+        self
     }
 
     /// Placeholder view-model used by `cargo run -- --demo` until the
@@ -221,6 +244,10 @@ impl Screen for HomeScreen {
         match key.code {
             KeyCode::Char('q') => Command::Quit,
             KeyCode::Esc => Command::Pop,
+            KeyCode::Char('/') => match self.search_factory.as_ref() {
+                Some(factory) => Command::Push(factory()),
+                None => Command::None,
+            },
             _ => Command::None,
         }
     }
@@ -240,5 +267,13 @@ impl Screen for HomeScreen {
             }
         }
         Command::None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

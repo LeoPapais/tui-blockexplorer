@@ -1,6 +1,8 @@
 # 2 — Universal Search
 
-Status: in progress (Slice A: domain + use case green).
+Status: **done** — all five BDD scenarios in
+`tests/e2e/features/search.feature` are green along with the
+functional coverage under `tests/functional/`.
 
 With the block list and the transaction list removed, the Search screen is the only
 way to reach detail screens for entities the user does not already have on screen. It

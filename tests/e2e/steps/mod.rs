@@ -6,3 +6,4 @@
 //! scenarios fail loudly with a reference to the plan file they come from.
 
 pub mod home;
+pub mod search;
