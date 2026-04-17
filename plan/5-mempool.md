@@ -1,5 +1,10 @@
 # 5 — Mempool
 
+Status: in progress. MVP slice ships the domain + port + use case +
+stub-driven UI. The Alchemy WebSocket adapter that actually produces
+live events stays deferred; live `cargo run` opens an empty Mempool
+until that adapter lands. Full status tracked in section 11.
+
 Live stream of pending transactions as seen by Alchemy's mempool. Important caveat:
 this is the mempool Alchemy observes, not a globally complete mempool; a globally
 complete view does not exist by design on public chains.
@@ -132,3 +137,85 @@ Feature: Mempool stream
 - Default filter on launch: none. User decides.
 - Retention of mined txs: zero; they disappear immediately. The user can still open
   TxDetail for a recently seen hash via Search.
+
+## 11. Implementation plan
+
+Two slices. The WebSocket adapter that actually talks to Alchemy is
+explicitly deferred (section 11.3) because it requires a brand new
+adapter tier; everything else ships behind a trait so the WS
+implementation will plug in without refactors.
+
+### 11.1 Slice A — domain + port + use case + stubs
+
+Domain additions (`src/domain/`):
+
+- `mempool.rs`
+  - `PendingTx { hash, from, to, value }` — lean on purpose; the
+    Mempool screen only needs enough to render a row and drill into
+    TxDetail.
+  - `PendingTxEvent { Added(PendingTx), Removed(TxHash) }` — maps
+    the Alchemy delta shape (Alchemy emits whole tx objects on add
+    and we synthesise removals from `newHeads` hashes in future
+    slices).
+  - `PendingTxFilter { from: Option<Address> }` — single-axis for
+    MVP; additional filters land with the filter-modal slice.
+
+Port (`src/application/ports/pending_tx_stream.rs`):
+
+```rust
+pub trait PendingTxStreamPort: Send + Sync {
+    async fn subscribe(
+        &self,
+        chain: Chain,
+        filter: PendingTxFilter,
+    ) -> Result<UnboundedReceiver<PendingTxEvent>, DomainError>;
+}
+```
+
+Use case `observe_pending_txs` is a passthrough that returns the
+subscribed receiver.
+
+Stub `StubPendingTxStreamPort` in `tests/support/stubs.rs` creates
+the channel eagerly and exposes `push_added(PendingTx)` and
+`push_removed(TxHash)` helpers so tests can drive it deterministically.
+
+Functional tests `tests/functional/observe_pending_txs.rs`:
+- events arrive in insertion order;
+- dropping the port does not close the receiver mid-stream;
+- multiple subscribers each receive their own channel.
+
+### 11.2 Slice B — UI + BDD + wiring
+
+- `src/adapters/ui/mempool.rs` — `MempoolScreen` with the rolling
+  list, client-side filter (applied on `tick` drain), pause flag,
+  clear-on-`c` and `Enter` opens a TxDetail via an injected factory.
+- The Home screen gains an optional `mempool_factory` set by the
+  composition root. Pressing `m` on Home pushes the factory's result.
+- `infra::run` wires an `EmptyPendingTxStream` adapter for the live
+  path: it subscribes to a dead channel so the Mempool opens and
+  renders an "waiting..." empty-state message. The noop adapter is
+  isolated in `src/infra/mempool_feed.rs` so the future WS adapter
+  drops in without touching `run`.
+
+BDD scenarios in `tests/e2e/features/mempool.feature`:
+
+- Stream shows three pending txs when the stub emits three.
+- Filter by sender drops rows that do not match the `from` address.
+- Pause blocks new events; resume drains them.
+- Removed events delete the matching row.
+
+Scenarios from plan section 7 that depend on WebSocket reconnect
+are intentionally skipped until the WS adapter lands.
+
+### 11.3 Deferred (next slices under this plan)
+
+1. **Alchemy WebSocket adapter**: drives
+   `alchemy_pendingTransactions` and translates the notifications
+   into `PendingTxEvent::Added`. Needs the `newHeads` subscription
+   too for mined-removal synthesis.
+2. **Reconnect and "reconnecting" banner** in the UI, plus the
+   associated BDD scenario.
+3. **Filter modal** (`f` key) with multi-axis filters (to, min
+   value).
+4. **Pending-aware TxDetail view** (status rendered as "pending"
+   when opened from Mempool before a block mines the tx).

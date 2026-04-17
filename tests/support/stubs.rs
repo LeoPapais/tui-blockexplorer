@@ -14,15 +14,16 @@ use std::{
 use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, BlockLookupPort, BlockReaderPort, ChainRegistryPort,
-        EnsResolverPort, GasOraclePort, NetworkStatusPort, TokenSearchPort, TxLookupPort,
-        TxReaderPort,
+        EnsResolverPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort,
+        TokenSearchPort, TxLookupPort, TxReaderPort,
     },
     domain::{
         Address, AddressKind, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
-        DomainError, GasSnapshot, Gwei, NetworkStatus, TokenMetadata, Transaction, TxHash,
-        TxSummary, Wei,
+        DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx, PendingTxEvent,
+        PendingTxFilter, TokenMetadata, Transaction, TxHash, TxSummary, Wei,
     },
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use serde::Deserialize;
 
 use super::fixture_loader;
@@ -549,5 +550,52 @@ impl TxReaderPort for StubTxReaderPort {
     ) -> Result<Option<Transaction>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: PendingTxStreamPort
+// ---------------------------------------------------------------------------
+
+/// Single-subscriber stub that exposes helpers to push `Added` /
+/// `Removed` events into the channel the screen drains. Multiple
+/// `subscribe` calls each get their own channel; only the latest one
+/// retains the sender handle the test drives through.
+#[derive(Default, Clone)]
+pub struct StubPendingTxStreamPort {
+    inner: Arc<Mutex<Vec<UnboundedSender<PendingTxEvent>>>>,
+}
+
+impl StubPendingTxStreamPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Deliver an `Added` event to every live subscriber.
+    pub fn push_added(&self, tx: PendingTx) {
+        self.broadcast(PendingTxEvent::Added(tx));
+    }
+
+    /// Deliver a `Removed` event to every live subscriber.
+    pub fn push_removed(&self, hash: TxHash) {
+        self.broadcast(PendingTxEvent::Removed(hash));
+    }
+
+    fn broadcast(&self, event: PendingTxEvent) {
+        let mut senders = self.inner.lock().expect("stub lock poisoned");
+        senders.retain(|s| s.send(event.clone()).is_ok());
+    }
+}
+
+impl PendingTxStreamPort for StubPendingTxStreamPort {
+    async fn subscribe(
+        &self,
+        _chain: Chain,
+        _filter: PendingTxFilter,
+    ) -> Result<UnboundedReceiver<PendingTxEvent>, DomainError> {
+        let (tx, rx) = unbounded_channel();
+        let mut senders = self.inner.lock().expect("stub lock poisoned");
+        senders.push(tx);
+        Ok(rx)
     }
 }

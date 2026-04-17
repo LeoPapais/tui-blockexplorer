@@ -1,2 +1,6 @@
 /target
 .env
+
+# Personal drafting pad for follow-up work. Tracked only when the user
+# explicitly promotes it into the plan folder via an explicit `git add`.
+/plan/15-backlog.md
