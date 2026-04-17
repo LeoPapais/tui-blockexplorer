@@ -1,13 +1,17 @@
 //! Home screen ratatui widget.
 //!
-//! Pure renderer: consumes a [`HomeViewModel`] and paints a frame. Input
-//! handling and async data fetching live elsewhere (the UI dispatcher owns
-//! keybinds, the application layer owns data).
+//! Two levels of API live here:
+//!
+//! * [`render`] is the pure renderer consumed by both the real runtime
+//!   and the snapshot tests.
+//! * [`HomeScreen`] is the [`Screen`] implementation driven by the
+//!   dispatcher; it holds the [`HomeViewModel`] and maps key events to
+//!   [`Command`]s.
 //!
 //! See `plan/1-home.md` section 2 for the target layout and
-//! `plan/1-home.md` section 11.6 for the place of this widget in the
-//! pipeline.
+//! `plan/12-screen-runtime.md` section 2.4 for the screen contract.
 
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -16,8 +20,9 @@ use ratatui::{
 };
 
 use crate::{
+    adapters::ui::screen::{Command, Screen},
     application::{ConnectionStatus, HomeViewModel},
-    domain::GasSnapshot,
+    domain::{BlockNumber, Chain, GasSnapshot, Gwei, NetworkStatus, Wei},
 };
 
 /// Render the Home screen into `frame` at `area`.
@@ -109,4 +114,74 @@ fn format_u64(n: u64) -> String {
         out.push(*byte as char);
     }
     out
+}
+
+/// Screen-level wrapper around [`render`].
+///
+/// Holds the current [`HomeViewModel`] and routes key events to
+/// [`Command`]s. This phase of the runtime serves the view model from
+/// hardcoded data set at construction; phase 2 of the plan replaces the
+/// constructor with one that owns a `HomeSession` and subscribes to a
+/// background refresher task.
+pub struct HomeScreen {
+    view: HomeViewModel,
+}
+
+impl HomeScreen {
+    /// Build a `HomeScreen` that renders whatever [`HomeViewModel`] it
+    /// receives.
+    #[must_use]
+    pub fn new(view: HomeViewModel) -> Self {
+        Self { view }
+    }
+
+    /// Placeholder view-model used by `cargo run -- --demo` until the
+    /// Alchemy adapter lands in phase 2 (`plan/13-alchemy-adapter.md`).
+    /// Numbers are plausible but frozen in time.
+    #[must_use]
+    pub fn with_demo_data() -> Self {
+        let view = HomeViewModel {
+            chain: Chain::Ethereum,
+            network: Some(NetworkStatus {
+                chain: Chain::Ethereum,
+                latest_block: BlockNumber::new(21_345_678),
+                base_fee: Wei::new(11_400_000_000),
+                block_time_avg_ms: 12_100,
+            }),
+            gas: Some(GasSnapshot {
+                chain: Chain::Ethereum,
+                slow: Gwei::new(12),
+                average: Gwei::new(14),
+                fast: Gwei::new(18),
+                base_fee: Gwei::new(11),
+                trend: (0..20).map(|i| Gwei::new(11 + (i % 5))).collect(),
+            }),
+            connection: ConnectionStatus::Connected,
+        };
+        Self::new(view)
+    }
+
+    /// Expose the inner view-model. Useful for tests.
+    #[must_use]
+    pub fn view(&self) -> &HomeViewModel {
+        &self.view
+    }
+}
+
+impl Screen for HomeScreen {
+    fn title(&self) -> &str {
+        "Home"
+    }
+
+    fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+        render(frame, area, &self.view);
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Char('q') => Command::Quit,
+            KeyCode::Esc => Command::Pop,
+            _ => Command::None,
+        }
+    }
 }

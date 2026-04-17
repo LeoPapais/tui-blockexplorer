@@ -18,3 +18,9 @@ mod home_session;
 
 #[path = "functional/home_screen_render.rs"]
 mod home_screen_render;
+
+#[path = "functional/screen_stack.rs"]
+mod screen_stack;
+
+#[path = "functional/home_screen_keys.rs"]
+mod home_screen_keys;
