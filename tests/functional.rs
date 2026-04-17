@@ -45,3 +45,6 @@ mod alchemy_lookups;
 
 #[path = "functional/load_block_overview.rs"]
 mod load_block_overview;
+
+#[path = "functional/alchemy_block_reader.rs"]
+mod alchemy_block_reader;

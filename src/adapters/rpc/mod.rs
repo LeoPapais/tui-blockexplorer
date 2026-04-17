@@ -7,6 +7,7 @@
 
 pub mod address_lookup;
 pub mod block_lookup;
+pub mod block_reader;
 pub mod client;
 pub mod ens;
 pub mod gas_oracle;
@@ -15,6 +16,7 @@ pub mod tx_lookup;
 
 pub use address_lookup::AlchemyAddressLookup;
 pub use block_lookup::AlchemyBlockLookup;
+pub use block_reader::AlchemyBlockReader;
 pub use client::{RpcClient, RpcError};
 pub use ens::AlchemyEnsResolver;
 pub use gas_oracle::AlchemyGasOracleAdapter;
