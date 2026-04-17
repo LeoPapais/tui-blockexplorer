@@ -1,0 +1,8 @@
+{
+  "chain": "ethereum",
+  "slow_gwei": 12,
+  "average_gwei": 14,
+  "fast_gwei": 18,
+  "base_fee_gwei": 11,
+  "trend_gwei": [11, 12, 13, 12, 11, 12, 13, 14, 13, 12, 11, 12, 13, 14, 12, 11, 12, 13, 11, 12]
+}

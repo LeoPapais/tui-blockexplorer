@@ -1,24 +1,44 @@
 //! Cucumber `World` shared across every scenario.
 //!
-//! Holds the stubbed ports, the in-memory screen stack, and the last
-//! rendered frame captured through `ratatui::backend::TestBackend`.
-//!
-//! During the scaffolding phase most fields are placeholders; they are
-//! filled in as ports and use cases are introduced.
+//! Holds the stubbed ports, the active-chain hint and the current
+//! [`HomeSession`]. Filled in as scenarios run; resets for each scenario
+//! because cucumber builds a fresh `Default` instance.
 
+use std::fmt;
+
+use blockexplorer_tui::{
+    application::HomeSession,
+    domain::Chain,
+};
 use cucumber::World;
 
-#[derive(Debug, Default, World)]
+use crate::support::stubs::{StubChainRegistry, StubGasOraclePort, StubNetworkStatusPort};
+
+pub type AppHomeSession =
+    HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
+
+#[derive(Default, World)]
 pub struct AppWorld {
-    /// Slug of the currently active chain. Defaults to `None` until a
-    /// scenario sets it via the `Given the active chain is "..."` step.
-    pub active_chain: Option<String>,
+    /// Stub used by every scenario. Cloneable handles are primed by the
+    /// `Given` steps and read by the application code.
+    pub network_stub: StubNetworkStatusPort,
+    pub gas_stub: StubGasOraclePort,
+    pub chain_registry: StubChainRegistry,
 
-    /// Identifier of the current top-of-stack screen. Set by step
-    /// implementations as the user navigates.
-    pub current_screen: Option<String>,
+    /// Which chain the user has selected. Set by the `Given the active
+    /// chain is "..."` step.
+    pub active_chain: Option<Chain>,
 
-    /// Latest arbitrary text rendered on screen. Used by assertions that
-    /// check for a substring on the current frame.
-    pub rendered: String,
+    /// Home session, created when the Home screen is "rendered". Absent
+    /// before that step runs.
+    pub home: Option<AppHomeSession>,
+}
+
+impl fmt::Debug for AppWorld {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AppWorld")
+            .field("active_chain", &self.active_chain)
+            .field("home_present", &self.home.is_some())
+            .finish()
+    }
 }

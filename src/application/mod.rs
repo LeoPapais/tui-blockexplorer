@@ -1,7 +1,9 @@
-//! Application layer: outbound ports and use cases.
+//! Application layer: outbound ports, use cases and screen coordinators.
 //!
-//! Use cases depend on port traits, never on concrete adapters.
 //! See `.cursor/rules/architecture.mdc` for the full contract.
 
+pub mod home;
 pub mod ports;
 pub mod use_cases;
+
+pub use home::{ConnectionStatus, HomeSession, HomeViewModel};

@@ -6,6 +6,14 @@
 //!
 //! See `plan/0-general-architecture.md` section 6 for layer rules.
 
+pub mod block;
+pub mod chain;
 pub mod errors;
+pub mod gas;
+pub mod network_status;
 
+pub use block::BlockNumber;
+pub use chain::Chain;
 pub use errors::DomainError;
+pub use gas::{Gwei, Wei};
+pub use network_status::{GasSnapshot, NetworkStatus};

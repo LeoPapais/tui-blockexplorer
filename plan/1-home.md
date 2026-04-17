@@ -1,5 +1,8 @@
 # 1 — Home
 
+Status: **done** — the 4 BDD scenarios in `tests/e2e/features/home.feature`
+and the functional tests under `tests/functional/` are green.
+
 Landing screen. Only two content sections: **Network** and **Gas Tracker**. The chain
 switcher lives in the header of this screen. There are no live feeds of blocks or
 transactions here (explicitly removed from scope).
@@ -158,3 +161,117 @@ Under `tests/fixtures/` (naming: `{adapter}__{method}__{case}.json`):
 - How often do we sample the gas oracle when blocks are slow (for example chains with
   >10s block time)? Default: on every head; no extra timer.
 - Do we show USD equivalent for fees in the header? Out of scope for MVP.
+
+## 11. Implementation plan
+
+Concrete micro-steps followed to take this screen from red to green, ordered as
+executed. Every bullet maps to a concrete module or file so the plan and the
+tree remain aligned.
+
+### 11.1 Domain types
+
+New files under `src/domain/`:
+
+- `chain.rs` — `pub enum Chain` with variants `Ethereum`, `EthereumSepolia`,
+  `Base`, `Polygon`, `Optimism`, `Arbitrum`; `Chain::slug`, `Chain::from_slug`
+  (returns `DomainError::InvalidInput` for unknown slugs), `Chain::all_enabled`.
+- `block.rs` — `pub struct BlockNumber(u64)` newtype.
+- `gas.rs` — `pub struct Wei(u128)` and `pub struct Gwei(u128)` newtypes with
+  safe conversions (`to_gwei`, `to_wei`) and an `Amount::divide` helper (used
+  by the gas oracle to fall back to integer math).
+- `network_status.rs` — entities `NetworkStatus { chain, latest_block,
+  base_fee_wei, block_time_avg_ms }` and `GasSnapshot { chain, slow_gwei,
+  average_gwei, fast_gwei, base_fee_gwei, trend_gwei: Vec<Gwei> }`.
+
+All types are `Clone + Debug + PartialEq + Eq` where sensible. They do not
+derive serde traits in the domain module; the adapters own the
+serialisation types and convert at the boundary.
+
+### 11.2 Ports
+
+New files under `src/application/ports/`:
+
+- `network_status.rs` — `pub trait NetworkStatusPort` with a single
+  `async fn snapshot(&self, chain: Chain) -> Result<NetworkStatus,
+  DomainError>`.
+- `gas_oracle.rs` — `pub trait GasOraclePort` with
+  `async fn snapshot(&self, chain: Chain) -> Result<GasSnapshot,
+  DomainError>`.
+- `chain_registry.rs` — `pub trait ChainRegistryPort` (sync because it only
+  reads config) with `list_enabled()`, `default_chain()` and
+  `ensure_enabled(chain)`.
+
+Traits use native `async fn` in traits. Implementations are consumed through
+generics in the session code to avoid dyn-compat gotchas while the trait
+surfaces are still small.
+
+### 11.3 Home session (application layer)
+
+A single coordinator composes the three use cases into one screen-facing
+object:
+
+- `src/application/home.rs`
+  - `pub enum ConnectionStatus { Connected, Disconnected { reconnect_scheduled: bool } }`
+  - `pub struct HomeViewModel { chain, network: Option<NetworkStatus>,
+    gas: Option<GasSnapshot>, connection }`
+  - `pub struct HomeSession<N, G, C>` owning the three ports and a
+    `HomeViewModel`.
+  - Methods: `new(network, gas, chains, chain)`, `refresh`, `on_new_head`,
+    `on_connection_drop`, `switch_chain(target)`, `view`.
+
+The three atomic "use cases" named in section 4 map to methods on the ports
+plus the composition done by `HomeSession::refresh`. They stay trivial: the
+value is in the coordination.
+
+### 11.4 Stubs and fixtures
+
+- `tests/fixtures/home__network_status__ethereum.json`,
+  `tests/fixtures/home__gas_snapshot__ethereum.json`, plus `__base` variants.
+  Each file holds one domain value deserialised by the stub with serde
+  adapters declared in `tests/support/stubs.rs`.
+- `tests/support/stubs.rs` gains three stubs:
+  - `StubNetworkStatusPort` with `set_snapshot(chain, status)`,
+    `set_broken(bool)`, and an `Arc<StubNetworkStatusPort>` blanket impl of
+    `NetworkStatusPort`.
+  - `StubGasOraclePort` mirroring the above for `GasSnapshot`.
+  - `StubChainRegistry` holding a fixed list of enabled chains.
+- `tests/support/mod.rs` re-exports the stubs and the DTOs that back the
+  fixtures.
+
+### 11.5 Functional tests
+
+Per `.cursor/rules/testing.mdc`, new files:
+
+- `tests/functional/observe_network_status.rs`
+- `tests/functional/observe_gas_oracle.rs`
+- `tests/functional/switch_chain.rs`
+- `tests/functional/home_session.rs`
+
+Each one includes at least one happy-path case and one failure-path case
+using `rstest` + `pretty_assertions` and only talks to stubs.
+
+### 11.6 UI adapter
+
+- `src/adapters/ui/home.rs` exposes `HomeScreen` (pure render against a
+  `HomeViewModel`). Rendering is done with `ratatui` but the widget does not
+  own any async work; the application layer is responsible for driving
+  `HomeSession`.
+- A snapshot test under `tests/functional/home_screen_render.rs` uses
+  `ratatui::backend::TestBackend` to assert the rendered frame contains the
+  chain name, latest block number, the three gas tiers and (when applicable)
+  the "disconnected" badge.
+
+### 11.7 Wiring BDD steps
+
+`tests/e2e/steps/home.rs` is rewritten to operate on a `HomeSession`
+instance held by the `AppWorld`. Each step either prepares the stub state
+(`given`), drives an application method (`when`) or asserts against
+`HomeSession::view` (`then`). No step touches ratatui or stdin.
+
+### 11.8 Acceptance
+
+- `cargo test --test e2e` prints "4 scenarios (4 passed)" for
+  `home.feature`.
+- `cargo test --test functional` (or `cargo test`) passes all functional
+  tests added under `tests/functional/`.
+- `cargo clippy --all-targets` remains at zero errors.

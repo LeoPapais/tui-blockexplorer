@@ -24,7 +24,7 @@ external-only data policy).
 | #  | File                                                           | Scope                     | Status |
 |----|----------------------------------------------------------------|---------------------------|--------|
 | 0  | [0-general-architecture.md](0-general-architecture.md)         | Navigation + architecture | draft  |
-| 1  | [1-home.md](1-home.md)                                         | Home screen               | draft  |
+| 1  | [1-home.md](1-home.md)                                         | Home screen               | done   |
 | 2  | [2-search.md](2-search.md)                                     | Universal search          | draft  |
 | 3  | [3-block-detail.md](3-block-detail.md)                         | Block detail screen       | draft  |
 | 4  | [4-tx-detail.md](4-tx-detail.md)                               | Transaction detail        | draft  |

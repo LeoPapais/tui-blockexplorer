@@ -4,3 +4,5 @@
 //! the application through ports passed in by `infra`.
 //!
 //! See `.cursor/rules/tui.mdc` for the detailed contract.
+
+pub mod home;

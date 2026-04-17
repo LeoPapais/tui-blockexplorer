@@ -1,0 +1,8 @@
+{
+  "chain": "base",
+  "slow_gwei": 1,
+  "average_gwei": 1,
+  "fast_gwei": 2,
+  "base_fee_gwei": 0,
+  "trend_gwei": [0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1]
+}

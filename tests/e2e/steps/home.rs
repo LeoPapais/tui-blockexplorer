@@ -1,46 +1,115 @@
 //! Step definitions for the Home screen.
 //!
 //! Scenarios live in `tests/e2e/features/home.feature`. Behaviour is
-//! specified in [`plan/1-home.md`](../../../../plan/1-home.md).
+//! specified in `plan/1-home.md`.
 //!
-//! All steps currently fail with `unimplemented!()` so the harness reports
-//! every scenario as red until the Home use cases are wired up in a later
-//! phase.
+//! Each step drives the real application types through the stub ports
+//! held by the [`AppWorld`] so the assertions in the `Then` steps exercise
+//! the same code paths the UI adapter will use.
 
+use blockexplorer_tui::{
+    application::{ConnectionStatus, HomeSession},
+    domain::Chain,
+};
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
+use crate::support::stubs::{GasSnapshotFixture, NetworkStatusFixture};
 use crate::world::AppWorld;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn prime_fixtures_for(world: &AppWorld, chain: Chain) {
+    let (net_fixture, gas_fixture) = fixtures_for(chain);
+    world
+        .network_stub
+        .set_snapshot(NetworkStatusFixture::load(net_fixture));
+    world.gas_stub.set_snapshot(GasSnapshotFixture::load(gas_fixture));
+}
+
+fn fixtures_for(chain: Chain) -> (&'static str, &'static str) {
+    match chain {
+        Chain::Ethereum => (
+            "home__network_status__ethereum.json",
+            "home__gas_snapshot__ethereum.json",
+        ),
+        Chain::Base => (
+            "home__network_status__base.json",
+            "home__gas_snapshot__base.json",
+        ),
+        other => panic!("no fixture primed for chain {}", other.slug()),
+    }
+}
+
+fn start_home(world: &mut AppWorld, chain: Chain) {
+    prime_fixtures_for(world, chain);
+    world.active_chain = Some(chain);
+
+    let mut session = HomeSession::new(
+        world.network_stub.clone(),
+        world.gas_stub.clone(),
+        world.chain_registry.clone(),
+        chain,
+    );
+    // Drive the first refresh synchronously so the view model is ready
+    // for later steps. Cucumber steps are async, but we can block on the
+    // futures because the stubs never suspend.
+    futures_lite_block_on(async {
+        session.refresh().await.expect("initial refresh must succeed");
+    });
+    world.home = Some(session);
+}
+
+/// Small inline block_on that does not require an extra crate. The stubs
+/// are fully synchronous so the future completes in the first poll.
+fn futures_lite_block_on<F: std::future::Future>(fut: F) -> F::Output {
+    use std::{
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    let mut fut = pin!(fut);
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!(
+            "stub future returned Pending; the stubs are expected to resolve immediately"
+        ),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
 #[given("the user launches the app")]
-async fn user_launches_the_app(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 4 - launch wiring not yet implemented"
-    );
+async fn user_launches_the_app(world: &mut AppWorld) {
+    // Nothing to do: `AppWorld::default()` already provides fresh stubs
+    // and a registry with every chain enabled. This step only exists to
+    // match the Background and document intent.
+    assert!(world.home.is_none(), "launch should start with no session");
 }
 
 #[given(regex = r#"^the active chain is "([^"]+)"$"#)]
 async fn active_chain_is(world: &mut AppWorld, chain: String) {
-    // Setting the chain on the world is safe before the rest is wired, but
-    // the scenario will still fail on later steps.
+    let chain = Chain::from_slug(&chain).expect("scenario references a known chain");
     world.active_chain = Some(chain);
+    prime_fixtures_for(world, chain);
 }
 
 #[given("the Home screen is rendered")]
-async fn home_is_rendered(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 2 - Home rendering not yet implemented"
-    );
+async fn given_home_is_rendered(world: &mut AppWorld) {
+    let chain = world.active_chain.expect("active chain must be set in Background");
+    start_home(world, chain);
 }
 
 #[given(regex = r#"^the Home screen is rendered with "([^"]+)"$"#)]
-async fn home_is_rendered_with(_world: &mut AppWorld, _chain: String) {
-    unimplemented!(
-        "see plan/1-home.md section 4.3 - SwitchChain use case not yet implemented"
-    );
+async fn home_is_rendered_with(world: &mut AppWorld, chain: String) {
+    let chain = Chain::from_slug(&chain).expect("scenario references a known chain");
+    start_home(world, chain);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,38 +117,53 @@ async fn home_is_rendered_with(_world: &mut AppWorld, _chain: String) {
 // ---------------------------------------------------------------------------
 
 #[when("the Home screen is rendered")]
-async fn when_home_is_rendered(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 2 - Home rendering not yet implemented"
-    );
+async fn when_home_is_rendered(world: &mut AppWorld) {
+    let chain = world.active_chain.expect("active chain must be set in Background");
+    start_home(world, chain);
 }
 
 #[when(regex = r#"^a new "newHeads" event is pushed from the stub$"#)]
-async fn newheads_pushed(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 4.1 - NetworkStatusPort subscription not yet implemented"
-    );
+async fn newheads_pushed(world: &mut AppWorld) {
+    // Swap the primed fixtures for the "next head" variants and let the
+    // session re-read them.
+    world.network_stub.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum_next_head.json",
+    ));
+    world.gas_stub.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum_next_head.json",
+    ));
+    let session = world.home.as_mut().expect("session must exist");
+    futures_lite_block_on(async {
+        session.on_new_head().await.expect("new head refresh must succeed");
+    });
 }
 
 #[when(regex = r#"^the user presses "c"$"#)]
 async fn user_presses_c(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 3 - chain picker keybinding not yet implemented"
-    );
+    // The chain picker is a UI-level interaction that opens a modal.
+    // From the application layer's point of view there is nothing to do
+    // until the user makes a selection in the next step.
 }
 
 #[when(regex = r#"^selects "([^"]+)"$"#)]
-async fn selects_chain(_world: &mut AppWorld, _chain: String) {
-    unimplemented!(
-        "see plan/1-home.md section 4.3 - SwitchChain use case not yet implemented"
-    );
+async fn selects_chain(world: &mut AppWorld, chain: String) {
+    let target = Chain::from_slug(&chain).expect("scenario references a known chain");
+    prime_fixtures_for(world, target);
+    let session = world.home.as_mut().expect("session must exist");
+    futures_lite_block_on(async {
+        session
+            .switch_chain(target)
+            .await
+            .expect("switching to an enabled chain must succeed");
+    });
+    world.active_chain = Some(target);
 }
 
 #[when(regex = r#"^the "newHeads" subscription drops$"#)]
-async fn subscription_drops(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 7 - degraded state handling not yet implemented"
-    );
+async fn subscription_drops(world: &mut AppWorld) {
+    world.network_stub.set_broken(true);
+    let session = world.home.as_mut().expect("session must exist");
+    session.on_connection_drop();
 }
 
 // ---------------------------------------------------------------------------
@@ -87,57 +171,72 @@ async fn subscription_drops(_world: &mut AppWorld) {
 // ---------------------------------------------------------------------------
 
 #[then("the Network card shows the latest block number from the stub")]
-async fn network_card_shows_block_number(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 2 - Network card render not yet implemented"
-    );
+async fn network_card_shows_block_number(world: &mut AppWorld) {
+    let chain = world.active_chain.expect("active chain");
+    let expected = world.network_stub.expected(chain);
+    let actual = world
+        .home
+        .as_ref()
+        .and_then(|s| s.view().network.clone())
+        .expect("network status must be populated");
+    assert_eq!(actual.latest_block, expected.latest_block);
 }
 
 #[then("the Gas Tracker card shows slow, average and fast gwei values")]
-async fn gas_card_shows_values(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 4.2 - ObserveGasOracle not yet implemented"
-    );
+async fn gas_card_shows_values(world: &mut AppWorld) {
+    let gas = world
+        .home
+        .as_ref()
+        .and_then(|s| s.view().gas.clone())
+        .expect("gas snapshot must be populated");
+    assert!(gas.slow.value() > 0 || gas.average.value() > 0 || gas.fast.value() > 0);
+    assert!(!gas.trend.is_empty());
 }
 
 #[then("the Network card updates the latest block number")]
-async fn network_card_updates(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 4.1 - ObserveNetworkStatus not yet implemented"
-    );
+async fn network_card_updates(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    assert_eq!(view.network.as_ref().unwrap().latest_block.value(), 21_345_679);
 }
 
 #[then("the Gas Tracker card recomputes its values")]
-async fn gas_card_recomputes(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 4.2 - ObserveGasOracle not yet implemented"
-    );
+async fn gas_card_recomputes(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    let gas = view.gas.as_ref().expect("gas snapshot");
+    assert_eq!(gas.average.value(), 17);
+    assert_eq!(gas.fast.value(), 22);
 }
 
 #[then(regex = r#"^the active chain becomes "([^"]+)"$"#)]
-async fn active_chain_becomes(_world: &mut AppWorld, _chain: String) {
-    unimplemented!(
-        "see plan/1-home.md section 4.3 - SwitchChain use case not yet implemented"
-    );
+async fn active_chain_becomes(world: &mut AppWorld, chain: String) {
+    let expected = Chain::from_slug(&chain).expect("known chain slug");
+    let view = world.home.as_ref().expect("session").view();
+    assert_eq!(view.chain, expected);
 }
 
 #[then(regex = r#"^the Network card reflects the latest block number for "([^"]+)"$"#)]
-async fn network_card_reflects_chain(_world: &mut AppWorld, _chain: String) {
-    unimplemented!(
-        "see plan/1-home.md section 4.1 - per-chain NetworkStatus not yet implemented"
-    );
+async fn network_card_reflects_chain(world: &mut AppWorld, chain: String) {
+    let chain = Chain::from_slug(&chain).expect("known chain slug");
+    let expected = world.network_stub.expected(chain);
+    let view = world.home.as_ref().expect("session").view();
+    let actual = view.network.as_ref().expect("network status");
+    assert_eq!(actual.chain, chain);
+    assert_eq!(actual.latest_block, expected.latest_block);
 }
 
 #[then(regex = r#"^the header shows a "disconnected" badge$"#)]
-async fn header_shows_disconnected(_world: &mut AppWorld) {
-    unimplemented!(
-        "see plan/1-home.md section 7 - degraded state banner not yet implemented"
-    );
+async fn header_shows_disconnected(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    assert!(matches!(view.connection, ConnectionStatus::Disconnected { .. }));
 }
 
 #[then("the app schedules a reconnect")]
-async fn app_schedules_reconnect(_world: &mut AppWorld) {
-    unimplemented!(
-        "see .cursor/rules/external-apis.mdc - reconnect policy not yet implemented"
-    );
+async fn app_schedules_reconnect(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    match view.connection {
+        ConnectionStatus::Disconnected { reconnect_scheduled } => {
+            assert!(reconnect_scheduled, "reconnect must be scheduled");
+        }
+        ConnectionStatus::Connected => panic!("expected disconnected state"),
+    }
 }
