@@ -39,3 +39,6 @@ mod home_feed;
 
 #[path = "functional/resolve_query.rs"]
 mod resolve_query;
+
+#[path = "functional/alchemy_lookups.rs"]
+mod alchemy_lookups;
