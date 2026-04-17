@@ -72,6 +72,23 @@ impl Chain {
             Chain::Arbitrum,
         ]
     }
+
+    /// Subdomain used when building an Alchemy JSON-RPC URL, for
+    /// example `"eth-mainnet"` becomes
+    /// `https://eth-mainnet.g.alchemy.com/v2/{api_key}`.
+    ///
+    /// See `plan/13-alchemy-adapter.md` section 2.4.
+    #[must_use]
+    pub const fn alchemy_subdomain(self) -> &'static str {
+        match self {
+            Chain::Ethereum => "eth-mainnet",
+            Chain::EthereumSepolia => "eth-sepolia",
+            Chain::Base => "base-mainnet",
+            Chain::Polygon => "polygon-mainnet",
+            Chain::Optimism => "opt-mainnet",
+            Chain::Arbitrum => "arb-mainnet",
+        }
+    }
 }
 
 #[cfg(test)]

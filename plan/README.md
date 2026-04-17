@@ -35,7 +35,8 @@ external-only data policy).
 | 9  | [9-gas-tracker.md](9-gas-tracker.md)                           | Gas tracker               | draft  |
 | 10 | [10-settings.md](10-settings.md)                               | Settings                  | draft  |
 | 11 | [11-rust-scaffolding.md](11-rust-scaffolding.md)               | Rust project scaffolding  | draft  |
-| 12 | [12-screen-runtime.md](12-screen-runtime.md)                   | TUI runtime + demo mode   | draft  |
+| 12 | [12-screen-runtime.md](12-screen-runtime.md)                   | TUI runtime + demo mode   | done   |
+| 13 | [13-alchemy-adapter.md](13-alchemy-adapter.md)                 | Alchemy HTTP adapters     | done   |
 
 Status values: `draft` (still in planning), `ready` (ready to implement), `done`
 (implemented and covered by passing tests), `deferred`.

@@ -24,3 +24,9 @@ mod screen_stack;
 
 #[path = "functional/home_screen_keys.rs"]
 mod home_screen_keys;
+
+#[path = "functional/alchemy_network_status.rs"]
+mod alchemy_network_status;
+
+#[path = "functional/alchemy_gas_oracle.rs"]
+mod alchemy_gas_oracle;
