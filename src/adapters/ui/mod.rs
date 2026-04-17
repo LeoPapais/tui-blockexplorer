@@ -8,6 +8,7 @@
 pub mod block_detail;
 pub mod detail_placeholder;
 pub mod home;
+pub mod mempool;
 pub mod screen;
 pub mod search;
 pub mod tx_detail;
@@ -17,6 +18,7 @@ pub use block_detail::{
 };
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
+pub use mempool::{MempoolScreen, OpenPendingTxFactory};
 pub use screen::{Command, Screen, ScreenStack};
 pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen,

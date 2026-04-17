@@ -1,9 +1,12 @@
 # 5 — Mempool
 
-Status: in progress. MVP slice ships the domain + port + use case +
-stub-driven UI. The Alchemy WebSocket adapter that actually produces
-live events stays deferred; live `cargo run` opens an empty Mempool
-until that adapter lands. Full status tracked in section 11.
+Status: **done** (MVP scope) — domain, port, use case and
+`MempoolScreen` are all in place, the four BDD scenarios in
+`tests/e2e/features/mempool.feature` are green. The Alchemy WebSocket
+adapter that turns this screen into a live view stays deferred
+(section 11.3); `cargo run` currently opens the screen subscribed to
+an `EmptyPendingTxStream` and shows the "waiting..." state until
+that adapter lands.
 
 Live stream of pending transactions as seen by Alchemy's mempool. Important caveat:
 this is the mempool Alchemy observes, not a globally complete mempool; a globally

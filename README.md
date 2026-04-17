@@ -28,10 +28,13 @@ Inside the TUI:
 | `q`       | Quit                                                     |
 | `Esc`     | Pop current screen (exits when the stack is empty)       |
 | `/`       | Open universal search (Home)                             |
-| `Enter`   | Open selected candidate or transaction                   |
-| `Up/Down` | Move selection (Search candidates, Block Transactions)   |
-| `Tab`     | Next tab (Block detail: Overview ↔ Transactions)         |
+| `m`       | Open Mempool (Home)                                      |
+| `Enter`   | Open selected candidate, transaction or mempool tx       |
+| `Up/Down` | Move selection (lists)                                   |
+| `Tab`     | Next tab (Block / Tx detail)                             |
 | `[` / `]` | Previous / next block (Block detail)                     |
+| `p`       | Pause / resume stream (Mempool)                          |
+| `c`       | Clear list (Mempool)                                     |
 
 Search input accepts tx hashes (0x + 64 hex), block hashes, block numbers,
 EVM addresses (0x + 40 hex), ENS names (`*.eth`) and token tickers. Live
@@ -74,12 +77,12 @@ No test performs live network calls: adapters are exercised against
 
 ## Status
 
-Home, universal Search, Block detail and Transaction detail (MVP) are
-wired end to end against live Alchemy data. Block detail surfaces the
-Overview tab plus a flat Transactions tab; Tx detail surfaces the
-Overview tab (status, block, from, to, value, gas, fee, raw selector)
-plus a Raw tab showing the adapter JSON. ABI decoding, logs, traces,
-asset and state changes remain deferred. Address / Contract / Token
-detail pages still open as placeholder screens. Gas Tracker, Mempool,
-Settings and the deferred screens (NFTs, Watchlist, Simulator,
-Validators) are planned but not yet built.
+Home, universal Search, Block detail, Transaction detail (MVP) and
+Mempool (MVP) are wired end to end. The Mempool screen currently
+shows a "waiting..." empty state in live mode because the Alchemy
+WebSocket adapter has not landed yet — the screen, filter logic and
+pause/clear keybindings are testable end-to-end via stubs in the
+BDD suite. Address / Contract / Token detail pages still open as
+placeholder screens. Gas Tracker, Settings and the deferred screens
+(NFTs, Watchlist, Simulator, Validators) are planned but not yet
+built.

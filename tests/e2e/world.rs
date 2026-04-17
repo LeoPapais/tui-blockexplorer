@@ -15,8 +15,8 @@ use cucumber::World;
 
 use crate::support::stubs::{
     StubAddressLookupPort, StubBlockLookupPort, StubBlockReaderPort, StubChainRegistry,
-    StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort, StubTokenSearchPort,
-    StubTxLookupPort, StubTxReaderPort,
+    StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
+    StubTokenSearchPort, StubTxLookupPort, StubTxReaderPort,
 };
 
 pub type AppHomeSession =
@@ -41,6 +41,9 @@ pub struct AppWorld {
 
     /// Tx-detail stub.
     pub tx_reader_stub: StubTxReaderPort,
+
+    /// Mempool stub.
+    pub pending_stub: StubPendingTxStreamPort,
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,

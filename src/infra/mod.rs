@@ -10,6 +10,7 @@
 mod block_feed;
 pub mod config;
 mod home_feed;
+mod mempool_feed;
 mod runtime;
 mod search_feed;
 mod tx_feed;
@@ -27,13 +28,16 @@ use crate::{
             AlchemyTxReader, RpcClient,
         },
         ui::{
-            BlockDetailScreen, DetailPlaceholderScreen, HomeScreen, Screen, ScreenStack,
-            SearchScreen, TxDetailScreen, block_feed, search_feed, tx_feed,
+            BlockDetailScreen, DetailPlaceholderScreen, HomeScreen, MempoolScreen, Screen,
+            ScreenStack, SearchScreen, TxDetailScreen, block_feed, search_feed, tx_feed,
         },
     },
-    application::{ConnectionStatus, HomeSession, HomeViewModel},
-    domain::{BlockId, Chain, ResolvedEntity},
+    application::{
+        ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort,
+    },
+    domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
 };
+use mempool_feed::EmptyPendingTxStream;
 
 /// Build a live `TxDetailScreen` backed by a dedicated Alchemy
 /// tx-reader task.
@@ -187,11 +191,55 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         })
     };
 
+    // Mempool stays connected to an empty stream until the WS adapter
+    // lands (plan/5 section 11.3). Opening the screen works; it just
+    // renders the "waiting..." empty state.
+    let mempool_factory = {
+        let rpc_for_tx = rpc.clone();
+        Box::new(move || -> Box<dyn Screen> {
+            let stream = EmptyPendingTxStream;
+            let rx = futures_block_on(async {
+                stream
+                    .subscribe(chain, PendingTxFilter::default())
+                    .await
+                    .expect("EmptyPendingTxStream cannot fail")
+            });
+            let rpc = rpc_for_tx.clone();
+            let open_tx = Box::new(move |hash| live_tx_detail_screen(chain, hash, rpc.clone()));
+            Box::new(MempoolScreen::new(
+                rx,
+                PendingTxFilter::default(),
+                open_tx,
+            ))
+        })
+    };
+
     let mut stack = ScreenStack::new();
     stack.push(Box::new(
-        HomeScreen::with_feed(loading_view(chain), feed).with_search_factory(search_factory),
+        HomeScreen::with_feed(loading_view(chain), feed)
+            .with_search_factory(search_factory)
+            .with_mempool_factory(mempool_factory),
     ));
     stack
+}
+
+/// Block on a future from a non-async context by polling once. Used
+/// only inside screen factories, which always return immediately
+/// because the wrapped futures never suspend.
+fn futures_block_on<F: std::future::Future>(fut: F) -> F::Output {
+    use std::{
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    let mut fut = pin!(fut);
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    match fut.as_mut().poll(&mut cx) {
+        Poll::Ready(value) => value,
+        Poll::Pending => {
+            panic!("screen factory future returned Pending; must be synchronous")
+        }
+    }
 }
 
 fn loading_view(chain: Chain) -> HomeViewModel {

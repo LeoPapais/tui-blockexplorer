@@ -28,7 +28,7 @@ external-only data policy).
 | 2  | [2-search.md](2-search.md)                                     | Universal search          | done   |
 | 3  | [3-block-detail.md](3-block-detail.md)                         | Block detail screen       | done   |
 | 4  | [4-tx-detail.md](4-tx-detail.md)                               | Transaction detail        | done (MVP) |
-| 5  | [5-mempool.md](5-mempool.md)                                   | Mempool stream            | draft  |
+| 5  | [5-mempool.md](5-mempool.md)                                   | Mempool stream            | done (MVP) |
 | 6  | [6-address-detail.md](6-address-detail.md)                     | Address detail            | draft  |
 | 7  | [7-contract-detail.md](7-contract-detail.md)                   | Contract detail           | draft  |
 | 8  | [8-token-detail.md](8-token-detail.md)                         | Token detail              | draft  |

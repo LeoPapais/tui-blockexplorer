@@ -156,6 +156,11 @@ pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
 pub type SearchFactory =
     Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
+/// Factory for the Mempool screen. Same rationale as
+/// [`SearchFactory`]: keeps the home screen free of adapter details.
+pub type MempoolFactory =
+    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+
 /// Screen-level wrapper around [`render`].
 ///
 /// Holds the current [`HomeViewModel`] and optionally a [`HomeFeed`]
@@ -165,6 +170,7 @@ pub struct HomeScreen {
     view: HomeViewModel,
     feed: Option<HomeFeed>,
     search_factory: Option<SearchFactory>,
+    mempool_factory: Option<MempoolFactory>,
 }
 
 impl HomeScreen {
@@ -176,6 +182,7 @@ impl HomeScreen {
             view,
             feed: None,
             search_factory: None,
+            mempool_factory: None,
         }
     }
 
@@ -187,6 +194,7 @@ impl HomeScreen {
             view: initial,
             feed: Some(feed),
             search_factory: None,
+            mempool_factory: None,
         }
     }
 
@@ -195,6 +203,14 @@ impl HomeScreen {
     #[must_use]
     pub fn with_search_factory(mut self, factory: SearchFactory) -> Self {
         self.search_factory = Some(factory);
+        self
+    }
+
+    /// Equip the home screen with a factory that produces a Mempool
+    /// screen when the user presses `m`.
+    #[must_use]
+    pub fn with_mempool_factory(mut self, factory: MempoolFactory) -> Self {
+        self.mempool_factory = Some(factory);
         self
     }
 
@@ -245,6 +261,10 @@ impl Screen for HomeScreen {
             KeyCode::Char('q') => Command::Quit,
             KeyCode::Esc => Command::Pop,
             KeyCode::Char('/') => match self.search_factory.as_ref() {
+                Some(factory) => Command::Push(factory()),
+                None => Command::None,
+            },
+            KeyCode::Char('m') => match self.mempool_factory.as_ref() {
                 Some(factory) => Command::Push(factory()),
                 None => Command::None,
             },
