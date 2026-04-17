@@ -12,8 +12,14 @@ use std::{
 };
 
 use blockexplorer_tui::{
-    application::ports::{ChainRegistryPort, GasOraclePort, NetworkStatusPort},
-    domain::{BlockNumber, Chain, DomainError, GasSnapshot, Gwei, NetworkStatus, Wei},
+    application::ports::{
+        AddressLookupPort, BlockLookupPort, ChainRegistryPort, EnsResolverPort, GasOraclePort,
+        NetworkStatusPort, TokenSearchPort, TxLookupPort,
+    },
+    domain::{
+        Address, AddressKind, BlockHash, BlockNumber, BlockSummary, Chain, DomainError,
+        GasSnapshot, Gwei, NetworkStatus, TokenMetadata, TxHash, TxSummary, Wei,
+    },
 };
 use serde::Deserialize;
 
@@ -230,5 +236,240 @@ impl ChainRegistryPort for StubChainRegistry {
         } else {
             Err(DomainError::FeatureUnavailable)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TxLookupPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TxLookupState {
+    by_hash: HashMap<TxHash, TxSummary>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTxLookupPort {
+    inner: Arc<Mutex<TxLookupState>>,
+}
+
+impl StubTxLookupPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, summary: TxSummary) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(summary.hash, summary);
+    }
+}
+
+impl TxLookupPort for StubTxLookupPort {
+    async fn get(
+        &self,
+        hash: TxHash,
+        _chain: Chain,
+    ) -> Result<Option<TxSummary>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_hash.get(&hash).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: BlockLookupPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct BlockLookupState {
+    by_hash: HashMap<BlockHash, BlockSummary>,
+    by_number: HashMap<BlockNumber, BlockSummary>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubBlockLookupPort {
+    inner: Arc<Mutex<BlockLookupState>>,
+}
+
+impl StubBlockLookupPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&self, summary: BlockSummary) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(summary.hash, summary.clone());
+        state.by_number.insert(summary.number, summary);
+    }
+}
+
+impl BlockLookupPort for StubBlockLookupPort {
+    async fn get_by_hash(
+        &self,
+        hash: BlockHash,
+        _chain: Chain,
+    ) -> Result<Option<BlockSummary>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_hash.get(&hash).cloned())
+    }
+
+    async fn get_by_number(
+        &self,
+        number: BlockNumber,
+        _chain: Chain,
+    ) -> Result<Option<BlockSummary>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_number.get(&number).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: AddressLookupPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct AddressLookupState {
+    kinds: HashMap<Address, AddressKind>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubAddressLookupPort {
+    inner: Arc<Mutex<AddressLookupState>>,
+}
+
+impl StubAddressLookupPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_kind(&self, address: Address, kind: AddressKind) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.kinds.insert(address, kind);
+    }
+}
+
+impl AddressLookupPort for StubAddressLookupPort {
+    async fn classify(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<AddressKind, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        // Default: unknown addresses are EOAs. Tests that care prime
+        // the stub explicitly.
+        Ok(state
+            .kinds
+            .get(&address)
+            .copied()
+            .unwrap_or(AddressKind::Eoa))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: EnsResolverPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct EnsState {
+    forward: HashMap<String, Address>,
+    reverse: HashMap<Address, String>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubEnsResolverPort {
+    inner: Arc<Mutex<EnsState>>,
+}
+
+impl StubEnsResolverPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_forward(&self, name: &str, address: Address) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.forward.insert(name.to_lowercase(), address);
+    }
+
+    pub fn set_reverse(&self, address: Address, name: &str) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.reverse.insert(address, name.to_string());
+    }
+}
+
+impl EnsResolverPort for StubEnsResolverPort {
+    async fn forward(
+        &self,
+        name: &str,
+        _chain: Chain,
+    ) -> Result<Option<Address>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.forward.get(&name.to_lowercase()).copied())
+    }
+
+    async fn reverse(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<String>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.reverse.get(&address).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TokenSearchPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TokenSearchState {
+    by_symbol: HashMap<String, Vec<TokenMetadata>>,
+    by_name: HashMap<String, Vec<TokenMetadata>>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTokenSearchPort {
+    inner: Arc<Mutex<TokenSearchState>>,
+}
+
+impl StubTokenSearchPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_symbol(&self, symbol: &str, matches: Vec<TokenMetadata>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_symbol.insert(symbol.to_uppercase(), matches);
+    }
+
+    pub fn set_name(&self, text: &str, matches: Vec<TokenMetadata>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_name.insert(text.to_lowercase(), matches);
+    }
+}
+
+impl TokenSearchPort for StubTokenSearchPort {
+    async fn by_symbol(
+        &self,
+        symbol: &str,
+        _chain: Chain,
+    ) -> Result<Vec<TokenMetadata>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .by_symbol
+            .get(&symbol.to_uppercase())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn by_name(
+        &self,
+        text: &str,
+        _chain: Chain,
+    ) -> Result<Vec<TokenMetadata>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .by_name
+            .get(&text.to_lowercase())
+            .cloned()
+            .unwrap_or_default())
     }
 }

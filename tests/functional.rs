@@ -36,3 +36,6 @@ mod config_load;
 
 #[path = "functional/home_feed.rs"]
 mod home_feed;
+
+#[path = "functional/resolve_query.rs"]
+mod resolve_query;

@@ -1,5 +1,7 @@
 # 2 — Universal Search
 
+Status: in progress (Slice A: domain + use case green).
+
 With the block list and the transaction list removed, the Search screen is the only
 way to reach detail screens for entities the user does not already have on screen. It
 must be fast, resilient to ambiguous input, and produce a single, obvious next step.
@@ -162,3 +164,111 @@ Feature: Universal search
   per (chain, input). Implemented in `CacheAdapter`.
 - Should we support pasting a full URL (for example an etherscan.io link)? Out of
   scope for MVP, easy to add as another classification rule later.
+
+## 10. Implementation plan
+
+Delivered in three slices, each its own commit with the full red->green loop.
+
+### 10.1 Slice A — domain, ports, use case, stubs (no network, no UI)
+
+New or extended domain types (`src/domain/`):
+
+- `address.rs` — `pub struct Address([u8; 20])` with `from_hex_prefixed` and a
+  lowercase canonical hex string formatter.
+- `tx.rs` — `pub struct TxHash([u8; 32])` with the same fallible constructor.
+- `block.rs` — add `pub struct BlockHash([u8; 32])` next to `BlockNumber`.
+- `token.rs` — `pub struct TokenMetadata { address: Address, symbol: String,
+  name: String, decimals: u8 }`.
+- `search.rs` — `pub enum ResolvedEntity { Block, Tx, Address, Token, NotFound }`
+  plus `pub enum AddressKind { Eoa, Contract }` and light wrappers
+  `BlockSummary`, `TxSummary`.
+
+Ports (`src/application/ports/`):
+
+- `block_lookup.rs` — `get_by_hash`, `get_by_number`.
+- `tx_lookup.rs` — `get(hash, chain)`.
+- `address_lookup.rs` — `classify(addr, chain) -> AddressKind`.
+- `ens_resolver.rs` — `forward(name, chain) -> Option<Address>`, `reverse(addr,
+  chain) -> Option<String>`.
+- `token_search.rs` — `by_symbol(sym, chain) -> Vec<TokenMetadata>` and
+  `by_name(text, chain) -> Vec<TokenMetadata>`.
+
+Use case (`src/application/use_cases/resolve_query.rs`):
+
+- Struct `ResolveQuery<'a, B, T, A, E, S>` holding references to the five ports.
+- Method `async fn run(input, chain) -> Result<Vec<ResolvedEntity>, DomainError>`.
+- Classification follows section 3's table; ambiguous inputs run every
+  plausible lookup via `tokio::join!` so the slowest port does not block the
+  others.
+- Ranking rule: exact-type hits first, ENS resolutions second, plain text
+  search last.
+- Empty result yields `vec![ResolvedEntity::NotFound { reason }]` with a
+  human hint mentioning the chain.
+
+Stubs (`tests/support/stubs.rs`):
+
+- `StubBlockLookupPort`, `StubTxLookupPort`, `StubAddressLookupPort`,
+  `StubEnsResolverPort`, `StubTokenSearchPort`. Every stub carries a table
+  primed by the test and a `set_broken` switch for the rate-limit scenario.
+
+Tests (`tests/functional/resolve_query.rs`):
+
+- Resolves a tx hash.
+- Resolves a block number.
+- Resolves an ENS name and exposes the underlying address as a candidate.
+- Disambiguates a 64-hex value between tx and block.
+- Reports `NotFound` with the active chain name.
+- Treats an uppercase 3-char ticker as a token search input.
+- Rejects empty input with `DomainError::InvalidInput`.
+
+No UI or HTTP yet. Acceptance: `cargo test --test functional resolve_query`
+green, `cargo clippy --all-targets -- -D warnings` clean.
+
+### 10.2 Slice B — Alchemy adapters
+
+Extend `src/adapters/rpc/` with four new adapters sharing the existing
+`RpcClient`:
+
+- `AlchemyTxLookup` using `eth_getTransactionByHash`.
+- `AlchemyBlockLookup` using `eth_getBlockByHash` and `eth_getBlockByNumber`.
+- `AlchemyAddressLookup` using `eth_getCode` for EOA-vs-contract classification.
+- `AlchemyEnsResolver` calling the ENS Registry at
+  `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e` via `eth_call`. Forward uses
+  `resolver(node)` + `addr(node)`; reverse uses the reverse-resolver dance.
+
+`TokenSearchPort` stays stub-only in this slice because it depends on the
+Etherscan V2 adapter that has not been written yet (scheduled for later
+phases).
+
+Tests live under `tests/functional/alchemy_{tx,block,address,ens}_lookup.rs`
+using wiremock the same way the Home adapters do. New fixtures:
+
+- `rpc__eth_getTransactionByHash__found.json`
+- `rpc__eth_getTransactionByHash__not_found.json`
+- `rpc__eth_getBlockByHash__found.json`
+- `rpc__eth_getBlockByHash__not_found.json`
+- `rpc__eth_getCode__eoa.json`
+- `rpc__eth_getCode__contract.json`
+- `rpc__eth_call__ens_resolver.json`
+- `rpc__eth_call__ens_addr.json`
+
+### 10.3 Slice C — UI integration
+
+- `SearchScreen` is pushed on the `ScreenStack` when the user presses `/` from
+  `Home`. Enter on a candidate pops the search screen and pushes a minimal
+  `DetailPlaceholderScreen` that renders "{entity kind}: {identifier}" until
+  the real detail screens land.
+- `HomeScreen::handle_key` gains a `/` -> `Command::OpenSearch` branch; a new
+  variant is added to [`Command`] so the dispatcher knows to push a
+  search screen. The screen creation lives in the dispatcher to keep
+  `HomeScreen` free of adapter wiring.
+- BDD scenarios from section 6 are wired in `tests/e2e/steps/search.rs`
+  through stubs primed in the `World`. The scenarios assert on the title of
+  the screen on top of the stack after each navigation.
+- `SearchScreen` receives the five ports through generics, mirroring
+  `HomeSession`. The composition root in `infra::run` picks stubs for the
+  demo path and Alchemy adapters for the live path.
+
+Acceptance for the whole plan: every scenario in
+`tests/e2e/features/search.feature` passes, plan status becomes `done` in
+`plan/README.md`, `cargo test` + `cargo clippy` remain clean.

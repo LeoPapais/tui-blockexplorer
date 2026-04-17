@@ -4,4 +4,5 @@
 
 pub mod observe_gas_oracle;
 pub mod observe_network_status;
+pub mod resolve_query;
 pub mod switch_chain;
