@@ -13,6 +13,7 @@ pub mod client;
 pub mod ens;
 pub mod gas_oracle;
 pub mod network_status;
+pub mod proxy_detection;
 pub mod tx_lookup;
 pub mod tx_reader;
 
@@ -24,5 +25,6 @@ pub use client::{RpcClient, RpcError};
 pub use ens::AlchemyEnsResolver;
 pub use gas_oracle::AlchemyGasOracleAdapter;
 pub use network_status::AlchemyNetworkStatusAdapter;
+pub use proxy_detection::AlchemyProxyDetector;
 pub use tx_lookup::AlchemyTxLookup;
 pub use tx_reader::AlchemyTxReader;

@@ -66,3 +66,6 @@ mod alchemy_address_reader;
 
 #[path = "functional/load_contract_overview.rs"]
 mod load_contract_overview;
+
+#[path = "functional/alchemy_proxy_detector.rs"]
+mod alchemy_proxy_detector;
