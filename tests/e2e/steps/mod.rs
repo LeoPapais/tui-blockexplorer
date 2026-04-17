@@ -8,3 +8,4 @@
 pub mod block_detail;
 pub mod home;
 pub mod search;
+pub mod tx_detail;

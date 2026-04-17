@@ -12,6 +12,7 @@ pub mod config;
 mod home_feed;
 mod runtime;
 mod search_feed;
+mod tx_feed;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -23,16 +24,29 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyBlockLookup, AlchemyBlockReader, AlchemyEnsResolver,
             AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyTxLookup,
-            RpcClient,
+            AlchemyTxReader, RpcClient,
         },
         ui::{
             BlockDetailScreen, DetailPlaceholderScreen, HomeScreen, Screen, ScreenStack,
-            SearchScreen, block_feed, search_feed,
+            SearchScreen, TxDetailScreen, block_feed, search_feed, tx_feed,
         },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel},
     domain::{BlockId, Chain, ResolvedEntity},
 };
+
+/// Build a live `TxDetailScreen` backed by a dedicated Alchemy
+/// tx-reader task.
+fn live_tx_detail_screen(
+    chain: Chain,
+    hash: crate::domain::TxHash,
+    rpc: RpcClient,
+) -> Box<dyn Screen> {
+    let reader = AlchemyTxReader::new(rpc);
+    let (feed, sender) = tx_feed();
+    std::mem::drop(tx_feed::spawn(chain, reader, sender));
+    Box::new(TxDetailScreen::loading(chain, hash, feed))
+}
 
 /// Stub token search used until the Etherscan adapter lands. Returns
 /// no candidates for every query.
@@ -147,16 +161,22 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                             let reader = AlchemyBlockReader::new(rpc.clone());
                             let (feed, sender) = block_feed();
                             std::mem::drop(block_feed::spawn(chain, reader, sender));
+                            // When the user drills into a tx from the
+                            // block, wire a fresh TxDetail screen backed
+                            // by its own tx-reader task.
+                            let rpc_for_tx = rpc.clone();
+                            let open_tx = Box::new(move |hash| {
+                                live_tx_detail_screen(chain, hash, rpc_for_tx.clone())
+                            });
                             Box::new(BlockDetailScreen::loading(
                                 chain,
                                 BlockId::Number(number),
                                 feed,
-                                Box::new(|hash| {
-                                    Box::new(DetailPlaceholderScreen::new(
-                                        ResolvedEntity::Tx { hash, block: None },
-                                    ))
-                                }),
+                                open_tx,
                             ))
+                        }
+                        ResolvedEntity::Tx { hash, .. } => {
+                            live_tx_detail_screen(chain, hash, rpc.clone())
                         }
                         other => Box::new(DetailPlaceholderScreen::new(other)),
                     }

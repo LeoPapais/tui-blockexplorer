@@ -74,11 +74,12 @@ No test performs live network calls: adapters are exercised against
 
 ## Status
 
-Home, universal Search and Block detail are wired end to end against
-live Alchemy data. Block detail surfaces the Overview tab plus a flat
-Transactions tab; blobs, withdrawals, receipt-enriched tx rows and
-pagination remain deferred. The remaining detail pages (Tx / Address /
-Contract / Token) still open as placeholder screens that show the
-resolved identifier. The Gas Tracker screen, Mempool, Settings and
-deferred screens (NFTs, Watchlist, Simulator, Validators) are planned
-but not yet built.
+Home, universal Search, Block detail and Transaction detail (MVP) are
+wired end to end against live Alchemy data. Block detail surfaces the
+Overview tab plus a flat Transactions tab; Tx detail surfaces the
+Overview tab (status, block, from, to, value, gas, fee, raw selector)
+plus a Raw tab showing the adapter JSON. ABI decoding, logs, traces,
+asset and state changes remain deferred. Address / Contract / Token
+detail pages still open as placeholder screens. Gas Tracker, Mempool,
+Settings and the deferred screens (NFTs, Watchlist, Simulator,
+Validators) are planned but not yet built.

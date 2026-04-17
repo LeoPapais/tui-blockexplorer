@@ -10,6 +10,7 @@ pub mod detail_placeholder;
 pub mod home;
 pub mod screen;
 pub mod search;
+pub mod tx_detail;
 
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
@@ -21,3 +22,4 @@ pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen,
     search_feed,
 };
+pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};

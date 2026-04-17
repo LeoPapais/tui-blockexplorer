@@ -27,7 +27,7 @@ external-only data policy).
 | 1  | [1-home.md](1-home.md)                                         | Home screen               | done   |
 | 2  | [2-search.md](2-search.md)                                     | Universal search          | done   |
 | 3  | [3-block-detail.md](3-block-detail.md)                         | Block detail screen       | done   |
-| 4  | [4-tx-detail.md](4-tx-detail.md)                               | Transaction detail        | draft  |
+| 4  | [4-tx-detail.md](4-tx-detail.md)                               | Transaction detail        | done (MVP) |
 | 5  | [5-mempool.md](5-mempool.md)                                   | Mempool stream            | draft  |
 | 6  | [6-address-detail.md](6-address-detail.md)                     | Address detail            | draft  |
 | 7  | [7-contract-detail.md](7-contract-detail.md)                   | Contract detail           | draft  |
@@ -38,6 +38,7 @@ external-only data policy).
 | 12 | [12-screen-runtime.md](12-screen-runtime.md)                   | TUI runtime + demo mode   | done   |
 | 13 | [13-alchemy-adapter.md](13-alchemy-adapter.md)                 | Alchemy HTTP adapters     | done   |
 | 14 | [14-config-and-credentials.md](14-config-and-credentials.md)   | Config + feed wiring      | done   |
+| 15 | [15-backlog.md](15-backlog.md)                                 | Backlog (pendências 0–14) | draft  |
 
 Status values: `draft` (still in planning), `ready` (ready to implement), `done`
 (implemented and covered by passing tests), `deferred`.

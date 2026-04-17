@@ -1,8 +1,9 @@
 # 4 — Transaction Detail
 
-Status: in progress. The first MVP slice ships Overview + Raw tabs
-only; the remaining tabs depend on adapters we have not built yet.
-Full status tracked in section 12.
+Status: **done** (MVP scope) — Overview + Raw tabs are live and the
+two BDD scenarios in `tests/e2e/features/tx_detail.feature` are green.
+Logs / Internal / State Changes / Asset Changes and ABI decoding
+remain deferred (see section 12.4).
 
 The most feature-dense screen. Six tabs: Overview, Logs, Internal, State Changes,
 Asset Changes, Raw. Heavy reliance on Alchemy's Trace, Debug and Simulation APIs,

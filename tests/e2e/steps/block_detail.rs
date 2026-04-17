@@ -110,9 +110,15 @@ fn current_block_detail(stack: &ScreenStack) -> &BlockDetailScreen {
 fn push_block_detail_directly(world: &mut AppWorld, block: Block) {
     build_stack(world);
     let chain = world.active_chain.expect("chain");
-    let reader = world.block_reader_stub.clone();
-    reader.insert(block.clone());
-    let screen = spawn_block_detail(chain, BlockId::Number(block.number), reader);
+    let block_reader = world.block_reader_stub.clone();
+    let tx_reader = world.tx_reader_stub.clone();
+    block_reader.insert(block.clone());
+    let screen = spawn_block_detail(
+        chain,
+        BlockId::Number(block.number),
+        block_reader,
+        tx_reader,
+    );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
 }
