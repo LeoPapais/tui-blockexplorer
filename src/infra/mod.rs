@@ -7,6 +7,7 @@
 //! See `plan/12-screen-runtime.md` (runtime) and
 //! `plan/14-config-and-credentials.md` (credentials + wiring).
 
+mod block_feed;
 pub mod config;
 mod home_feed;
 mod runtime;
@@ -20,17 +21,17 @@ use crate::{
     adapters::{
         config::InMemoryChainRegistry,
         rpc::{
-            AlchemyAddressLookup, AlchemyBlockLookup, AlchemyEnsResolver,
+            AlchemyAddressLookup, AlchemyBlockLookup, AlchemyBlockReader, AlchemyEnsResolver,
             AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyTxLookup,
             RpcClient,
         },
         ui::{
-            DetailPlaceholderScreen, HomeScreen, Screen, ScreenStack, SearchScreen,
-            search_feed,
+            BlockDetailScreen, DetailPlaceholderScreen, HomeScreen, Screen, ScreenStack,
+            SearchScreen, block_feed, search_feed,
         },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel},
-    domain::Chain,
+    domain::{BlockId, Chain, ResolvedEntity},
 };
 
 /// Stub token search used until the Etherscan adapter lands. Returns
@@ -130,15 +131,39 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
             let addr = AlchemyAddressLookup::new(rpc.clone());
             let ens = AlchemyEnsResolver::new(rpc.clone());
             let token = NoopTokenSearch;
-            let (search_feed, sender) = search_feed();
+            let (search_feed_rx, sender) = search_feed();
             // JoinHandle intentionally dropped: the task lives for as
             // long as the receiver end is alive, which matches the
             // lifetime of the SearchScreen we return.
-            std::mem::drop(search_feed::spawn(chain, block, tx, addr, ens, token, sender));
-            Box::new(SearchScreen::new(
-                search_feed,
-                Box::new(|entity| Box::new(DetailPlaceholderScreen::new(entity))),
-            ))
+            std::mem::drop(search_feed::spawn(
+                chain, block, tx, addr, ens, token, sender,
+            ));
+
+            let detail_factory = {
+                let rpc = rpc.clone();
+                Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
+                    match entity {
+                        ResolvedEntity::Block { number, .. } => {
+                            let reader = AlchemyBlockReader::new(rpc.clone());
+                            let (feed, sender) = block_feed();
+                            std::mem::drop(block_feed::spawn(chain, reader, sender));
+                            Box::new(BlockDetailScreen::loading(
+                                chain,
+                                BlockId::Number(number),
+                                feed,
+                                Box::new(|hash| {
+                                    Box::new(DetailPlaceholderScreen::new(
+                                        ResolvedEntity::Tx { hash, block: None },
+                                    ))
+                                }),
+                            ))
+                        }
+                        other => Box::new(DetailPlaceholderScreen::new(other)),
+                    }
+                })
+            };
+
+            Box::new(SearchScreen::new(search_feed_rx, detail_factory))
         })
     };
 

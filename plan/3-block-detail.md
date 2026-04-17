@@ -1,8 +1,10 @@
 # 3 — Block Detail
 
-Status: in progress. Slices A (domain + use case + stubs) and B
-(Alchemy adapter) landed first; Slice C (UI + BDD) finishes the
-plan. Full status tracked in section 11.
+Status: **done** — all three BDD scenarios in
+`tests/e2e/features/block_detail.feature` are green along with the
+functional coverage under `tests/functional/`. Blobs / Withdrawals,
+receipts, pagination and the label lookup remain deferred; see
+section 11.3.
 
 Everything about one specific block. Reached from Search or from any screen that
 links to a block (Tx overview, Address transfers). Tabs are used to keep the view

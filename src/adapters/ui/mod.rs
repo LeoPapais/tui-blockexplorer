@@ -5,11 +5,15 @@
 //!
 //! See `.cursor/rules/tui.mdc` for the detailed contract.
 
+pub mod block_detail;
 pub mod detail_placeholder;
 pub mod home;
 pub mod screen;
 pub mod search;
 
+pub use block_detail::{
+    BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
+};
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
 pub use screen::{Command, Screen, ScreenStack};

@@ -9,13 +9,16 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        Command, DetailPlaceholderScreen, HomeScreen, ScreenStack, SearchScreen,
-        home_feed, search_feed,
+        BlockDetailScreen, Command, DetailPlaceholderScreen, HomeScreen, ScreenStack,
+        SearchScreen, block_feed, home_feed, search_feed,
     },
-    application::{ConnectionStatus, HomeViewModel, use_cases::resolve_query::ResolveQuery},
+    application::{
+        ConnectionStatus, HomeViewModel, ports::BlockReaderPort,
+        use_cases::resolve_query::ResolveQuery,
+    },
     domain::{
-        Address, AddressKind, BlockHash, BlockNumber, BlockSummary, Chain, ResolvedEntity,
-        TxHash, TxSummary,
+        Address, AddressKind, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
+        ResolvedEntity, TxHash, TxSummary,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -40,31 +43,43 @@ fn initial_home_view(chain: Chain) -> HomeViewModel {
     }
 }
 
-fn build_stack(world: &mut AppWorld) {
+pub(crate) fn build_stack(world: &mut AppWorld) {
     if world.stack.is_some() {
         return;
     }
     let chain = ensure_active_chain(world);
 
-    // Home screen without a live feed; we only need it as the first
-    // element on the stack. The search factory captures clones of the
-    // stubs so pressing `/` produces a usable SearchScreen.
     let (home_feed_rx, _home_feed_tx) = home_feed();
+    let search_factory = build_search_factory(world, chain);
 
+    let home = HomeScreen::with_feed(initial_home_view(chain), home_feed_rx)
+        .with_search_factory(search_factory);
+
+    let mut stack = ScreenStack::new();
+    stack.push(Box::new(home));
+    world.stack = Some(stack);
+}
+
+pub(crate) fn build_search_factory(
+    world: &AppWorld,
+    chain: Chain,
+) -> Box<dyn Fn() -> Box<dyn blockexplorer_tui::adapters::ui::Screen> + Send + 'static> {
     let block = world.block_stub.clone();
     let tx = world.tx_stub.clone();
     let address = world.address_stub.clone();
     let ens = world.ens_stub.clone();
     let token = world.token_stub.clone();
+    let block_reader = world.block_reader_stub.clone();
 
-    let search_factory = Box::new(move || -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    Box::new(move || {
         let (feed, sender) = search_feed();
-        // Spawn a per-SearchScreen resolver task using the stub ports.
         let block = block.clone();
         let tx = tx.clone();
         let address = address.clone();
         let ens = ens.clone();
         let token = token.clone();
+        let block_reader_for_detail = block_reader.clone();
+
         tokio::spawn(async move {
             let blockexplorer_tui::adapters::ui::SearchFeedSender {
                 updates_tx,
@@ -95,18 +110,61 @@ fn build_stack(world: &mut AppWorld) {
                 }
             }
         });
-        Box::new(SearchScreen::new(
-            feed,
-            Box::new(|entity| Box::new(DetailPlaceholderScreen::new(entity))),
-        ))
+
+        let detail_factory: Box<
+            dyn Fn(ResolvedEntity) -> Box<dyn blockexplorer_tui::adapters::ui::Screen>
+                + Send
+                + 'static,
+        > = {
+            let reader = block_reader_for_detail.clone();
+            Box::new(move |entity: ResolvedEntity| {
+                match entity {
+                    ResolvedEntity::Block { number, .. } => spawn_block_detail(
+                        chain,
+                        BlockId::Number(number),
+                        reader.clone(),
+                    ),
+                    other => Box::new(DetailPlaceholderScreen::new(other))
+                        as Box<dyn blockexplorer_tui::adapters::ui::Screen>,
+                }
+            })
+        };
+
+        Box::new(SearchScreen::new(feed, detail_factory))
+    })
+}
+
+pub(crate) fn spawn_block_detail<R: BlockReaderPort + Clone + 'static>(
+    chain: Chain,
+    id: BlockId,
+    reader: R,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = block_feed();
+    let reader_for_task = reader.clone();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::BlockFeedSender {
+            updates_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(bid) = input_rx.recv().await {
+            if let Ok(Some(block)) = reader_for_task.get(bid, chain).await
+                && updates_tx.send(block).is_err()
+            {
+                break;
+            }
+        }
     });
-
-    let home = HomeScreen::with_feed(initial_home_view(chain), home_feed_rx)
-        .with_search_factory(search_factory);
-
-    let mut stack = ScreenStack::new();
-    stack.push(Box::new(home));
-    world.stack = Some(stack);
+    Box::new(BlockDetailScreen::loading(
+        chain,
+        id,
+        feed,
+        Box::new(|hash| {
+            Box::new(DetailPlaceholderScreen::new(ResolvedEntity::Tx {
+                hash,
+                block: None,
+            }))
+        }),
+    ))
 }
 
 /// Apply a [`Command`] returned by a screen to the world's stack. The

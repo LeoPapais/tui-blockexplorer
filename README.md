@@ -23,13 +23,15 @@ ALCHEMY_API_KEY=<key> BLOCKEXPLORER_TUI_CHAIN=base cargo run
 
 Inside the TUI:
 
-| Key     | Action                                                 |
-|---------|--------------------------------------------------------|
-| `q`     | Quit                                                   |
-| `Esc`   | Pop current screen (exits when the stack is empty)     |
-| `/`     | Open universal search (Home)                           |
-| `Enter` | Open selected candidate (Search)                       |
-| `Up/Down` | Move selection in the search candidates list         |
+| Key       | Action                                                   |
+|-----------|----------------------------------------------------------|
+| `q`       | Quit                                                     |
+| `Esc`     | Pop current screen (exits when the stack is empty)       |
+| `/`       | Open universal search (Home)                             |
+| `Enter`   | Open selected candidate or transaction                   |
+| `Up/Down` | Move selection (Search candidates, Block Transactions)   |
+| `Tab`     | Next tab (Block detail: Overview ↔ Transactions)         |
+| `[` / `]` | Previous / next block (Block detail)                     |
 
 Search input accepts tx hashes (0x + 64 hex), block hashes, block numbers,
 EVM addresses (0x + 40 hex), ENS names (`*.eth`) and token tickers. Live
@@ -72,9 +74,11 @@ No test performs live network calls: adapters are exercised against
 
 ## Status
 
-Home and universal Search are wired end to end (live Alchemy data).
-Detail pages (Block / Tx / Address / Contract / Token) currently open
-as placeholder screens that show the resolved identifier; the full
-layouts are specified in `plan/` and queued for implementation. The
-Gas Tracker screen, Mempool, Settings and deferred screens (NFTs,
-Watchlist, Simulator, Validators) are planned but not yet built.
+Home, universal Search and Block detail are wired end to end against
+live Alchemy data. Block detail surfaces the Overview tab plus a flat
+Transactions tab; blobs, withdrawals, receipt-enriched tx rows and
+pagination remain deferred. The remaining detail pages (Tx / Address /
+Contract / Token) still open as placeholder screens that show the
+resolved identifier. The Gas Tracker screen, Mempool, Settings and
+deferred screens (NFTs, Watchlist, Simulator, Validators) are planned
+but not yet built.
