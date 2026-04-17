@@ -1,5 +1,10 @@
 # 7 — Contract Detail
 
+Status: in progress. MVP slice ships the Overview tab with basic
+account info + EIP-1967 proxy detection. Source / ABI / Read / Events
+/ Storage tabs all depend on the Etherscan adapter, which is not in
+the codebase yet. Full status tracked in section 12.
+
 Inspect and read a smart contract. Tabs in MVP: Overview, Source, ABI, Read, Events,
 Storage. The Write tab is deferred because it requires a signer.
 
@@ -182,3 +187,81 @@ Feature: Contract detail
 
 - Write tab with transaction signing.
 - Decompiler integration (panoramix, heimdall) for unverified contracts.
+
+## 12. Implementation plan
+
+Three slices. MVP lands the Overview tab with a lean header plus
+EIP-1967 proxy detection; Source / ABI / Read / Events / Storage
+tabs all wait on adapters we have not written yet (Etherscan and a
+contract-reader built on `eth_call`). Search already routes
+`ResolvedEntity::Address` with `kind = Contract` to a separate
+screen after this plan lands.
+
+### 12.1 Slice A — domain + port + use case + stubs
+
+Domain (`src/domain/`):
+
+- `contract.rs`
+  - `pub enum ProxyKind { Eip1967 }` — only one variant for MVP; UUPS
+    and transparent detection join later.
+  - `pub struct ProxyInfo { kind: ProxyKind, implementation: Address }`.
+  - `pub struct ContractOverview { account: AddressOverview, proxy:
+    Option<ProxyInfo> }` — reuses `AddressOverview` so balance /
+    nonce / kind rendering stays consistent with plan 6.
+
+Port (`src/application/ports/proxy_detection.rs`):
+
+```rust
+pub trait ProxyDetectionPort: Send + Sync {
+    async fn detect(&self, address: Address, chain: Chain)
+        -> Result<Option<ProxyInfo>, DomainError>;
+}
+```
+
+Use case `load_contract_overview` composes `AddressReaderPort::get`
+and `ProxyDetectionPort::detect`, returning a `ContractOverview` or
+`DomainError::NotFound` when the address itself does not resolve.
+
+Stub `StubProxyDetectionPort` with `set(address, info)` helper.
+
+Functional tests `tests/functional/load_contract_overview.rs`:
+- contract without proxy (plain kind = Contract, proxy = None),
+- contract with EIP-1967 proxy wired to an implementation,
+- missing address surfaces NotFound.
+
+### 12.2 Slice B — Alchemy adapter
+
+`src/adapters/rpc/proxy_detection.rs` exposes
+`AlchemyProxyDetector` that reads the EIP-1967 implementation slot
+`0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
+via `eth_getStorageAt` at tag `"latest"`, decodes the last 20 bytes
+and returns:
+- `None` when the slot is all zeros,
+- `Some(ProxyInfo { kind: Eip1967, implementation })` otherwise.
+
+Tests `tests/functional/alchemy_proxy_detector.rs` cover a non-proxy
+address (zero slot) and a proxy address (populated slot). Fixtures:
+- `rpc__eth_getStorageAt__eip1967_zero.json` (already exists from
+  plan/2 search era) — reused.
+- `rpc__eth_getStorageAt__eip1967_impl.json` — new.
+
+### 12.3 Slice C — UI + wiring + BDD
+
+- `src/adapters/ui/contract_detail.rs` — `ContractDetailScreen` with
+  a single Overview tab rendering:
+  - account line (address, kind, balance, nonce),
+  - proxy badge when detected, including the implementation address,
+  - a "deferred tabs" footer note listing what is not yet wired
+    (Source / ABI / Read / Events / Storage).
+- `src/infra/contract_feed.rs` + `spawn` helper (channel pair +
+  ContractOverview publisher backed by the two ports).
+- Search detail factory routes
+  `ResolvedEntity::Address { kind: Contract, .. }` to the new
+  `ContractDetailScreen`; EOAs keep going to `AddressDetailScreen`.
+- BDD `tests/e2e/features/contract_detail.feature`:
+  - Open a plain contract: kind "Contract", no proxy badge.
+  - Open an EIP-1967 proxy: proxy badge shows the stubbed
+    implementation address.
+
+Acceptance: plan flips to `done (MVP)`, plan/README updated,
+cargo clippy clean, all tests green.

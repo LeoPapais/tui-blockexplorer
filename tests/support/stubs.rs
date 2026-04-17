@@ -15,12 +15,13 @@ use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
         ChainRegistryPort, EnsResolverPort, GasOraclePort, NetworkStatusPort,
-        PendingTxStreamPort, TokenSearchPort, TxLookupPort, TxReaderPort,
+        PendingTxStreamPort, ProxyDetectionPort, TokenSearchPort, TxLookupPort, TxReaderPort,
     },
     domain::{
         Address, AddressKind, AddressOverview, Block, BlockHash, BlockId, BlockNumber,
         BlockSummary, Chain, DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx,
-        PendingTxEvent, PendingTxFilter, TokenMetadata, Transaction, TxHash, TxSummary, Wei,
+        PendingTxEvent, PendingTxFilter, ProxyInfo, TokenMetadata, Transaction, TxHash,
+        TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -633,5 +634,41 @@ impl AddressReaderPort for StubAddressReaderPort {
     ) -> Result<Option<AddressOverview>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_address.get(&address).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: ProxyDetectionPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct ProxyDetectionState {
+    by_address: HashMap<Address, ProxyInfo>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubProxyDetectionPort {
+    inner: Arc<Mutex<ProxyDetectionState>>,
+}
+
+impl StubProxyDetectionPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&self, address: Address, info: ProxyInfo) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, info);
+    }
+}
+
+impl ProxyDetectionPort for StubProxyDetectionPort {
+    async fn detect(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<ProxyInfo>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).copied())
     }
 }

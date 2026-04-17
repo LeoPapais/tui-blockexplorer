@@ -9,6 +9,7 @@
 pub mod address;
 pub mod block;
 pub mod chain;
+pub mod contract;
 pub mod errors;
 pub mod gas;
 pub mod mempool;
@@ -21,6 +22,7 @@ pub mod tx;
 pub use address::{Address, AddressOverview};
 pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary};
 pub use chain::Chain;
+pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};

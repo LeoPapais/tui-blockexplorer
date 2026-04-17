@@ -63,3 +63,6 @@ mod load_address_overview;
 
 #[path = "functional/alchemy_address_reader.rs"]
 mod alchemy_address_reader;
+
+#[path = "functional/load_contract_overview.rs"]
+mod load_contract_overview;
