@@ -60,3 +60,6 @@ mod observe_pending_txs;
 
 #[path = "functional/load_address_overview.rs"]
 mod load_address_overview;
+
+#[path = "functional/alchemy_address_reader.rs"]
+mod alchemy_address_reader;

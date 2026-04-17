@@ -6,6 +6,7 @@
 //! See `plan/13-alchemy-adapter.md` and `plan/2-search.md` section 10.2.
 
 pub mod address_lookup;
+pub mod address_reader;
 pub mod block_lookup;
 pub mod block_reader;
 pub mod client;
@@ -16,6 +17,7 @@ pub mod tx_lookup;
 pub mod tx_reader;
 
 pub use address_lookup::AlchemyAddressLookup;
+pub use address_reader::AlchemyAddressReader;
 pub use block_lookup::AlchemyBlockLookup;
 pub use block_reader::AlchemyBlockReader;
 pub use client::{RpcClient, RpcError};
