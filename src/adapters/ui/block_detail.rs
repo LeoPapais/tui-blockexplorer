@@ -88,6 +88,12 @@ pub struct BlockDetailScreen {
     open_tx_factory: OpenTxFactory,
     active_tab: BlockTab,
     tx_selected: usize,
+    /// Last value produced by the `y` / `Y` bindings. A real
+    /// clipboard adapter is deferred — see `plan/3-block-detail.md`
+    /// §12.1 and `plan/15-backlog.md §8.16`. Tests inspect this
+    /// field directly so the binding stays testable without pulling
+    /// the OS clipboard into the UI adapter.
+    last_copied_value: Option<String>,
 }
 
 impl BlockDetailScreen {
@@ -109,6 +115,7 @@ impl BlockDetailScreen {
             open_tx_factory,
             active_tab: BlockTab::Overview,
             tx_selected: 0,
+            last_copied_value: None,
         }
     }
 
@@ -128,7 +135,44 @@ impl BlockDetailScreen {
             open_tx_factory,
             active_tab: BlockTab::Overview,
             tx_selected: 0,
+            last_copied_value: None,
         }
+    }
+
+    /// Latest value produced by the `y` / `Y` clipboard bindings.
+    /// Mirrors `TxDetailScreen::last_copied_value`. Returns `None`
+    /// before the user triggers a copy.
+    #[must_use]
+    pub fn last_copied_value(&self) -> Option<&str> {
+        self.last_copied_value.as_deref()
+    }
+
+    /// Copy the identifier most relevant to the active tab:
+    ///
+    /// - Overview: the block hash.
+    /// - Transactions: the selected transaction hash.
+    ///
+    /// No-op while the block is still loading; covered by
+    /// `plan/3-block-detail.md` §12.1.
+    fn copy_active_identifier(&mut self) {
+        let Some(block) = self.current.as_ref() else {
+            return;
+        };
+        let value = match self.active_tab {
+            BlockTab::Overview => block.hash.to_hex(),
+            BlockTab::Transactions => match block.tx_hashes.get(self.tx_selected) {
+                Some(hash) => hash.to_hex(),
+                None => return,
+            },
+        };
+        self.last_copied_value = Some(value);
+    }
+
+    fn copy_block_number(&mut self) {
+        let Some(block) = self.current.as_ref() else {
+            return;
+        };
+        self.last_copied_value = Some(block.number.value().to_string());
     }
 
     #[must_use]
@@ -274,6 +318,16 @@ impl Screen for BlockDetailScreen {
             }
             KeyCode::Left => {
                 self.active_tab = self.active_tab.previous();
+                return Command::None;
+            }
+            // `y` copies the identifier relevant to the active tab;
+            // `Y` always copies the block number. See plan/3 §12.1.
+            KeyCode::Char('y') => {
+                self.copy_active_identifier();
+                return Command::None;
+            }
+            KeyCode::Char('Y') => {
+                self.copy_block_number();
                 return Command::None;
             }
             _ => {}
