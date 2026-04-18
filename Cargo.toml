@@ -10,6 +10,7 @@ bytes = "1.11.1"
 crossterm = "0.29.0"
 directories = "6.0.0"
 hex = "0.4.3"
+k256 = { version = "0.13.4", features = ["ecdsa"] }
 moka = { version = "0.12.15", features = ["future"] }
 ratatui = "0.30.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "gzip", "stream", "http2", "charset"] }
