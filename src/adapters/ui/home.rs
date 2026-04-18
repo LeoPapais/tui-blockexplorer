@@ -131,6 +131,16 @@ pub struct HomeFeed {
     rx: UnboundedReceiver<HomeViewModel>,
 }
 
+impl HomeFeed {
+    /// Await the next view-model update. Returns `None` when the
+    /// sender has been dropped. Used by integration tests that drive
+    /// the dispatcher directly (see
+    /// `tests/functional/home_feed.rs::start_with_stream_*`).
+    pub async fn recv(&mut self) -> Option<HomeViewModel> {
+        self.rx.recv().await
+    }
+}
+
 /// Sending end of the channel. Owned by the runtime's background
 /// refresh task.
 #[derive(Clone)]
