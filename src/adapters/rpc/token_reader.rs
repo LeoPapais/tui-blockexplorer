@@ -82,6 +82,11 @@ impl TokenReaderPort for AlchemyTokenReader {
                 decimals,
             },
             total_supply,
+            // The TokenReaderPort intentionally does not know about
+            // prices: the price column is fetched independently by
+            // the UI via PricesPort so a slow / broken Prices API
+            // does not hold back the Overview tab.
+            price: None,
         }))
     }
 }

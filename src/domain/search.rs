@@ -14,6 +14,13 @@ pub enum AddressKind {
 /// One candidate produced by `ResolveQuery`. Ordered by relevance in
 /// the returned `Vec`; the first element is the one the UI should
 /// highlight by default.
+///
+/// `Contract { address }` is emitted alongside `Address { kind:
+/// Contract, .. }` when a contract address is searched, so the user
+/// can jump straight to the ContractDetail screen. `Token(_)` is
+/// emitted by the search feed (not by `ResolveQuery`) when a
+/// follow-up ERC-20 probe succeeds; see `plan/2-search.md` section
+/// 11.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedEntity {
     Block {
@@ -29,6 +36,12 @@ pub enum ResolvedEntity {
         kind: AddressKind,
         ens_name: Option<String>,
     },
+    /// Shortcut entry that opens the ContractDetail screen directly.
+    /// Emitted whenever the underlying address resolves to a
+    /// contract, independently of whether the contract is an ERC-20.
+    Contract {
+        address: Address,
+    },
     Token(TokenMetadata),
     NotFound {
         reason: String,
@@ -43,6 +56,7 @@ impl ResolvedEntity {
             ResolvedEntity::Block { .. } => "block",
             ResolvedEntity::Tx { .. } => "transaction",
             ResolvedEntity::Address { .. } => "address",
+            ResolvedEntity::Contract { .. } => "contract",
             ResolvedEntity::Token(_) => "token",
             ResolvedEntity::NotFound { .. } => "not found",
         }

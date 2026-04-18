@@ -19,6 +19,7 @@ fn sample() -> TokenOverview {
             decimals: 6,
         },
         total_supply: 35_200_000_000_000_000_u128,
+        price: None,
     }
 }
 

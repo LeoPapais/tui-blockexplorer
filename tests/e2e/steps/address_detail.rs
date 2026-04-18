@@ -257,6 +257,7 @@ fn seed_token_reader(world: &AppWorld, metadata: &TokenMetadata) {
     world.token_reader_stub.insert(TokenOverview {
         metadata: metadata.clone(),
         total_supply: 0,
+        price: None,
     });
 }
 
@@ -381,4 +382,87 @@ fn press_key(stack: &mut ScreenStack, code: KeyCode) {
             stack.clear();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// ERC-20 inline Token tab steps
+// ---------------------------------------------------------------------------
+
+#[when(regex = r#"^the user opens AddressDetail with ERC-20 probe for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn opens_address_detail_with_erc20_probe(world: &mut AppWorld, addr_hex: String) {
+    use crate::steps::search::spawn_address_detail_with_erc20_probe;
+    build_stack(world);
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let reader = world.address_reader_stub.clone();
+    let transfers = world.transfers_stub.clone();
+    let portfolio = world.portfolio_stub.clone();
+    let tx_reader = world.tx_reader_stub.clone();
+    let token_reader = world.token_reader_stub.clone();
+    let prices = world.prices_stub.clone();
+    let screen = spawn_address_detail_with_erc20_probe(
+        Chain::Ethereum,
+        addr,
+        reader,
+        transfers,
+        portfolio,
+        tx_reader,
+        token_reader,
+        prices,
+    );
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[then("once the ERC-20 probe completes, the tab bar includes the Token tab")]
+async fn tab_bar_has_token(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).tabs().contains(&AddressTab::Token)).await;
+    let tabs = current(stack).tabs();
+    assert!(
+        tabs.contains(&AddressTab::Token),
+        "Token tab missing from {tabs:?}",
+    );
+}
+
+#[then("once loaded, the tab bar does not include the Token tab")]
+async fn tab_bar_no_token(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Wait for the overview to arrive so the probe has a chance to
+    // run (or be skipped). The Token tab may only be added later so
+    // we also sleep a short window to give the probe time to either
+    // return None or never fire at all.
+    tick_until(stack, |s| current(s).current().is_some()).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let cmd = stack.top_mut().unwrap().tick();
+    assert!(matches!(cmd, Command::None | Command::Refresh));
+    let tabs = current(stack).tabs();
+    assert!(
+        !tabs.contains(&AddressTab::Token),
+        "Token tab unexpectedly present in {tabs:?}",
+    );
+}
+
+#[then(
+    regex = r#"^the inline Token overview shows symbol "([^"]+)" and price "\$([0-9.]+)"$"#
+)]
+async fn inline_token_shows_symbol_and_price(
+    world: &mut AppWorld,
+    expected_symbol: String,
+    expected_price: f64,
+) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current(s).token_overview().is_some() && current(s).token_price().is_some()
+    })
+    .await;
+    let screen = current(stack);
+    let ov = screen.token_overview().expect("loaded");
+    assert_eq!(ov.metadata.symbol, expected_symbol);
+    let price = screen.token_price().expect("price loaded");
+    assert!(
+        (price.value - expected_price).abs() < 1e-6,
+        "price {} differs from expected {}",
+        price.value,
+        expected_price,
+    );
 }

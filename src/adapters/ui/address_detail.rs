@@ -11,7 +11,7 @@
 
 use std::any::Any;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -22,10 +22,13 @@ use ratatui::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
+    adapters::ui::{
+        screen::{Command, Screen},
+        token_detail::render_inline_token_panel,
+    },
     domain::{
-        Address, AddressKind, AddressOverview, Chain, TokenHolding, TransferAsset,
-        TransferEvent, TransferPage, TxHash,
+        Address, AddressKind, AddressOverview, Chain, PriceSeries, PriceWindow, TokenHolding,
+        TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash,
     },
 };
 
@@ -34,11 +37,26 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 /// Channel half owned by the screen.
+///
+/// `token_overview_rx` / `token_price_rx` / `token_series_rx` feed
+/// the inline Token tab that appears only when the address happens
+/// to be an ERC-20 contract. See `plan/6-address-detail.md` section
+/// 12.4.4.
 pub struct AddressFeed {
     pub input_tx: UnboundedSender<Address>,
     pub updates_rx: UnboundedReceiver<AddressOverview>,
     pub transfers_rx: UnboundedReceiver<TransferPage>,
     pub portfolio_rx: UnboundedReceiver<Vec<TokenHolding>>,
+    /// `Some(overview)` when the address is detected as an ERC-20
+    /// contract; `None` means "probed and not a token" (the feed
+    /// sends `None` explicitly to flip the tri-state).
+    pub token_overview_rx: UnboundedReceiver<Option<TokenOverview>>,
+    /// Spot price for the ERC-20 token. `Option<TokenPrice>` so the
+    /// UI can distinguish "no data" from "still loading".
+    pub token_price_rx: UnboundedReceiver<Option<TokenPrice>>,
+    /// Historical series for the inline mini-chart (default window
+    /// is `PriceWindow::D1`).
+    pub token_series_rx: UnboundedReceiver<PriceSeries>,
 }
 
 /// Channel half owned by the background tasks.
@@ -46,6 +64,9 @@ pub struct AddressFeedSender {
     pub updates_tx: UnboundedSender<AddressOverview>,
     pub transfers_tx: UnboundedSender<TransferPage>,
     pub portfolio_tx: UnboundedSender<Vec<TokenHolding>>,
+    pub token_overview_tx: UnboundedSender<Option<TokenOverview>>,
+    pub token_price_tx: UnboundedSender<Option<TokenPrice>>,
+    pub token_series_tx: UnboundedSender<PriceSeries>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -55,17 +76,26 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
     let (updates_tx, updates_rx) = unbounded_channel();
     let (transfers_tx, transfers_rx) = unbounded_channel();
     let (portfolio_tx, portfolio_rx) = unbounded_channel();
+    let (token_overview_tx, token_overview_rx) = unbounded_channel();
+    let (token_price_tx, token_price_rx) = unbounded_channel();
+    let (token_series_tx, token_series_rx) = unbounded_channel();
     (
         AddressFeed {
             input_tx,
             updates_rx,
             transfers_rx,
             portfolio_rx,
+            token_overview_rx,
+            token_price_rx,
+            token_series_rx,
         },
         AddressFeedSender {
             updates_tx,
             transfers_tx,
             portfolio_tx,
+            token_overview_tx,
+            token_price_tx,
+            token_series_tx,
             input_rx,
         },
     )
@@ -93,6 +123,11 @@ pub enum AddressTab {
     Overview,
     Transactions,
     Tokens,
+    /// Only rendered when the address is detected as an ERC-20
+    /// contract (see `token_overview` tri-state). Embeds the Token
+    /// summary panel (symbol/supply/price/market cap + mini-chart)
+    /// inline.
+    Token,
     /// Only rendered when `AddressOverview.kind` is `Contract`.
     Contract,
 }
@@ -103,9 +138,24 @@ impl AddressTab {
             AddressTab::Overview => "Overview",
             AddressTab::Transactions => "Transactions",
             AddressTab::Tokens => "Tokens",
+            AddressTab::Token => "Token",
             AddressTab::Contract => "Contract",
         }
     }
+}
+
+/// Tri-state for the inline Token tab.
+#[derive(Debug, Clone, PartialEq)]
+enum TokenProbeState {
+    /// The address is an EOA or the ERC-20 probe has not completed
+    /// yet; the tab must stay hidden.
+    Unknown,
+    /// The address is a contract but the ERC-20 probe returned
+    /// `Ok(None)`; tab stays hidden.
+    NotToken,
+    /// The probe succeeded: the tab is visible and renders this
+    /// overview.
+    IsToken(TokenOverview),
 }
 
 // ---------------------------------------------------------------------------
@@ -119,9 +169,23 @@ pub struct AddressDetailScreen {
     current: Option<AddressOverview>,
     transfers: Option<TransferPage>,
     holdings: Option<Vec<TokenHolding>>,
+    /// Tri-state: see [`TokenProbeState`]. Controls visibility of
+    /// the `AddressTab::Token` tab.
+    token_probe: TokenProbeState,
+    /// Spot price for the inline Token tab. `None` + `!token_price_missing`
+    /// means "still loading"; `token_price_missing == true` means
+    /// "probed and no data".
+    token_price: Option<TokenPrice>,
+    token_price_missing: bool,
+    /// Historical series for the inline mini-chart (D1 only in MVP).
+    token_series: Option<PriceSeries>,
     feed: AddressFeed,
     active_tab: AddressTab,
     scroll: u16,
+    /// Upper bound on `scroll` for the currently rendered Overview
+    /// body, refreshed on every render; used to stop `handle_key`
+    /// from scrolling past the last visible row (plan 13.3).
+    scroll_cap: std::cell::Cell<u16>,
     tx_list_state: ListState,
     token_list_state: ListState,
     open_tx: Option<OpenTxFactory>,
@@ -174,9 +238,14 @@ impl AddressDetailScreen {
             current: None,
             transfers: None,
             holdings: None,
+            token_probe: TokenProbeState::Unknown,
+            token_price: None,
+            token_price_missing: false,
+            token_series: None,
             feed,
             active_tab: AddressTab::Overview,
             scroll: 0,
+            scroll_cap: std::cell::Cell::new(0),
             tx_list_state,
             token_list_state,
             open_tx,
@@ -187,12 +256,21 @@ impl AddressDetailScreen {
 
     /// Tabs currently visible in the tab bar. Contract is included
     /// only when the loaded overview reports `AddressKind::Contract`.
+    /// Token is included only when the ERC-20 probe resolved
+    /// positively (see `plan/6-address-detail.md` section 12.4.4).
     fn visible_tabs(&self) -> Vec<AddressTab> {
         let mut tabs = vec![
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Tokens,
         ];
+        // Inline Token tab: only shown once we have a confirmed
+        // ERC-20 TokenOverview in hand. Sits between Tokens
+        // (portfolio) and Contract so all contract-specific tabs
+        // cluster together.
+        if matches!(self.token_probe, TokenProbeState::IsToken(_)) {
+            tabs.push(AddressTab::Token);
+        }
         if let Some(ov) = self.current.as_ref()
             && matches!(ov.kind, AddressKind::Contract)
         {
@@ -208,6 +286,15 @@ impl AddressDetailScreen {
             .position(|&t| t == self.active_tab)
             .unwrap_or(0);
         tabs[(current_idx + 1) % tabs.len()]
+    }
+
+    fn prev_tab(&self) -> AddressTab {
+        let tabs = self.visible_tabs();
+        let current_idx = tabs
+            .iter()
+            .position(|&t| t == self.active_tab)
+            .unwrap_or(0);
+        tabs[(current_idx + tabs.len() - 1) % tabs.len()]
     }
 
     /// Public accessor so BDD scenarios can assert the tab bar
@@ -236,6 +323,28 @@ impl AddressDetailScreen {
     #[must_use]
     pub fn active_tab(&self) -> AddressTab {
         self.active_tab
+    }
+
+    /// Inline Token overview recognised for this address, if any.
+    /// Exposed so BDD scenarios can assert without downcasting.
+    #[must_use]
+    pub fn token_overview(&self) -> Option<&TokenOverview> {
+        match &self.token_probe {
+            TokenProbeState::IsToken(ov) => Some(ov),
+            _ => None,
+        }
+    }
+
+    /// Spot price for the inline Token tab, if loaded.
+    #[must_use]
+    pub fn token_price(&self) -> Option<&TokenPrice> {
+        self.token_price.as_ref()
+    }
+
+    /// Historical series (D1 window) feeding the inline mini-chart.
+    #[must_use]
+    pub fn token_series(&self) -> Option<&PriceSeries> {
+        self.token_series.as_ref()
     }
 
     /// Current selection index in the active list tab, clamped to the
@@ -280,6 +389,27 @@ impl AddressDetailScreen {
         while let Ok(holdings) = self.feed.portfolio_rx.try_recv() {
             self.holdings = Some(holdings);
             self.clamp_token_selection();
+        }
+        while let Ok(opt_overview) = self.feed.token_overview_rx.try_recv() {
+            self.token_probe = match opt_overview {
+                Some(ov) => TokenProbeState::IsToken(ov),
+                None => TokenProbeState::NotToken,
+            };
+        }
+        while let Ok(opt_price) = self.feed.token_price_rx.try_recv() {
+            match opt_price {
+                Some(p) => {
+                    self.token_price = Some(p);
+                    self.token_price_missing = false;
+                }
+                None => {
+                    self.token_price = None;
+                    self.token_price_missing = true;
+                }
+            }
+        }
+        while let Ok(series) = self.feed.token_series_rx.try_recv() {
+            self.token_series = Some(series);
         }
     }
 
@@ -390,10 +520,15 @@ impl Screen for AddressDetailScreen {
                     self.transfers.as_ref(),
                     self.holdings.as_ref(),
                 );
+                let content_lines = body.lines().count() as u16;
+                let viewport = chunks[2].height.saturating_sub(2);
+                let cap = content_lines.saturating_sub(viewport);
+                self.scroll_cap.set(cap);
+                let offset = self.scroll.min(cap);
                 frame.render_widget(
                     Paragraph::new(body)
                         .wrap(Wrap { trim: false })
-                        .scroll((self.scroll, 0))
+                        .scroll((offset, 0))
                         .block(Block::default().borders(Borders::ALL).title("Overview")),
                     chunks[2],
                 );
@@ -481,14 +616,72 @@ implementation resolution, source on Etherscan once wired).",
                     }
                 }
             }
+            AddressTab::Token => {
+                // `visible_tabs` guarantees we only reach this arm
+                // when `token_probe == IsToken(..)`, so the unwrap
+                // below is unreachable in practice.
+                if let TokenProbeState::IsToken(ref ov) = self.token_probe {
+                    render_inline_token_panel(
+                        frame,
+                        chunks[2],
+                        ov,
+                        self.token_price.as_ref(),
+                        self.token_price_missing,
+                        self.token_series.as_ref(),
+                        PriceWindow::D1,
+                    );
+                }
+            }
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
+        let cmd = self.dispatch_key(key);
+        // Clamp to the upper bound measured during the previous
+        // render (plan 13.3), so `End` / `PageDown` stop exactly at
+        // the last visible row instead of scrolling into the void.
+        self.scroll = self.scroll.min(self.scroll_cap.get());
+        cmd
+    }
+
+    fn tick(&mut self) -> Command {
+        self.drain_feed();
+        Command::None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl AddressDetailScreen {
+    fn dispatch_key(&mut self, key: KeyEvent) -> Command {
+        let is_back_tab = key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab
+                && key.modifiers.contains(KeyModifiers::SHIFT));
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
-            (_, KeyCode::Tab | KeyCode::BackTab) => {
+            (_, _) if is_back_tab => {
+                self.active_tab = self.prev_tab();
+                self.scroll = 0;
+                Command::None
+            }
+            (_, KeyCode::Tab) => {
+                self.active_tab = self.next_tab();
+                self.scroll = 0;
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::Left) => {
+                self.active_tab = self.prev_tab();
+                self.scroll = 0;
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::Right) => {
                 self.active_tab = self.next_tab();
                 self.scroll = 0;
                 Command::None
@@ -574,21 +767,17 @@ implementation resolution, source on Etherscan once wired).",
                 Some(factory) => Command::Push(factory(self.address)),
                 None => Command::None,
             },
+            // Token tab: `o` (or Enter) opens the full TokenDetail
+            // screen for the same address. The inline panel is
+            // read-only — no list navigation to handle.
+            (AddressTab::Token, KeyCode::Char('o') | KeyCode::Enter) => {
+                match self.open_token.as_ref() {
+                    Some(factory) => Command::Push(factory(self.address)),
+                    None => Command::None,
+                }
+            }
             _ => Command::None,
         }
-    }
-
-    fn tick(&mut self) -> Command {
-        self.drain_feed();
-        Command::None
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 

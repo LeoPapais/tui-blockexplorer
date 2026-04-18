@@ -20,7 +20,7 @@ use blockexplorer_tui::{
             AddressReaderPort, BlockReaderPort, ProxyDetectionPort, TokenReaderPort,
             TxReaderPort,
         },
-        use_cases::{load_contract_overview, resolve_query::ResolveQuery},
+        use_cases::load_contract_overview,
     },
     domain::{
         Address, AddressKind, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
@@ -88,42 +88,25 @@ pub(crate) fn build_search_factory(
         let address = address.clone();
         let ens = ens.clone();
         let token = token.clone();
+        let token_reader_probe = token_reader.clone();
         let block_reader_for_detail = block_reader.clone();
         let tx_reader_for_detail = tx_reader.clone();
         let address_reader_for_detail = address_reader.clone();
         let proxy_detector_for_detail = proxy_detector.clone();
         let token_reader_for_detail = token_reader.clone();
 
-        tokio::spawn(async move {
-            let blockexplorer_tui::adapters::ui::SearchFeedSender {
-                updates_tx,
-                mut input_rx,
-            } = sender;
-            let query = ResolveQuery {
-                block: &block,
-                tx: &tx,
-                address: &address,
-                ens: &ens,
-                token: &token,
-            };
-            while let Some(input) = input_rx.recv().await {
-                let trimmed = input.trim();
-                let candidates = if trimmed.is_empty() {
-                    Vec::new()
-                } else {
-                    query.run(trimmed, chain).await.unwrap_or_default()
-                };
-                if updates_tx
-                    .send(blockexplorer_tui::adapters::ui::SearchFeedUpdate {
-                        input: input.clone(),
-                        candidates,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        // Reuse the production search feed so the BDD scenarios
+        // cover the same two-phase emission path used live.
+        std::mem::drop(blockexplorer_tui::infra::search_feed::spawn(
+            chain,
+            block,
+            tx,
+            address,
+            ens,
+            token,
+            token_reader_probe,
+            sender,
+        ));
 
         let detail_factory: Box<
             dyn Fn(ResolvedEntity) -> Box<dyn blockexplorer_tui::adapters::ui::Screen>
@@ -156,6 +139,12 @@ pub(crate) fn build_search_factory(
                         spawn_address_detail(chain, address, address_reader.clone())
                     }
                 },
+                ResolvedEntity::Contract { address } => spawn_contract_detail(
+                    chain,
+                    address,
+                    address_reader.clone(),
+                    proxy_detector.clone(),
+                ),
                 ResolvedEntity::Token(meta) => {
                     spawn_token_detail(chain, meta.address, token_reader.clone())
                 }
@@ -238,12 +227,20 @@ pub(crate) fn spawn_token_detail<R: TokenReaderPort + Clone + 'static>(
     address: Address,
     reader: R,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    // Tests that only prime the token reader stub reuse this
+    // minimal helper: price / transfers / history channels are
+    // drained but never answered, so the Chart tab stays in the
+    // "loading..." state.
     let (feed, sender) = token_feed();
     let reader_for_task = reader.clone();
     tokio::spawn(async move {
         let blockexplorer_tui::adapters::ui::TokenFeedSender {
             updates_tx,
+            price_tx: _,
+            transfers_tx: _,
+            history_tx: _,
             mut input_rx,
+            window_req_rx: _,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
@@ -254,6 +251,75 @@ pub(crate) fn spawn_token_detail<R: TokenReaderPort + Clone + 'static>(
         }
     });
     Box::new(TokenDetailScreen::loading(chain, address, feed))
+}
+
+/// Fully-wired TokenDetail feed: pumps overview + spot price +
+/// transfers + historical series against the provided stubs, and
+/// wires Enter on a Transfers row to open a TxDetail built through
+/// `spawn_tx_detail`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_token_detail_with_full_feeds<
+    R: TokenReaderPort + Clone + Send + Sync + 'static,
+    Pr: blockexplorer_tui::application::ports::PricesPort + Clone + Send + Sync + 'static,
+    Tr: blockexplorer_tui::application::ports::TransfersPort + Clone + Send + Sync + 'static,
+    Tx: blockexplorer_tui::application::ports::TxReaderPort + Clone + Send + Sync + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    prices: Pr,
+    transfers: Tr,
+    tx_reader: Tx,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = token_feed();
+    let reader_for_task = reader.clone();
+    let prices_for_task = prices.clone();
+    let transfers_for_task = transfers.clone();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::TokenFeedSender {
+            updates_tx,
+            price_tx,
+            transfers_tx,
+            history_tx,
+            mut input_rx,
+            mut window_req_rx,
+        } = sender;
+        let mut current: Option<Address> = None;
+        loop {
+            tokio::select! {
+                maybe_addr = input_rx.recv() => {
+                    let Some(addr) = maybe_addr else { break; };
+                    current = Some(addr);
+                    let (ov, price, page) = tokio::join!(
+                        reader_for_task.get(addr, chain),
+                        prices_for_task.get_single(addr, chain),
+                        transfers_for_task.get_for_contract(addr, chain, None),
+                    );
+                    if let Ok(Some(ov)) = ov { let _ = updates_tx.send(ov); }
+                    if let Ok(opt) = price { let _ = price_tx.send(opt); }
+                    if let Ok(page) = page { let _ = transfers_tx.send(page); }
+                }
+                maybe_window = window_req_rx.recv() => {
+                    let Some(window) = maybe_window else { break; };
+                    let Some(addr) = current else { continue; };
+                    let series = prices_for_task
+                        .get_history(addr, chain, window)
+                        .await
+                        .unwrap_or_else(|_| blockexplorer_tui::domain::PriceSeries::empty(window));
+                    let _ = history_tx.send(series);
+                }
+            }
+        }
+    });
+
+    let open_tx: blockexplorer_tui::adapters::ui::token_detail::OpenTxFactory =
+        Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader.clone()));
+    Box::new(TokenDetailScreen::with_open_tx(
+        chain,
+        address,
+        feed,
+        Some(open_tx),
+    ))
 }
 
 pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
@@ -267,8 +333,7 @@ pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
         let blockexplorer_tui::adapters::ui::AddressFeedSender {
             updates_tx,
             mut input_rx,
-            transfers_tx: _,
-            portfolio_tx: _,
+            ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
@@ -306,8 +371,8 @@ pub(crate) fn spawn_address_detail_with_transfers<
         let AddressFeedSender {
             updates_tx,
             transfers_tx,
-            portfolio_tx: _,
             mut input_rx,
+            ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             let (ov, page) = tokio::join!(
@@ -374,6 +439,7 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
             transfers_tx,
             portfolio_tx,
             mut input_rx,
+            ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             let (ov, page, holdings) = tokio::join!(
@@ -404,6 +470,65 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
         spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
     });
 
+    let token_reader_for_open = token_reader.clone();
+    let open_token: OpenTokenFactory = Box::new(move |contract| {
+        spawn_token_detail(chain, contract, token_reader_for_open.clone())
+    });
+
+    Box::new(
+        blockexplorer_tui::adapters::ui::AddressDetailScreen::with_factories(
+            chain,
+            address,
+            feed,
+            Some(open_tx),
+            Some(open_token),
+            None,
+        ),
+    )
+}
+
+/// Address-detail spawner for the ERC-20 inline Token tab
+/// scenarios. Uses the production `infra::address_feed::spawn`
+/// directly so the gated-probe behaviour is exercised end-to-end.
+/// Injects stubs for every port: address reader, transfers,
+/// portfolio, token reader (for the probe) and prices (for the
+/// inline mini-chart).
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn spawn_address_detail_with_erc20_probe<
+    R: AddressReaderPort + Clone + Send + Sync + 'static,
+    T: blockexplorer_tui::application::ports::TransfersPort + Clone + Send + Sync + 'static,
+    P: blockexplorer_tui::application::ports::PortfolioPort + Clone + Send + Sync + 'static,
+    Tx: TxReaderPort + Clone + Send + Sync + 'static,
+    Tok: blockexplorer_tui::application::ports::TokenReaderPort + Clone + Send + Sync + 'static,
+    Pr: blockexplorer_tui::application::ports::PricesPort + Clone + Send + Sync + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    transfers: T,
+    portfolio: P,
+    tx_reader: Tx,
+    token_reader: Tok,
+    prices: Pr,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    use blockexplorer_tui::adapters::ui::{
+        OpenTokenFactory, address_detail::OpenTxFactory,
+    };
+    let (feed, sender) = address_feed();
+    std::mem::drop(blockexplorer_tui::infra::address_feed::spawn(
+        chain,
+        reader,
+        transfers,
+        portfolio,
+        token_reader.clone(),
+        prices,
+        sender,
+    ));
+
+    let tx_reader_for_open = tx_reader.clone();
+    let open_tx: OpenTxFactory = Box::new(move |hash| {
+        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
+    });
     let token_reader_for_open = token_reader.clone();
     let open_token: OpenTokenFactory = Box::new(move |contract| {
         spawn_token_detail(chain, contract, token_reader_for_open.clone())
@@ -570,6 +695,12 @@ async fn stub_knows_block(world: &mut AppWorld, number: u64) {
     });
 }
 
+#[given(regex = r#"^the address stub classifies "(0x[0-9a-fA-F]{40})" as a contract$"#)]
+async fn address_stub_contract(world: &mut AppWorld, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    world.address_stub.set_kind(addr, AddressKind::Contract);
+}
+
 // ---------------------------------------------------------------------------
 // When — interactions
 // ---------------------------------------------------------------------------
@@ -637,6 +768,55 @@ async fn single_not_found(world: &mut AppWorld) {
         candidates.first(),
         Some(ResolvedEntity::NotFound { .. })
     ));
+}
+
+#[then(
+    regex = r#"^the candidates include a "contract" entry for "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn candidates_include_contract_for(world: &mut AppWorld, addr_hex: String) {
+    let expected = Address::from_hex(&addr_hex).unwrap();
+    let stack = world.stack.as_ref().expect("stack exists");
+    let candidates = current_candidates(stack);
+    assert!(
+        candidates.iter().any(|c| matches!(
+            c,
+            ResolvedEntity::Contract { address } if *address == expected
+        )),
+        "no Contract shortcut for {addr_hex} in {candidates:?}",
+    );
+}
+
+#[then(
+    regex = r#"^once the ERC-20 probe completes, a "token" candidate "([^"]+)" is appended$"#
+)]
+async fn erc20_probe_appends_token(world: &mut AppWorld, expected_symbol: String) {
+    let stack = world.stack.as_mut().expect("stack exists");
+    // The probe runs on a Tokio task after the base update; poll
+    // the screen until the Token row lands (or the timeout expires).
+    let mut landed = false;
+    for _ in 0..50 {
+        tick(stack);
+        let cands = current_candidates(stack);
+        if cands.iter().any(|c| matches!(
+            c,
+            ResolvedEntity::Token(m) if m.symbol == expected_symbol
+        )) {
+            landed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        landed,
+        "Token {expected_symbol} never appeared after ERC-20 probe",
+    );
+}
+
+#[then(
+    regex = r#"^the primary candidate is still "(transaction|block|address|token|not found)"$"#
+)]
+async fn primary_candidate_is_still(world: &mut AppWorld, kind: String) {
+    primary_candidate_is(world, kind).await;
 }
 
 #[then("the hint mentions the active chain name")]

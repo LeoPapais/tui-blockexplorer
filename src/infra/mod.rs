@@ -7,7 +7,7 @@
 //! See `plan/12-screen-runtime.md` (runtime) and
 //! `plan/14-config-and-credentials.md` (credentials + wiring).
 
-mod address_feed;
+pub mod address_feed;
 mod block_feed;
 pub mod config;
 mod contract_feed;
@@ -15,7 +15,7 @@ mod gas_feed;
 mod home_feed;
 mod mempool_feed;
 mod runtime;
-mod search_feed;
+pub mod search_feed;
 mod token_feed;
 mod tx_feed;
 
@@ -27,6 +27,7 @@ use crate::{
     adapters::{
         config::InMemoryChainRegistry,
         etherscan::{EtherscanClient, EtherscanContractSource},
+        prices::{AlchemyPrices, PricesClient},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog,
@@ -98,14 +99,29 @@ fn live_address_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
     rpc: RpcClient,
+    alchemy_key: String,
     etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
     let transfers = AlchemyTransfers::new(rpc.clone());
     let portfolio = AlchemyPortfolio::new(rpc.clone());
+    let token_reader = AlchemyTokenReader::new(rpc.clone());
+    // Prices client can fail to build on a malformed key; degrade
+    // gracefully via the same TokenPrices enum used in
+    // `live_token_detail_screen`.
+    let prices = match PricesClient::with_api_key(&alchemy_key) {
+        Ok(client) => TokenPrices::Alchemy(AlchemyPrices::new(client)),
+        Err(_) => TokenPrices::Noop,
+    };
     let (feed, sender) = address_feed();
     std::mem::drop(address_feed::spawn(
-        chain, reader, transfers, portfolio, sender,
+        chain,
+        reader,
+        transfers,
+        portfolio,
+        token_reader,
+        prices,
+        sender,
     ));
 
     let rpc_for_tx = rpc.clone();
@@ -120,9 +136,17 @@ fn live_address_detail_screen(
     });
 
     let rpc_for_token = rpc.clone();
+    let alchemy_for_token = alchemy_key.clone();
+    let etherscan_for_token = etherscan_key.clone();
     let open_token: crate::adapters::ui::address_detail::OpenTokenFactory =
         Box::new(move |contract| {
-            live_token_detail_screen(chain, contract, rpc_for_token.clone())
+            live_token_detail_screen(
+                chain,
+                contract,
+                rpc_for_token.clone(),
+                &alchemy_for_token,
+                etherscan_for_token.clone(),
+            )
         });
 
     let rpc_for_contract = rpc;
@@ -181,17 +205,86 @@ fn live_contract_detail_screen(
     Box::new(ContractDetailScreen::loading(chain, address, feed))
 }
 
-/// Build a live `TokenDetailScreen` backed by a dedicated
-/// token-reader task.
+/// Build a live `TokenDetailScreen` backed by:
+///
+/// - `AlchemyTokenReader` (metadata + totalSupply),
+/// - `AlchemyPrices` (spot + historical prices, when the key could
+///   build a `PricesClient`),
+/// - `AlchemyTransfers::get_for_contract` (Transfers tab).
+///
+/// When the Prices client cannot be constructed (should not happen
+/// with a valid key) we fall back to a null implementation so the
+/// Overview + Transfers tabs still populate. The Chart tab then
+/// renders its "no data" empty state.
 fn live_token_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
     rpc: RpcClient,
+    alchemy_key: &str,
+    etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
-    let reader = AlchemyTokenReader::new(rpc);
+    let reader = AlchemyTokenReader::new(rpc.clone());
+    let transfers = AlchemyTransfers::new(rpc.clone());
+    let prices = match PricesClient::with_api_key(alchemy_key) {
+        Ok(client) => TokenPrices::Alchemy(AlchemyPrices::new(client)),
+        Err(_) => TokenPrices::Noop,
+    };
+
     let (feed, sender) = token_feed();
-    std::mem::drop(token_feed::spawn(chain, reader, sender));
-    Box::new(TokenDetailScreen::loading(chain, address, feed))
+    std::mem::drop(token_feed::spawn(chain, reader, prices, transfers, sender));
+
+    let rpc_for_tx = rpc;
+    let etherscan_for_tx = etherscan_key;
+    let open_tx: crate::adapters::ui::TokenOpenTxFactory =
+        Box::new(move |hash| {
+            live_tx_detail_screen(
+                chain,
+                hash,
+                rpc_for_tx.clone(),
+                etherscan_for_tx.clone(),
+            )
+        });
+
+    Box::new(TokenDetailScreen::with_open_tx(
+        chain,
+        address,
+        feed,
+        Some(open_tx),
+    ))
+}
+
+/// Wrapper around `AlchemyPrices` that degrades to a Noop when the
+/// `PricesClient` cannot be built. Keeps the token feed generic
+/// enough to swallow the missing-credentials case without crashing.
+#[derive(Clone)]
+enum TokenPrices {
+    Alchemy(AlchemyPrices),
+    Noop,
+}
+
+impl crate::application::ports::PricesPort for TokenPrices {
+    async fn get_single(
+        &self,
+        address: crate::domain::Address,
+        chain: Chain,
+    ) -> Result<Option<crate::domain::TokenPrice>, crate::domain::DomainError> {
+        match self {
+            TokenPrices::Alchemy(inner) => inner.get_single(address, chain).await,
+            TokenPrices::Noop => Ok(None),
+        }
+    }
+
+    async fn get_history(
+        &self,
+        address: crate::domain::Address,
+        chain: Chain,
+        window: crate::domain::PriceWindow,
+    ) -> Result<crate::domain::PriceSeries, crate::domain::DomainError> {
+        match self {
+            TokenPrices::Alchemy(inner) => inner.get_history(address, chain, window).await,
+            TokenPrices::Noop => Ok(crate::domain::PriceSeries::empty(window)),
+        }
+    }
 }
 
 /// Stub token search used until the Etherscan adapter lands. Returns
@@ -352,20 +445,30 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let search_factory = {
         let rpc = rpc.clone();
         let etherscan_key = etherscan_key.clone();
+        let alchemy_key = key.to_string();
         Box::new(move || -> Box<dyn Screen> {
             let block = AlchemyBlockLookup::new(rpc.clone());
             let tx = AlchemyTxLookup::new(rpc.clone());
             let addr = AlchemyAddressLookup::new(rpc.clone());
             let ens = AlchemyEnsResolver::new(rpc.clone());
             let token = NoopTokenSearch;
+            let token_reader = AlchemyTokenReader::new(rpc.clone());
             let (search_feed_rx, sender) = search_feed();
             std::mem::drop(search_feed::spawn(
-                chain, block, tx, addr, ens, token, sender,
+                chain,
+                block,
+                tx,
+                addr,
+                ens,
+                token,
+                token_reader,
+                sender,
             ));
 
             let detail_factory = {
                 let rpc = rpc.clone();
                 let etherscan_key = etherscan_key.clone();
+                let alchemy_key = alchemy_key.clone();
                 Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
                     match entity {
                         ResolvedEntity::Block { number, .. } => {
@@ -408,12 +511,28 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                                 chain,
                                 address,
                                 rpc.clone(),
+                                alchemy_key.clone(),
                                 etherscan_key.clone(),
                             )
                         }
-                        ResolvedEntity::Token(meta) => {
-                            live_token_detail_screen(chain, meta.address, rpc.clone())
+                        ResolvedEntity::Contract { address } => {
+                            // Search-list shortcut: jump straight to
+                            // the ContractDetailScreen when the user
+                            // picked the "open as contract" row.
+                            live_contract_detail_screen(
+                                chain,
+                                address,
+                                rpc.clone(),
+                                etherscan_key.clone(),
+                            )
                         }
+                        ResolvedEntity::Token(meta) => live_token_detail_screen(
+                            chain,
+                            meta.address,
+                            rpc.clone(),
+                            &alchemy_key,
+                            etherscan_key.clone(),
+                        ),
                         other => Box::new(DetailPlaceholderScreen::new(other)),
                     }
                 })

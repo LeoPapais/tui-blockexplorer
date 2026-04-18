@@ -5,7 +5,7 @@
 //! through a `BlockFeed` channel pair. See `plan/3-block-detail.md`
 //! section 11.3.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -270,7 +270,24 @@ impl Screen for BlockDetailScreen {
                 self.active_tab = self.active_tab.previous();
                 return Command::None;
             }
+            KeyCode::Right => {
+                self.active_tab = self.active_tab.next();
+                return Command::None;
+            }
+            KeyCode::Left => {
+                self.active_tab = self.active_tab.previous();
+                return Command::None;
+            }
             _ => {}
+        }
+
+        // Shift+Tab is reported as `KeyCode::Tab` + SHIFT on a few
+        // terminals; handle that too.
+        if key.code == KeyCode::Tab
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+        {
+            self.active_tab = self.active_tab.previous();
+            return Command::None;
         }
 
         // Transactions-tab specific keys.

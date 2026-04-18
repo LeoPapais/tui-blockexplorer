@@ -13,7 +13,7 @@ as future work but is not delivered in MVP.
 
 - Single screen that summarises a wallet: balance, ENS name, label, nonce.
 - Unified transaction history across categories (external, internal, ERC-20, ERC-721,
-  ERC-1155).
+ERC-1155).
 - Full token portfolio with prices.
 - Quick jump to the Contract view when the address has bytecode.
 
@@ -39,33 +39,34 @@ Tabs:
 
 - **Overview**: balance panel + top 5 tokens (by USD) + last 5 activity events.
 - **Transactions**: unified paginated list with a category filter on top (all /
-  external / internal / ERC-20 / ERC-721 / ERC-1155).
+external / internal / ERC-20 / ERC-721 / ERC-1155).
 - **Tokens**: full ERC-20 portfolio with `symbol`, `balance`, `price`, `value`.
 - **Activity**: timeline of higher-level events (approvals, swaps, mints); derived
-  locally from the unified transfers stream with a small categorisation rule set.
+locally from the unified transfers stream with a small categorisation rule set.
 - **Contract**: only rendered when `eth_getCode` is non-empty; redirects to
-  `7-contract-detail.md` rendered inline as a tab.
+`7-contract-detail.md` rendered inline as a tab.
 
 ## 3. Keybindings
 
-| Key     | Action                                              |
-|---------|-----------------------------------------------------|
-| `Tab`   | Next tab                                            |
-| `Enter` | Open selected tx / token / contract                 |
-| `e`     | Export currently-filtered transfers to CSV          |
-| `y`     | Copy address                                        |
-| `Y`     | Copy ENS name if available                          |
-| `f`     | Open category filter modal                          |
+
+| Key     | Action                                     |
+| ------- | ------------------------------------------ |
+| `Tab`   | Next tab                                   |
+| `Enter` | Open selected tx / token / contract        |
+| `e`     | Export currently-filtered transfers to CSV |
+| `y`     | Copy address                               |
+| `Y`     | Copy ENS name if available                 |
+| `f`     | Open category filter modal                 |
+
 
 ## 4. Use cases
 
 ### 4.1 `LoadAddressOverview`
 
 - **Input**: `Address`, chain.
-- **Output**: `AddressOverview { balance, nonce, is_contract, ens_name, label,
-  first_seen_at, last_seen_at }`.
+- **Output**: `AddressOverview { balance, nonce, is_contract, ens_name, label, first_seen_at, last_seen_at }`.
 - **Ports**: `AddressReaderPort`, `EnsResolverPort::reverse`, `LabelPort`,
-  `TransfersPort::first_and_last(addr)`.
+`TransfersPort::first_and_last(addr)`.
 
 ### 4.2 `LoadAddressTransfers`
 
@@ -73,8 +74,8 @@ Tabs:
 - **Output**: page of `TransferEvent`.
 - **Ports**: `TransfersPort::get_for_address(addr, categories, cursor)`.
 - **Behaviour**: translates to `alchemy_getAssetTransfers` with the right
-  `category` list. Categories are mapped: internal -> only Ethereum mainnet and
-  Polygon mainnet (per Alchemy docs); others return `FeatureUnavailable`.
+`category` list. Categories are mapped: internal -> only Ethereum mainnet and
+Polygon mainnet (per Alchemy docs); others return `FeatureUnavailable`.
 
 ### 4.3 `LoadAddressPortfolio`
 
@@ -82,7 +83,7 @@ Tabs:
 - **Output**: `Vec<TokenHolding>` sorted by USD value desc.
 - **Ports**: `PortfolioPort::get_token_balances(addr)`, `PricesPort::get_bulk(addrs)`.
 - **Behaviour**: one call to Portfolio API returns balances and metadata; a second
-  call to Prices API fills USD values.
+call to Prices API fills USD values.
 
 ### 4.4 `LoadAddressActivity`
 
@@ -90,8 +91,8 @@ Tabs:
 - **Output**: timeline of `ActivityEvent`.
 - **Ports**: `TransfersPort`, `ContractSourcePort` (for decoding approvals and swaps).
 - **Behaviour**: fetches the unified transfers page, classifies each event into one
-  of (Send, Receive, Approval, Swap, Mint, Burn, ContractCreation, Other) based on
-  decoded method and log topics.
+of (Send, Receive, Approval, Swap, Mint, Burn, ContractCreation, Other) based on
+decoded method and log topics.
 
 ## 5. Ports required
 
@@ -105,8 +106,8 @@ Tabs:
 ## 6. Data sources
 
 - Alchemy: `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`,
-  `alchemy_getAssetTransfers`, Portfolio `getTokenBalancesByAddress`,
-  Prices `getTokenPricesByAddress`.
+`alchemy_getAssetTransfers`, Portfolio `getTokenBalancesByAddress`,
+Prices `getTokenPricesByAddress`.
 - Etherscan V2: labels.
 - ENS via `eth_call` on the ENS Registry (forward and reverse).
 
@@ -158,9 +159,9 @@ Feature: Address detail
 
 - `LoadAddressOverview`: EOA vs contract; missing ENS; missing label; both missing.
 - `LoadAddressTransfers`: category filter translation; pagination cursor handling;
-  internal category on unsupported chain returns `FeatureUnavailable`.
+internal category on unsupported chain returns `FeatureUnavailable`.
 - `LoadAddressPortfolio`: empty list; price API partial failure (USD value becomes
-  `None` but balance still shown).
+`None` but balance still shown).
 - `LoadAddressActivity`: classification rules per event type.
 
 ## 9. Fixtures
@@ -179,13 +180,13 @@ Feature: Address detail
 ## 10. Open questions
 
 - Do we merge the Transactions tab with the Activity tab? No: keep raw transfers
-  separate from classified events; the raw view is more useful for debugging, the
-  classified one for reading.
+separate from classified events; the raw view is more useful for debugging, the
+classified one for reading.
 
 ## 11. Deferred (not MVP)
 
 - NFTs tab: ownership grid, collections, floor prices, rarity. Will live in a future
-  `plan/11-nfts.md`.
+`plan/11-nfts.md`.
 - Approvals panel with "revoke" action.
 - Charts of historical balance.
 
@@ -200,9 +201,8 @@ the codebase yet.
 
 Domain additions (`src/domain/`):
 
-- `address.rs` gains `AddressOverview { chain, address, balance, nonce,
-  kind, ens_name }`. `kind` reuses the existing `AddressKind` enum;
-  `ens_name` stays `None` in MVP until reverse-ENS lookup ships.
+- `address.rs` gains `AddressOverview { chain, address, balance, nonce, kind, ens_name }`. `kind` reuses the existing `AddressKind` enum;
+`ens_name` stays `None` in MVP until reverse-ENS lookup ships.
 
 Port (`src/application/ports/address_reader.rs`):
 
@@ -219,6 +219,7 @@ to `DomainError::NotFound`.
 Stub `StubAddressReaderPort` with `insert(overview)` keyed by address.
 
 Functional tests `tests/functional/load_address_overview.rs`:
+
 - happy path for an EOA,
 - happy path for a contract (kind = Contract, ens = None),
 - missing address returns `NotFound`.
@@ -232,6 +233,7 @@ stays deferred.
 
 Tests `tests/functional/alchemy_address_reader.rs` use wiremock with
 three canned responses per scenario. Fixtures:
+
 - `rpc__eth_getBalance__0xd8da.json`
 - `rpc__eth_getTransactionCount__0xd8da.json`
 - `rpc__eth_getCode__0xd8da_eoa.json`
@@ -240,17 +242,17 @@ three canned responses per scenario. Fixtures:
 ### 12.3 Slice C — UI + wiring + BDD
 
 - `src/adapters/ui/address_detail.rs` with an Overview-only screen
-  that renders address, kind label, ENS (when present), balance in
-  wei/gwei/ether, and nonce.
+that renders address, kind label, ENS (when present), balance in
+wei/gwei/ether, and nonce.
 - `src/infra/address_feed.rs` — same shape as `block_feed.rs`:
-  channel pair, spawn helper that owns an `AddressReaderPort`.
+channel pair, spawn helper that owns an `AddressReaderPort`.
 - `infra::run` and the search detail factory in `tests/e2e/steps/search.rs`
-  route `ResolvedEntity::Address` to the new screen (previously a
-  `DetailPlaceholderScreen`).
+route `ResolvedEntity::Address` to the new screen (previously a
+`DetailPlaceholderScreen`).
 - BDD `tests/e2e/features/address_detail.feature`:
   - Open address detail for an EOA and assert the header kind says EOA.
   - Open address detail for a contract and assert the header kind
-    says Contract.
+  says Contract.
 
 Acceptance: plan flipped to `done (MVP)`, clippy clean, all tests
 green.
@@ -265,14 +267,11 @@ Activity tab and CSV/approvals UX stay deferred (section 13).
 Domain (`src/domain/transfers.rs`):
 
 - `TransferCategory { External, Internal, Erc20, Erc721, Erc1155 }`.
-- `TransferAsset` enum with `Native { symbol }`, `Erc20 { contract,
-  symbol, decimals }`, `Nft { contract, kind: NftKind, token_id }`.
-- `TransferEvent { chain, block_number, tx_hash, from, to: Option,
-  asset, value: Wei, category }`.
+- `TransferAsset` enum with `Native { symbol }`, `Erc20 { contract, symbol, decimals }`, `Nft { contract, kind: NftKind, token_id }`.
+- `TransferEvent { chain, block_number, tx_hash, from, to: Option, asset, value: Wei, category }`.
 - `TransferPage { events, next_cursor: Option<String> }`.
 
-Port `TransfersPort::get_for_address(addr, chain, cursor) ->
-TransferPage`. The adapter issues two parallel
+Port `TransfersPort::get_for_address(addr, chain, cursor) -> TransferPage`. The adapter issues two parallel
 `alchemy_getAssetTransfers` calls (one with `fromAddress=addr`,
 one with `toAddress=addr`), merges results by block number
 descending and caps at a sensible maximum. Cursor aggregates both
@@ -283,16 +282,17 @@ Use case `load_address_transfers` is a thin delegator that maps
 `Ok(None)` to `NotFound`.
 
 UI changes on `AddressDetailScreen`:
+
 - Tab cycle Overview -> Transactions (-> Tokens -> Contract after
-  commits 2 and 3) rendered through `ratatui::widgets::Tabs` so the
-  bar stays stable (mirrors the TxDetail fix).
-- Transactions tab shows a selectable list: `[category] from -> to
-  value (asset)  block  #idx`. Up/Down move the selection,
-  PageUp/PageDown page by 10, Enter opens the referenced
-  `TxDetailScreen` through the same open-tx factory the BlockDetail
-  already uses.
+commits 2 and 3) rendered through `ratatui::widgets::Tabs` so the
+bar stays stable (mirrors the TxDetail fix).
+- Transactions tab shows a selectable list: `[category] from -> to value (asset)  block  #idx`. Up/Down move the selection,
+PageUp/PageDown page by 10, Enter opens the referenced
+`TxDetailScreen` through the same open-tx factory the BlockDetail
+already uses.
 
 BDD:
+
 - Transactions tab renders the returned transfers.
 - Enter on a transfer opens a TxDetail screen.
 
@@ -301,8 +301,7 @@ BDD:
 Domain: `TokenHolding { metadata: TokenMetadata, balance: Wei }`.
 USD pricing stays deferred.
 
-Port `PortfolioPort::get_token_balances(addr, chain) ->
-Vec<TokenHolding>`, backed by Alchemy's `alchemy_getTokenBalances`
+Port `PortfolioPort::get_token_balances(addr, chain) -> Vec<TokenHolding>`, backed by Alchemy's `alchemy_getTokenBalances`
 plus a follow-up `alchemy_getTokenMetadata` for every non-zero
 holding. The adapter caps at the top 20 non-zero holdings to keep
 the metadata fan-out bounded.
@@ -311,6 +310,7 @@ UI: Tokens tab lists `symbol  balance  (contract)`. Enter opens a
 TokenDetail screen via a new open_token factory.
 
 BDD:
+
 - Tokens tab renders the portfolio.
 - Empty portfolio shows an empty-state message.
 
@@ -325,15 +325,76 @@ Overview body grows a short status line summarising the loaded
 data (e.g. `Txs loaded: 42   Tokens loaded: 7`) so the Overview
 is not just a static four-line block anymore.
 
-## 13. Still deferred (post plan-6 expansion)
+### 12.4.4 Commit 4 — Inline Token tab for ERC-20 contracts
+
+When the address turns out to be an ERC-20 contract the tab bar
+gains a new `Token` entry (sits between `Tokens` and `Contract`).
+Unlike the Contract tab, which is just a shortcut to
+`ContractDetailScreen`, the Token tab renders the TokenDetail
+content **inline**: the same symbol / name / decimals / supply /
+price / market-cap block plus a compact price mini-chart for the
+D1 window (24h / 1h granularity).
+
+**Pessimistic detection.** The probe is gated inside
+`src/infra/address_feed.rs`: only when the `AddressOverview` from
+the reader reports `kind == Contract` do we call
+`TokenReaderPort::get`. EOAs pay zero extra RPC calls.
+Non-ERC20 contracts pay exactly one `alchemy_getTokenMetadata`
+RTT whose negative result flips the internal
+`TokenProbeState::NotToken`, and the tab stays hidden.
+
+```text
+ov_res.kind == Contract
+  ├─ token_reader.get(addr) = Some(ov)
+  │    ├─ prices.get_single(addr)
+  │    └─ prices.get_history(addr, D1)
+  ├─ token_reader.get(addr) = None    → tab stays hidden
+  └─ token_reader.get(addr) = Err     → tab stays hidden
+```
+
+**Channels.** `AddressFeed` / `AddressFeedSender` gain three new
+unbounded channels: `token_overview`, `token_price`, `token_series`.
+The screen drains them in `tick`.
+
+**State machine.** Inside `AddressDetailScreen` a new tri-state
+`TokenProbeState::{Unknown, NotToken, IsToken(TokenOverview)}`
+gates the tab's visibility. Price and historical series live in
+parallel `Option` fields with a "probed but no data" flag for the
+price column.
+
+**Key bindings.** Tab cycles tabs as before. On the Token tab, `o`
+(or Enter) pushes the full `TokenDetailScreen` for the same
+address through the `OpenTokenFactory`.
+
+**Shared render helper.** `adapters/ui/token_detail.rs` exports
+`pub(crate) fn render_inline_token_panel(frame, area, overview, price, price_missing, series, window)` used by both the full
+TokenDetailScreen and the inline AddressDetail Token tab, so the
+two views stay visually consistent.
+
+**BDD.** `tests/e2e/features/address_detail.feature` gains three
+scenarios: ERC-20 contract shows the Token tab and its inline
+content; non-ERC20 contract and EOA do not.
+
+**Functional.** The existing `search_feed_token_probe.rs`
+functional tests already cover the contract-gated probing pattern;
+the address feed version is covered end-to-end by BDD using the
+`StubTokenReaderPort::call_count` counter for implicit assertions
+on pessimistic behaviour (via scenarios that never reach
+`TokenPort::Some`).
+
+## 13. Won't do
 
 - Activity classification (Send / Receive / Approval / Swap / Mint
-  / Burn / ContractCreation / Other) — needs the full ABI decoder
-  and heuristics over the transfers + logs stream.
+/ Burn / ContractCreation / Other) — needs the full ABI decoder
+and heuristics over the transfers + logs stream.
 - CSV export (`e` binding) of the currently-filtered transfers.
 - Category filter modal (`f` binding) — the Transactions tab
-  currently merges every category; filtering UI lands later.
-- Token USD pricing / portfolio charts.
+currently merges every category; filtering UI lands later.
+- Portfolio USD pricing / holdings charts (plan-6 tokens tab
+stays raw-balance only; the single-token inline view in 12.4.4
+does get price + mini-chart but the aggregated portfolio does
+not yet).
 - Approvals list with "revoke" action.
 - Historical balance chart.
 - NFTs tab.
+

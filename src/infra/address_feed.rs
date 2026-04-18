@@ -1,40 +1,58 @@
 //! Background task for the Address Detail screen.
 //!
 //! Spawns a single Tokio task that, for each incoming `Address`,
-//! fans out the overview, transfers and portfolio fetches in parallel
-//! (`tokio::join!`) and forwards each result on its own channel so
-//! the UI can render them as soon as they arrive.
+//! fans out the overview / transfers / portfolio fetches in parallel
+//! and forwards each result on its own channel so the UI can render
+//! them progressively.
 //!
-//! See `plan/6-address-detail.md` sections 12.3, 12.4.1 and 12.4.2.
+//! When the address turns out to be a contract, the task fires a
+//! follow-up ERC-20 probe (`TokenReaderPort::get`) and, if positive,
+//! a price + history fetch for the inline Token tab. The probe is
+//! **pessimistic**: it runs only when `AddressOverview.kind == Contract`,
+//! so EOAs never pay any extra call.
+//!
+//! See `plan/6-address-detail.md` sections 12.3, 12.4.1, 12.4.2 and
+//! 12.4.4.
 
 use tokio::task::JoinHandle;
 
 use crate::{
     adapters::ui::AddressFeedSender,
-    application::ports::{AddressReaderPort, PortfolioPort, TransfersPort},
-    domain::Chain,
+    application::ports::{
+        AddressReaderPort, PortfolioPort, PricesPort, TokenReaderPort, TransfersPort,
+    },
+    domain::{AddressKind, Chain, PriceWindow},
 };
 
-/// Spawn the address-detail feed with an address reader, a transfers
-/// provider, and a portfolio provider. Each result streams into the
-/// UI on its own channel so tabs render progressively.
-pub fn spawn<R, T, P>(
+/// Spawn the address-detail feed with every port it needs. The
+/// `token_reader` and `prices` arguments are always passed in even
+/// for EOAs: their calls are gated inside the task so the trait
+/// bounds stay uniform across the BDD and production wiring.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn<R, T, P, K, Pr>(
     chain: Chain,
     reader: R,
     transfers: T,
     portfolio: P,
+    token_reader: K,
+    prices: Pr,
     sender: AddressFeedSender,
 ) -> JoinHandle<()>
 where
     R: AddressReaderPort + Clone + 'static,
     T: TransfersPort + Clone + 'static,
     P: PortfolioPort + Clone + 'static,
+    K: TokenReaderPort + Clone + 'static,
+    Pr: PricesPort + Clone + 'static,
 {
     tokio::spawn(async move {
         let AddressFeedSender {
             updates_tx,
             transfers_tx,
             portfolio_tx,
+            token_overview_tx,
+            token_price_tx,
+            token_series_tx,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
@@ -46,7 +64,14 @@ where
                 transfers.get_for_address(addr, chain, None),
                 portfolio.get_token_balances(addr, chain),
             );
-            if let Ok(Some(ov)) = ov_res
+
+            // Forward the three "always" results first.
+            let overview_clone = if let Ok(Some(ov)) = ov_res.as_ref() {
+                Some(ov.clone())
+            } else {
+                None
+            };
+            if let Some(ov) = overview_clone.clone()
                 && updates_tx.send(ov).is_err()
             {
                 break;
@@ -60,6 +85,46 @@ where
                 && portfolio_tx.send(holdings).is_err()
             {
                 break;
+            }
+
+            // Gate: only probe ERC-20 metadata when we are sure the
+            // address is a contract. EOAs fall out here with zero
+            // extra RPC calls.
+            let Some(overview) = overview_clone else { continue };
+            if !matches!(overview.kind, AddressKind::Contract) {
+                continue;
+            }
+
+            match token_reader.get(addr, chain).await {
+                Ok(Some(token_overview)) => {
+                    if token_overview_tx.send(Some(token_overview)).is_err() {
+                        break;
+                    }
+                    // Fire spot price + D1 history in parallel once
+                    // we know the address is an ERC-20.
+                    let prices_single = prices.clone();
+                    let prices_hist = prices.clone();
+                    let (price_res, series_res) = tokio::join!(
+                        prices_single.get_single(addr, chain),
+                        prices_hist.get_history(addr, chain, PriceWindow::D1),
+                    );
+                    if let Ok(opt) = price_res
+                        && token_price_tx.send(opt).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(series) = series_res
+                        && token_series_tx.send(series).is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    let _ = token_overview_tx.send(None);
+                }
+                Err(_) => {
+                    let _ = token_overview_tx.send(None);
+                }
             }
         }
     })

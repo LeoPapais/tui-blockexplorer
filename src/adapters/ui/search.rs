@@ -251,6 +251,9 @@ fn render_entity(entity: &ResolvedEntity) -> String {
             Some(name) => format!("{} ({name})", short_hex(&address.to_hex())),
             None => short_hex(&address.to_hex()),
         },
+        ResolvedEntity::Contract { address } => {
+            format!("{} (open as contract)", short_hex(&address.to_hex()))
+        }
         ResolvedEntity::Token(m) => format!("{} - {}", m.symbol, m.name),
         ResolvedEntity::NotFound { reason } => reason.clone(),
     }

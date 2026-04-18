@@ -35,3 +35,16 @@ Feature: Universal search
     When the user opens search with "0x0000000000000000000000000000000000000000000000000000000000000001"
     Then the candidates list contains a single "not found" entry
     And the hint mentions the active chain name
+
+  Scenario: Address input for a contract surfaces a Contract shortcut row
+    Given the address stub classifies "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as a contract
+    When the user opens search with "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then the primary candidate is "address"
+    And the candidates include a "contract" entry for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+
+  Scenario: Address input for an ERC-20 contract also surfaces a Token row after the probe
+    Given the address stub classifies "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as a contract
+    And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 0
+    When the user opens search with "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then once the ERC-20 probe completes, a "token" candidate "USDC" is appended
+    And the primary candidate is still "address"

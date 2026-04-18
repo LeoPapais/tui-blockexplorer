@@ -244,6 +244,69 @@ async fn contract_address_reports_contract_kind() {
 }
 
 #[tokio::test]
+async fn contract_address_also_emits_contract_shortcut_after_the_address_row() {
+    let (b, t, a, e, s) = fresh();
+    let addr = Address::from_hex(ADDR_HEX).unwrap();
+    a.set_kind(addr, AddressKind::Contract);
+
+    let got = q(&b, &t, &a, &e, &s)
+        .run(ADDR_HEX, Chain::Ethereum)
+        .await
+        .expect("ok");
+
+    assert_eq!(got.len(), 2, "expected Address + Contract rows");
+    match &got[0] {
+        ResolvedEntity::Address { kind, .. } => assert_eq!(*kind, AddressKind::Contract),
+        other => panic!("expected Address first, got {other:?}"),
+    }
+    match &got[1] {
+        ResolvedEntity::Contract { address } => assert_eq!(*address, addr),
+        other => panic!("expected Contract shortcut second, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn eoa_address_does_not_emit_contract_shortcut() {
+    let (b, t, a, e, s) = fresh();
+    let addr = Address::from_hex(ADDR_HEX).unwrap();
+    a.set_kind(addr, AddressKind::Eoa);
+
+    let got = q(&b, &t, &a, &e, &s)
+        .run(ADDR_HEX, Chain::Ethereum)
+        .await
+        .expect("ok");
+
+    assert_eq!(got.len(), 1, "EOA must not produce a Contract shortcut");
+    assert!(
+        !got.iter()
+            .any(|c| matches!(c, ResolvedEntity::Contract { .. })),
+        "EOA result must not include a Contract entry",
+    );
+}
+
+#[tokio::test]
+async fn ens_that_resolves_to_contract_also_emits_contract_shortcut() {
+    let (b, t, a, e, s) = fresh();
+    let addr = Address::from_hex(ADDR_HEX).unwrap();
+    e.set_forward("usdc.eth", addr);
+    a.set_kind(addr, AddressKind::Contract);
+
+    let got = q(&b, &t, &a, &e, &s)
+        .run("usdc.eth", Chain::Ethereum)
+        .await
+        .expect("ok");
+
+    assert!(
+        matches!(got.first(), Some(ResolvedEntity::Address { .. })),
+        "Address row must still be first",
+    );
+    assert!(
+        matches!(got.get(1), Some(ResolvedEntity::Contract { address: a }) if *a == addr),
+        "Contract shortcut must follow for contract-resolved ENS",
+    );
+}
+
+#[tokio::test]
 async fn token_ticker_returns_token_candidates() {
     let (b, t, a, e, s) = fresh();
     let meta = TokenMetadata {

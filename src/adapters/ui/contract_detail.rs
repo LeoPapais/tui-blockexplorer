@@ -4,7 +4,7 @@
 //! follow-up commits of the plan-7 expansion. See
 //! `plan/7-contract-detail.md` sections 12.3 (MVP) and 12.4.1.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -143,6 +143,11 @@ impl ContractTab {
         Self::ALL[(idx + 1) % Self::ALL.len()]
     }
 
+    fn previous(self) -> Self {
+        let idx = self.index();
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
     fn index(self) -> usize {
         match self {
             ContractTab::Overview => 0,
@@ -183,6 +188,11 @@ pub struct ContractDetailScreen {
     feed: ContractFeed,
     active_tab: ContractTab,
     scroll: u16,
+    /// Upper bound on `scroll` for the currently active paragraph,
+    /// refreshed on every render. Used by `handle_key` to clamp the
+    /// scroll offset so screens never show blank rows past the end
+    /// of their content (plan 13.3).
+    scroll_cap: std::cell::Cell<u16>,
     file_list_state: ListState,
     /// Read tab state.
     functions: Vec<AbiFunction>,
@@ -226,6 +236,7 @@ impl ContractDetailScreen {
             feed,
             active_tab: ContractTab::Overview,
             scroll: 0,
+            scroll_cap: std::cell::Cell::new(0),
             file_list_state,
             functions: Vec::new(),
             function_list_state,
@@ -501,20 +512,29 @@ impl Screen for ContractDetailScreen {
 
         // Body
         match self.active_tab {
-            ContractTab::Overview => frame.render_widget(
-                Paragraph::new(overview_body(self.address, self.current.as_ref(), self.source.as_ref()))
-                    .wrap(Wrap { trim: false })
-                    .scroll((self.scroll, 0))
-                    .block(Block::default().borders(Borders::ALL).title("Overview")),
-                chunks[2],
-            ),
-            ContractTab::Source => self.render_source_tab(frame, chunks[2]),
-            ContractTab::Abi => {
-                let (title, body) = abi_body(self.source.as_ref());
+            ContractTab::Overview => {
+                let body = overview_body(
+                    self.address,
+                    self.current.as_ref(),
+                    self.source.as_ref(),
+                );
+                let offset = self.bound_scroll_for(&body, chunks[2]);
                 frame.render_widget(
                     Paragraph::new(body)
                         .wrap(Wrap { trim: false })
-                        .scroll((self.scroll, 0))
+                        .scroll((offset, 0))
+                        .block(Block::default().borders(Borders::ALL).title("Overview")),
+                    chunks[2],
+                );
+            }
+            ContractTab::Source => self.render_source_tab(frame, chunks[2]),
+            ContractTab::Abi => {
+                let (title, body) = abi_body(self.source.as_ref());
+                let offset = self.bound_scroll_for(&body, chunks[2]);
+                frame.render_widget(
+                    Paragraph::new(body)
+                        .wrap(Wrap { trim: false })
+                        .scroll((offset, 0))
                         .block(Block::default().borders(Borders::ALL).title(title)),
                     chunks[2],
                 );
@@ -530,15 +550,23 @@ impl Screen for ContractDetailScreen {
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
             KeyCode::Esc => return Command::Pop,
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.active_tab = self.active_tab.next();
-                self.scroll = 0;
-                return Command::None;
-            }
             _ => {}
         }
+        let is_back_tab = key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab
+                && key.modifiers.contains(KeyModifiers::SHIFT));
+        if is_back_tab {
+            self.active_tab = self.active_tab.previous();
+            self.scroll = 0;
+            return Command::None;
+        }
+        if key.code == KeyCode::Tab {
+            self.active_tab = self.active_tab.next();
+            self.scroll = 0;
+            return Command::None;
+        }
 
-        match self.active_tab {
+        let cmd = match self.active_tab {
             ContractTab::Source => self.handle_source_key(key),
             ContractTab::Read => self.handle_read_key(key),
             ContractTab::Events => self.handle_events_key(key),
@@ -551,6 +579,14 @@ impl Screen for ContractDetailScreen {
                     KeyCode::Down | KeyCode::Char('j') => {
                         self.scroll = self.scroll.saturating_add(1);
                     }
+                    KeyCode::Left => {
+                        self.active_tab = self.active_tab.previous();
+                        self.scroll = 0;
+                    }
+                    KeyCode::Right => {
+                        self.active_tab = self.active_tab.next();
+                        self.scroll = 0;
+                    }
                     KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
                     KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
                     KeyCode::Home => self.scroll = 0,
@@ -559,7 +595,14 @@ impl Screen for ContractDetailScreen {
                 }
                 Command::None
             }
-        }
+        };
+        // Clamp to the upper bound measured during the previous
+        // render (plan 13.3). This runs regardless of which tab
+        // handler mutated `self.scroll`, so `End` / `PageDown` stop
+        // exactly at the last visible row instead of scrolling into
+        // the void.
+        self.scroll = self.scroll.min(self.scroll_cap.get());
+        cmd
     }
 
     fn tick(&mut self) -> Command {
@@ -961,10 +1004,11 @@ Contract may be unverified or expose only events / constructors.",
                 out
             }
         };
+        let offset = self.bound_scroll_for(&body, area);
         frame.render_widget(
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
-                .scroll((self.scroll, 0))
+                .scroll((offset, 0))
                 .block(Block::default().borders(Borders::ALL).title("Events")),
             area,
         );
@@ -1058,13 +1102,25 @@ once a decompiler integration lands (see plan/7 section 13).",
             .map(|f| f.path.clone())
             .unwrap_or_else(|| "Source".to_string());
         let content = file.map(|f| f.content.clone()).unwrap_or_default();
+        let offset = self.bound_scroll_for(&content, columns[1]);
         frame.render_widget(
             Paragraph::new(content)
                 .wrap(Wrap { trim: false })
-                .scroll((self.scroll, 0))
+                .scroll((offset, 0))
                 .block(Block::default().borders(Borders::ALL).title(title)),
             columns[1],
         );
+    }
+
+    /// Compute a clamped scroll offset for the current body and
+    /// cache the new cap so `handle_key` can prevent further
+    /// over-scrolling on the next key press (plan 13.3).
+    fn bound_scroll_for(&self, body: &str, area: Rect) -> u16 {
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        let cap = content_lines.saturating_sub(viewport);
+        self.scroll_cap.set(cap);
+        self.scroll.min(cap)
     }
 }
 

@@ -274,3 +274,99 @@ using wiremock the same way the Home adapters do. New fixtures:
 Acceptance for the whole plan: every scenario in
 `tests/e2e/features/search.feature` passes, plan status becomes `done` in
 `plan/README.md`, `cargo test` + `cargo clippy` remain clean.
+
+## 11. ERC-20 detection and Contract shortcut
+
+A follow-up slice extends the Search results with two additional
+rows on address inputs:
+
+- **Contract shortcut** — emitted synchronously whenever the
+  address lookup reports `AddressKind::Contract`. Zero additional
+  RPC cost: the `eth_getCode` that backs the classify call already
+  runs, so the row is just a second entry in the candidate list
+  that routes to `ContractDetailScreen` instead of
+  `AddressDetailScreen`.
+- **Token shortcut** — emitted asynchronously, after a follow-up
+  ERC-20 probe. The probe is **pessimistic**: it fires only when we
+  already have evidence that the address is a contract. EOAs never
+  trigger the probe, non-address inputs (tx hash / block / ENS →
+  EOA / ticker / free text) never trigger it either.
+
+### 11.1 Domain
+
+```rust
+// src/domain/search.rs
+pub enum ResolvedEntity {
+    Block { number, hash },
+    Tx { hash, block },
+    Address { address, kind, ens_name },
+    Contract { address },   // NEW — routes to ContractDetailScreen.
+    Token(TokenMetadata),
+    NotFound { reason },
+}
+```
+
+### 11.2 ResolveQuery change
+
+`ResolveQuery::run` stays pure and CPU-bound: it appends a
+`ResolvedEntity::Contract { address }` row immediately after any
+`Address { kind: Contract, .. }` row it pushes (both the
+Address-classification path and the EnsName-resolves-to-contract
+path). No probe runs here.
+
+### 11.3 Search feed (`src/infra/search_feed.rs`)
+
+The feed gains a sixth port, `TokenReaderPort`, and emits in two
+phases:
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant S as SearchScreen
+  participant F as search_feed task
+  participant R as TokenReaderPort
+
+  U->>S: types "0xa0b8..."
+  S->>F: input
+  F-->>S: update1 (Address, Contract)
+  Note over F: base list contains Contract → probe
+  F->>R: get(contract, chain)
+  R-->>F: Some(overview) | None | Err
+  F-->>S: update2 (Address, Contract, Token) if Some
+```
+
+The `SearchFeedUpdate` stale-input guard already in place on
+`SearchScreen` ensures that replies for stale inputs are dropped,
+so the two-phase emission works without extra coordination.
+
+### 11.4 Ordering invariant
+
+The row order is always `[Address, Contract?, Token?]`. The
+`Address` row stays first so pressing Enter without arrow keys
+reproduces the pre-existing default behaviour (opens
+AddressDetail, which itself exposes the Contract and inline Token
+tabs when applicable — see `plan/6-address-detail.md` §12.4.3 and
+§12.4.4).
+
+### 11.5 Tests
+
+- Functional `tests/functional/resolve_query.rs`:
+  - `contract_address_also_emits_contract_shortcut_after_the_address_row`.
+  - `eoa_address_does_not_emit_contract_shortcut`.
+  - `ens_that_resolves_to_contract_also_emits_contract_shortcut`.
+- Functional `tests/functional/search_feed_token_probe.rs`:
+  - `eoa_input_never_probes_token_reader` (call counter asserts 0).
+  - `contract_without_metadata_probes_once_and_emits_only_base_update`.
+  - `erc20_contract_emits_two_updates_with_token_appended`.
+- BDD `tests/e2e/features/search.feature`:
+  - `Address input for a contract surfaces a Contract shortcut row`.
+  - `Address input for an ERC-20 contract also surfaces a Token row after the probe`.
+
+### 11.6 Infra wiring
+
+`build_live_stack` in `src/infra/mod.rs` constructs
+`AlchemyTokenReader` once and passes it to `search_feed::spawn`
+alongside the other five ports. The BDD step helper in
+`tests/e2e/steps/search.rs::build_search_factory` now invokes the
+production `search_feed::spawn` directly so the BDD coverage
+exercises the same code path as live.

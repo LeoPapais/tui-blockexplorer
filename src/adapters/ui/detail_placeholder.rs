@@ -59,6 +59,9 @@ impl DetailPlaceholderScreen {
                     .unwrap_or_default();
                 format!("Address {} ({}){}", address.to_hex(), kind_label, ens_line)
             }
+            ResolvedEntity::Contract { address } => {
+                format!("Contract {}", address.to_hex())
+            }
             ResolvedEntity::Token(meta) => format!(
                 "Token {} ({})\nname {}\ndecimals {}",
                 meta.symbol,
@@ -75,6 +78,7 @@ impl DetailPlaceholderScreen {
             ResolvedEntity::Block { .. } => "Block",
             ResolvedEntity::Tx { .. } => "Transaction",
             ResolvedEntity::Address { .. } => "Address",
+            ResolvedEntity::Contract { .. } => "Contract",
             ResolvedEntity::Token(_) => "Token",
             ResolvedEntity::NotFound { .. } => "Not found",
         }

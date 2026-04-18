@@ -439,7 +439,13 @@ BDD additions:
 5. the "asset changes" tab should show ERC20 transfers and native
     tokens transfers.
 
-## 13. Follow-up fixes (in progress)
+## 13. Follow-up fixes
+
+Status: **done** for 13.1, 13.2, 13.4, 13.5. **Partially done** for
+13.3 (tx-detail uses the full `ScrollState` helper with bounded
+scroll; contract-detail and address-detail use the lighter
+`scroll_cap: Cell<u16>` clamp strategy — see the "Deferred" bullet
+at the end of 13.3).
 
 Five refinements requested after the MVP shipped. Items marked
 **(project-wide)** are not tx-detail-specific and must be applied
@@ -447,7 +453,7 @@ consistently across every screen in the app; they live here because
 they were surfaced while reviewing the tx-detail screen but the fix
 belongs to the shared screen / input infrastructure.
 
-### 13.1 Overview tab — selectable / copyable field values
+### 13.1 Overview tab — selectable / copyable field values (done)
 
 **Scope**: `TxDetailScreen` Overview tab.
 
@@ -485,7 +491,7 @@ Acceptance:
 - At least one BDD scenario: `Overview tab lets the user copy the
   From address`.
 
-### 13.2 Humanized gas / fee values with inline raw hint
+### 13.2 Humanized gas / fee values with inline raw hint (done)
 
 **Scope**: `TxDetailScreen` Overview tab + new formatting helpers in
 `src/adapters/ui/format.rs`.
@@ -524,7 +530,7 @@ Acceptance:
 - `Gas price` renders in gwei.
 - Unit test matrix covers at least 8 inputs per formatter.
 
-### 13.3 Bounded scrolling on all scrollable screens **(project-wide)**
+### 13.3 Bounded scrolling on all scrollable screens **(project-wide, partially done)**
 
 **Scope**: every `Screen` that maintains a vertical scroll offset
 (tx-detail Overview / Logs / Raw / Asset / State, block-detail tx
@@ -587,7 +593,31 @@ Acceptance:
 - BDD scenario on `tx_detail.feature`:
   `Scrolling the Logs tab stops at the last log row`.
 
-### 13.4 Logs tab — interactive navigation and ABI-decoded values
+Delivered:
+- New shared helper `src/adapters/ui/scroll.rs::ScrollState` with
+  9 unit tests covering every clamping edge case.
+- `TxDetailScreen` fully migrated: scroll state wrapped in
+  `Cell<ScrollState>`, content/viewport dimensions refreshed on
+  each render, `handle_key` clamps through the helper. Applies to
+  Overview / Logs / Asset Changes / State Changes / Raw.
+- `ContractDetailScreen` and `AddressDetailScreen` migrated to the
+  lighter `scroll_cap: Cell<u16>` strategy: render computes the
+  upper bound from the body line count and the viewport, and
+  `handle_key` clamps `self.scroll` against that cap.
+
+Deferred (tracked as a follow-up):
+- Full migration of `ContractDetailScreen`'s Source / Read /
+  Events / Storage scroll cursors to `ScrollState` (the
+  `scroll_cap` clamp fixes the "blank viewport after the end"
+  problem for every tab, but the Source tab still keeps its own
+  file-picker scroll semantics).
+- Adding a dedicated BDD scenario
+  (`Scrolling the Logs tab stops at the last log row`) — the
+  behaviour is covered by the `ScrollState` unit tests and
+  indirectly by the existing tx-detail scenarios; a standalone
+  scenario would need a new rendering fixture.
+
+### 13.4 Logs tab — interactive navigation and ABI-decoded values (done)
 
 **Scope**: `TxDetailScreen` Logs tab.
 
@@ -658,7 +688,29 @@ Acceptance:
   - `Logs tab copies the decoded value of an indexed argument`.
   - `Logs tab falls back to raw hex when no ABI is available`.
 
-### 13.5 Tab navigation — Shift+Tab and arrow keys **(project-wide)**
+Delivered:
+- Two-pane layout: log list on the left, field list on the right,
+  with focus state (`LogsFocus::List | Detail`) on the screen.
+- ABI-textual decoder in `tx_detail.rs`: parses `Event(type0,type1,...)`
+  into positional arg types (honouring nested tuples), then maps
+  `topics[1..]` onto the first N types and `data` 32-byte words
+  onto the remaining ones. Concrete decoders for `address`,
+  `bool`, and `uintN` / `intN` up to 128 bits; everything else
+  falls back to raw 0x-hex. Covered by 6 unit tests.
+- Fields carry a `raw_hint` that renders in `Theme::text_muted`
+  next to the selected row (mirrors 13.2).
+- `y` copies the selected field's canonical value (decoded text
+  for primitives, `raw_hex` otherwise).
+
+Deferred:
+- Using the real ABI (from `ContractSourcePort`) to tell indexed
+  from non-indexed parameters exactly. Today the code assumes the
+  first N positional args are the indexed ones, matching every
+  canonical ERC20/ERC721 event in practice but not fully general.
+  Follow-up: extend `DecodeTxLogs` to surface a parsed-ABI
+  description on `DecodedLog` and reuse it in the UI.
+
+### 13.5 Tab navigation — Shift+Tab and arrow keys **(project-wide, done)**
 
 **Scope**: every screen that exposes a tab strip (`TxDetailScreen`,
 `BlockDetailScreen`, `AddressDetailScreen`,
@@ -705,3 +757,17 @@ Acceptance:
 - The plan files for every other tabbed screen are updated in the
   same commit; checked by grep'ing for `Shift+T` / `Shift + T` in
   plan/ to confirm only the new binding is referenced.
+
+Delivered:
+- `Shift+Tab` and `KeyCode::BackTab` both move tabs backwards on
+  `TxDetailScreen`, `ContractDetailScreen`, `AddressDetailScreen`
+  and `BlockDetailScreen` (the last one was already correct for
+  `BackTab`; its `Shift+Tab`-as-`Tab+SHIFT` path is now covered
+  too).
+- Left / Right arrows switch tabs on every tabbed screen when no
+  focused widget consumes the arrow key (Overview / ABI tabs on
+  Contract, Overview tab on Address, every tab on tx-detail
+  except the right pane of Logs, every tab on block-detail).
+- Covered by 6 new functional tests under
+  `tests/functional/tx_detail_screen_keys.rs` and exercised
+  implicitly by the existing 44 BDD scenarios.

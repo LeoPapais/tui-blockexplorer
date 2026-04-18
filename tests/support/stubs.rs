@@ -16,7 +16,7 @@ use blockexplorer_tui::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
         ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
         EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
-        ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort,
+        PricesPort, ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort,
         TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort,
         TxTracePort,
     },
@@ -24,8 +24,9 @@ use blockexplorer_tui::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
         DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, PendingTx,
-        PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff, TokenHolding, TokenMetadata,
-        TokenOverview, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
+        PendingTxEvent, PendingTxFilter, PriceSeries, PriceWindow, ProxyInfo, StateDiff,
+        TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction, TransferCursor,
+        TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -684,6 +685,10 @@ impl ProxyDetectionPort for StubProxyDetectionPort {
 #[derive(Default)]
 struct TokenReaderState {
     by_address: HashMap<Address, TokenOverview>,
+    /// Number of times `get` has been invoked. Used by tests that
+    /// assert on the "pessimistic probing" contract of the search
+    /// feed (EOAs must not trigger a probe; contracts do).
+    call_count: usize,
 }
 
 #[derive(Default, Clone)]
@@ -700,6 +705,13 @@ impl StubTokenReaderPort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.by_address.insert(overview.metadata.address, overview);
     }
+
+    /// How many times `get` was called since construction. Exposed
+    /// for tests that verify pessimistic probing.
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
 }
 
 impl TokenReaderPort for StubTokenReaderPort {
@@ -708,7 +720,8 @@ impl TokenReaderPort for StubTokenReaderPort {
         address: Address,
         _chain: Chain,
     ) -> Result<Option<TokenOverview>, DomainError> {
-        let state = self.inner.lock().expect("stub lock poisoned");
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count += 1;
         Ok(state.by_address.get(&address).cloned())
     }
 }
@@ -910,6 +923,7 @@ impl TxTracePort for StubTxTracePort {
 #[derive(Default)]
 struct TransfersState {
     by_address: HashMap<Address, TransferPage>,
+    by_contract: HashMap<Address, TransferPage>,
 }
 
 #[derive(Default, Clone)]
@@ -926,6 +940,11 @@ impl StubTransfersPort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.by_address.insert(address, page);
     }
+
+    pub fn set_page_for_contract(&self, contract: Address, page: TransferPage) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_contract.insert(contract, page);
+    }
 }
 
 impl TransfersPort for StubTransfersPort {
@@ -937,6 +956,76 @@ impl TransfersPort for StubTransfersPort {
     ) -> Result<TransferPage, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_address.get(&address).cloned().unwrap_or_default())
+    }
+
+    async fn get_for_contract(
+        &self,
+        contract: Address,
+        _chain: Chain,
+        _cursor: Option<TransferCursor>,
+    ) -> Result<TransferPage, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .by_contract
+            .get(&contract)
+            .cloned()
+            .unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: PricesPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct PricesState {
+    by_address: HashMap<Address, TokenPrice>,
+    history: HashMap<(Address, PriceWindow), PriceSeries>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubPricesPort {
+    inner: Arc<Mutex<PricesState>>,
+}
+
+impl StubPricesPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_single(&self, address: Address, price: TokenPrice) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, price);
+    }
+
+    pub fn set_history(&self, address: Address, series: PriceSeries) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.history.insert((address, series.window), series);
+    }
+}
+
+impl PricesPort for StubPricesPort {
+    async fn get_single(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<TokenPrice>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned())
+    }
+
+    async fn get_history(
+        &self,
+        address: Address,
+        _chain: Chain,
+        window: PriceWindow,
+    ) -> Result<PriceSeries, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .history
+            .get(&(address, window))
+            .cloned()
+            .unwrap_or_else(|| PriceSeries::empty(window)))
     }
 }
 

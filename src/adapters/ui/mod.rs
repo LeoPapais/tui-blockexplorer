@@ -9,10 +9,12 @@ pub mod address_detail;
 pub mod block_detail;
 pub mod contract_detail;
 pub mod detail_placeholder;
+pub mod format;
 pub mod gas_tracker;
 pub mod home;
 pub mod mempool;
 pub mod screen;
+pub mod scroll;
 pub mod search;
 pub mod settings;
 pub mod token_detail;
@@ -38,5 +40,8 @@ pub use search::{
     search_feed,
 };
 pub use settings::{AppConfigSnapshot, SettingsScreen};
-pub use token_detail::{TokenDetailScreen, TokenFeed, TokenFeedSender, token_feed};
+pub use token_detail::{
+    OpenTxFactory as TokenOpenTxFactory, TokenDetailScreen, TokenFeed, TokenFeedSender,
+    TokenTab, token_feed,
+};
 pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};

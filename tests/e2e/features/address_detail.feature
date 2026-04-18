@@ -56,3 +56,22 @@ Feature: Address detail
     And the portfolio feed knows 0 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     Then once loaded, the tab bar does not include the Contract tab
+
+  Scenario: AddressDetail exposes an inline Token tab for ERC-20 contracts
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
+    And the prices stub returns 1.0001 USD for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the prices stub returns 24 points for window "1d" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail with ERC-20 probe for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then once the ERC-20 probe completes, the tab bar includes the Token tab
+    And the inline Token overview shows symbol "USDC" and price "$1.0001"
+
+  Scenario: AddressDetail does not expose a Token tab for non-ERC20 contracts
+    Given the address reader knows contract "0x1d88182ff972b826f7663591c6270271644171a2" with balance 0 and nonce 1
+    When the user opens AddressDetail with ERC-20 probe for "0x1d88182ff972b826f7663591c6270271644171a2"
+    Then once loaded, the tab bar does not include the Token tab
+
+  Scenario: AddressDetail does not expose a Token tab for EOAs
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
+    When the user opens AddressDetail with ERC-20 probe for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    Then once loaded, the tab bar does not include the Token tab

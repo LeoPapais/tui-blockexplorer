@@ -87,6 +87,14 @@ where
                     kind,
                     ens_name,
                 });
+                // Cosmetic shortcut: expose a second row that lands
+                // straight on ContractDetail when the address has
+                // bytecode. No extra RPC: `classify` already did the
+                // `eth_getCode`. The Address row stays first so the
+                // default behaviour is unchanged.
+                if let crate::domain::AddressKind::Contract = kind {
+                    candidates.push(ResolvedEntity::Contract { address: addr });
+                }
             }
             Classification::BlockNumber(n) => {
                 if let Some(b) = self.block.get_by_number(n, chain).await? {
@@ -109,6 +117,9 @@ where
                         kind,
                         ens_name: Some(name),
                     });
+                    if let crate::domain::AddressKind::Contract = kind {
+                        candidates.push(ResolvedEntity::Contract { address: addr });
+                    }
                 }
             }
             Classification::TokenTicker(symbol) => {

@@ -17,7 +17,7 @@ use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
-    StubPortfolioPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
+    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
     StubStoragePort, StubTokenReaderPort, StubTokenSearchPort, StubTransfersPort,
     StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
@@ -96,6 +96,9 @@ pub struct AppWorld {
 
     /// Token-detail stub.
     pub token_reader_stub: StubTokenReaderPort,
+
+    /// Token-detail prices stub (spot + historical price series).
+    pub prices_stub: StubPricesPort,
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,

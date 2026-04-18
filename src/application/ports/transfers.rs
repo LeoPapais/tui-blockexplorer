@@ -18,4 +18,17 @@ pub trait TransfersPort: Send + Sync {
         chain: Chain,
         cursor: Option<TransferCursor>,
     ) -> impl std::future::Future<Output = Result<TransferPage, DomainError>> + Send;
+
+    /// Fetch a page of transfers whose asset is emitted by
+    /// `contract`. Maps to an `alchemy_getAssetTransfers` query with
+    /// `contractAddresses=[contract]` and `category=["erc20"]`.
+    ///
+    /// Used by the Token Detail "Transfers" tab (see
+    /// `plan/8-token-detail.md` section 12.4).
+    fn get_for_contract(
+        &self,
+        contract: Address,
+        chain: Chain,
+        cursor: Option<TransferCursor>,
+    ) -> impl std::future::Future<Output = Result<TransferPage, DomainError>> + Send;
 }

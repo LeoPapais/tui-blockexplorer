@@ -85,6 +85,43 @@ impl AlchemyTransfers {
         Self { client }
     }
 
+    async fn fetch_by_contract(
+        &self,
+        contract: Address,
+        page_key: Option<&str>,
+    ) -> Result<RawResponse, DomainError> {
+        let mut params = serde_json::Map::new();
+        params.insert("fromBlock".into(), json!("0x0"));
+        params.insert("toBlock".into(), json!("latest"));
+        params.insert("order".into(), json!("desc"));
+        params.insert("withMetadata".into(), json!(false));
+        params.insert("excludeZeroValue".into(), json!(true));
+        params.insert(
+            "maxCount".into(),
+            json!(format!("0x{:x}", MAX_PER_DIRECTION)),
+        );
+        // Only ERC-20 transfers make sense when filtering by a
+        // single contract address: Alchemy rejects the combination
+        // of `contractAddresses` with `external`/`internal`
+        // categories.
+        params.insert("category".into(), json!(["erc20"]));
+        params.insert("contractAddresses".into(), json!([contract.to_hex()]));
+        if let Some(key) = page_key {
+            params.insert("pageKey".into(), json!(key));
+        }
+
+        self.client
+            .call(
+                "alchemy_getAssetTransfers",
+                json!([Value::Object(params)]),
+            )
+            .await
+            .map_err(|e: RpcError| match e {
+                RpcError::Rpc { code: -32601, .. } => DomainError::FeatureUnavailable,
+                other => other.into_domain(),
+            })
+    }
+
     async fn fetch_direction(
         &self,
         address: Address,
@@ -156,6 +193,34 @@ impl TransfersPort for AlchemyTransfers {
         events.truncate(MAX_TOTAL);
 
         let next_cursor = join_cursor(from_raw.page_key.as_deref(), to_raw.page_key.as_deref());
+        Ok(TransferPage {
+            events,
+            next_cursor,
+        })
+    }
+
+    async fn get_for_contract(
+        &self,
+        contract: Address,
+        chain: Chain,
+        cursor: Option<TransferCursor>,
+    ) -> Result<TransferPage, DomainError> {
+        // Contract-scoped queries are served by a single RPC call:
+        // Alchemy's `contractAddresses` filter already covers both
+        // directions of the ERC-20 Transfer event. Cursors are plain
+        // pageKeys (no direction split).
+        let page_key = cursor.as_ref().map(|c| c.0.clone());
+        let raw = self.fetch_by_contract(contract, page_key.as_deref()).await?;
+        let mut events = Vec::new();
+        for raw in raw.transfers.iter() {
+            if let Some(event) = map_transfer(raw, chain) {
+                events.push(event);
+            }
+        }
+        events.sort_by_key(|e| std::cmp::Reverse(e.block_number.value()));
+        events.truncate(MAX_TOTAL);
+
+        let next_cursor = raw.page_key.as_deref().map(|k| TransferCursor(k.to_string()));
         Ok(TransferPage {
             events,
             next_cursor,
