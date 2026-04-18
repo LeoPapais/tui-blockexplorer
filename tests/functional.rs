@@ -159,3 +159,6 @@ mod etherscan_token_search;
 
 #[path = "functional/search_feed_cache.rs"]
 mod search_feed_cache;
+
+#[path = "functional/block_detail_screen_keys.rs"]
+mod block_detail_screen_keys;
