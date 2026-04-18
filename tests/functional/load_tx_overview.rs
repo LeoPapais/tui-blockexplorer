@@ -463,7 +463,12 @@ async fn missing_tx_returns_not_found() {
 // split instead of the "first N positional args are indexed"
 // heuristic used for signature-directory hits.
 
-fn log_with_topic_and_data(address: Address, topic0: [u8; 32], extra_topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {
+fn log_with_topic_and_data(
+    address: Address,
+    topic0: [u8; 32],
+    extra_topics: Vec<[u8; 32]>,
+    data: Vec<u8>,
+) -> LogEntry {
     let mut topics = vec![topic0];
     topics.extend(extra_topics);
     LogEntry {
@@ -700,7 +705,10 @@ async fn logs_directory_hit_leaves_parsed_none() {
 
     let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
     assert_eq!(sig.signature, "Transfer(address,address,uint256)");
-    assert!(sig.parsed.is_none(), "directory hits cannot report indexed flags");
+    assert!(
+        sig.parsed.is_none(),
+        "directory hits cannot report indexed flags"
+    );
 }
 
 // ---------------------------------------------------------------------------
