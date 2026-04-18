@@ -8,4 +8,6 @@ pub mod tx_view;
 pub mod use_cases;
 
 pub use home::{ConnectionStatus, HomeSession, HomeViewModel};
-pub use tx_view::{DecodedLog, DecodedMethod, DecodedSignature, SignatureSource, TxView};
+pub use tx_view::{
+    DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
+};

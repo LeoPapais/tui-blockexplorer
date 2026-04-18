@@ -41,3 +41,24 @@ Feature: Transaction detail
     When the user opens TxDetail with decoding for hash "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc"
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the Logs tab decodes "Transfer(address,address,uint256)"
+
+  Scenario: Asset Changes tab renders simulated deltas
+    Given the tx reader knows tx "0xd1d1016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d1" was successful
+    And the simulator reports 1 native ETH transfer for that tx
+    When the user opens TxDetail with full enrichment for hash "0xd1d1016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d1"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the Asset Changes tab lists 1 change
+
+  Scenario: State Changes tab degrades gracefully when trace is unavailable
+    Given the tx reader knows tx "0xd2d2016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d2" was successful
+    And the tracer reports that the state-diff is unsupported
+    When the user opens TxDetail with full enrichment for hash "0xd2d2016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d2"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the State Changes tab reports it is unsupported
+
+  Scenario: State Changes tab lists address diffs
+    Given the tx reader knows tx "0xd3d3016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d3" was successful
+    And the tracer reports a balance diff for the sender
+    When the user opens TxDetail with full enrichment for hash "0xd3d3016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d3"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the State Changes tab lists 1 address

@@ -15,8 +15,11 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
-    application::{DecodedLog, DecodedMethod, TxView},
-    domain::{Chain, TxHash, TxStatus},
+    application::{DecodedLog, DecodedMethod, LoadStatus, TxView},
+    domain::{
+        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange,
+        StateDiff, TxHash, TxStatus,
+    },
 };
 
 pub struct TxFeed {
@@ -49,6 +52,8 @@ pub fn tx_feed() -> (TxFeed, TxFeedSender) {
 pub enum TxTab {
     Overview,
     Logs,
+    AssetChanges,
+    StateChanges,
     Raw,
 }
 
@@ -56,7 +61,9 @@ impl TxTab {
     fn next(self) -> Self {
         match self {
             TxTab::Overview => TxTab::Logs,
-            TxTab::Logs => TxTab::Raw,
+            TxTab::Logs => TxTab::AssetChanges,
+            TxTab::AssetChanges => TxTab::StateChanges,
+            TxTab::StateChanges => TxTab::Raw,
             TxTab::Raw => TxTab::Overview,
         }
     }
@@ -65,6 +72,8 @@ impl TxTab {
         match self {
             TxTab::Overview => "Overview",
             TxTab::Logs => "Logs",
+            TxTab::AssetChanges => "Asset Changes",
+            TxTab::StateChanges => "State Changes",
             TxTab::Raw => "Raw",
         }
     }
@@ -134,9 +143,11 @@ impl Screen for TxDetailScreen {
         );
 
         let tabs = format!(
-            "[ {over} ]  [ {logs} ]  [ {raw} ]",
+            "[ {over} ]  [ {logs} ]  [ {asset} ]  [ {state} ]  [ {raw} ]",
             over = marker(self.active_tab, TxTab::Overview),
             logs = marker(self.active_tab, TxTab::Logs),
+            asset = marker(self.active_tab, TxTab::AssetChanges),
+            state = marker(self.active_tab, TxTab::StateChanges),
             raw = marker(self.active_tab, TxTab::Raw),
         );
         frame.render_widget(
@@ -162,6 +173,26 @@ impl Screen for TxDetailScreen {
                 Paragraph::new(logs_body(&view.decoded_logs))
                     .wrap(Wrap { trim: false })
                     .block(RatBlock::default().borders(Borders::ALL).title("Logs")),
+                chunks[2],
+            ),
+            (Some(view), TxTab::AssetChanges) => frame.render_widget(
+                Paragraph::new(asset_changes_body(&view.asset_changes))
+                    .wrap(Wrap { trim: false })
+                    .block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .title("Asset Changes"),
+                    ),
+                chunks[2],
+            ),
+            (Some(view), TxTab::StateChanges) => frame.render_widget(
+                Paragraph::new(state_changes_body(&view.state_diff))
+                    .wrap(Wrap { trim: false })
+                    .block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .title("State Changes"),
+                    ),
                 chunks[2],
             ),
             (Some(view), TxTab::Raw) => frame.render_widget(
@@ -310,6 +341,107 @@ fn logs_body(logs: &[DecodedLog]) -> String {
         out.push('\n');
     }
     out
+}
+
+fn asset_changes_body(status: &LoadStatus<Vec<AssetChange>>) -> String {
+    match status {
+        LoadStatus::Pending => "Simulating asset changes...".to_string(),
+        LoadStatus::Unsupported => {
+            "Asset-change simulation is unavailable on this chain / tier.".to_string()
+        }
+        LoadStatus::Failed(msg) => format!("Simulation failed: {msg}"),
+        LoadStatus::Loaded(changes) if changes.is_empty() => {
+            "No asset changes detected.".to_string()
+        }
+        LoadStatus::Loaded(changes) => {
+            let mut out = String::new();
+            for (idx, change) in changes.iter().enumerate() {
+                let kind = match change.kind {
+                    AssetChangeKind::Transfer => "TRANSFER",
+                    AssetChangeKind::Approve => "APPROVE",
+                    AssetChangeKind::Other => "OTHER",
+                };
+                let asset = match &change.asset {
+                    AssetKind::Native => "ETH (native)".to_string(),
+                    AssetKind::Erc20 { symbol, contract, .. } => {
+                        format!("{symbol} @ {}", contract.to_hex())
+                    }
+                    AssetKind::Erc721 { symbol, contract, token_id } => {
+                        format!("{symbol} #{token_id} @ {}", contract.to_hex())
+                    }
+                    AssetKind::Erc1155 { symbol, contract, token_id } => {
+                        format!("{symbol} id={token_id} @ {}", contract.to_hex())
+                    }
+                };
+                let from = change
+                    .from
+                    .map(|a| a.to_hex())
+                    .unwrap_or_else(|| "(mint)".to_string());
+                let to = change
+                    .to
+                    .map(|a| a.to_hex())
+                    .unwrap_or_else(|| "(burn)".to_string());
+                out.push_str(&format!(
+                    "#{idx}  {kind}  {asset}\n  from: {from}\n  to:   {to}\n  amount: {amount}\n\n",
+                    amount = change.amount.value(),
+                ));
+            }
+            out
+        }
+    }
+}
+
+fn state_changes_body(status: &LoadStatus<StateDiff>) -> String {
+    match status {
+        LoadStatus::Pending => "Replaying transaction for state diff...".to_string(),
+        LoadStatus::Unsupported => {
+            "State-diff trace is unavailable on this chain / tier.".to_string()
+        }
+        LoadStatus::Failed(msg) => format!("Trace failed: {msg}"),
+        LoadStatus::Loaded(diff) if diff.is_empty() => {
+            "No state changes recorded.".to_string()
+        }
+        LoadStatus::Loaded(diff) => render_state_diff(diff),
+    }
+}
+
+fn render_state_diff(diff: &StateDiff) -> String {
+    let mut out = String::new();
+    for entry in &diff.entries {
+        out.push_str(&render_address_diff(entry));
+        out.push('\n');
+    }
+    out
+}
+
+fn render_address_diff(entry: &AddressStateDiff) -> String {
+    let mut out = format!("{}\n", entry.address.to_hex());
+    if entry.balance.is_change() {
+        out.push_str(&format!("  balance: {}\n", render_diff(&entry.balance)));
+    }
+    if entry.nonce.is_change() {
+        out.push_str(&format!("  nonce:   {}\n", render_diff(&entry.nonce)));
+    }
+    if entry.code.is_change() {
+        out.push_str(&format!("  code:    {}\n", render_diff(&entry.code)));
+    }
+    for slot in &entry.storage {
+        out.push_str(&format!(
+            "  storage[{slot}] = {change}\n",
+            slot = slot.slot,
+            change = render_diff(&slot.change),
+        ));
+    }
+    out
+}
+
+fn render_diff(change: &DiffChange) -> String {
+    match change {
+        DiffChange::Unchanged => "(unchanged)".to_string(),
+        DiffChange::Added(v) => format!("+{v}"),
+        DiffChange::Removed(v) => format!("-{v}"),
+        DiffChange::Changed { from, to } => format!("{from} -> {to}"),
+    }
 }
 
 fn short_hex(s: &str) -> String {

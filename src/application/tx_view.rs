@@ -6,7 +6,7 @@
 //!
 //! See `plan/4-tx-detail.md` section 12.4.2.
 
-use crate::domain::{LogEntry, Transaction};
+use crate::domain::{AssetChange, LogEntry, StateDiff, Transaction};
 
 /// Where a decoded signature came from. Surfaced to the UI so users
 /// can tell an ABI-backed decoding from a best-effort 4byte lookup.
@@ -52,6 +52,18 @@ pub struct DecodedSignature {
     pub source: SignatureSource,
 }
 
+/// Status of a deferred / feature-gated enrichment. The UI uses
+/// this to tell "not yet loaded" apart from "unsupported on this
+/// chain/provider" and "failed to load".
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LoadStatus<T> {
+    #[default]
+    Pending,
+    Loaded(T),
+    Unsupported,
+    Failed(String),
+}
+
 /// Enriched view consumed by `TxDetailScreen`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxView {
@@ -61,6 +73,8 @@ pub struct TxView {
     /// 4-byte selector in that case.
     pub decoded_method: Option<DecodedMethod>,
     pub decoded_logs: Vec<DecodedLog>,
+    pub asset_changes: LoadStatus<Vec<AssetChange>>,
+    pub state_diff: LoadStatus<StateDiff>,
 }
 
 impl TxView {
@@ -78,6 +92,8 @@ impl TxView {
             tx,
             decoded_method: None,
             decoded_logs,
+            asset_changes: LoadStatus::default(),
+            state_diff: LoadStatus::default(),
         }
     }
 }

@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{ScreenStack, TxDetailScreen, TxTab, tx_feed},
-    application::{TxView, use_cases::load_tx_overview},
+    application::{LoadStatus, TxView, use_cases::load_tx_overview},
     domain::{
-        Address, BlockHash, BlockNumber, Chain, ContractAbi, LogEntry, Transaction, TxHash,
-        TxStatus, TxType, Wei,
+        AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
+        BlockNumber, Chain, ContractAbi, DiffChange, LogEntry, StateDiff, Transaction,
+        TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -90,6 +91,7 @@ where
 #[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" was successful$"#)]
 async fn reader_knows_success(world: &mut AppWorld, hash_hex: String) {
     let tx = sample_tx(&hash_hex, TxStatus::Success);
+    world.last_tx_hash = Some(tx.hash);
     world.tx_reader_stub.insert(tx);
 }
 
@@ -103,6 +105,7 @@ async fn reader_knows_failure(world: &mut AppWorld, hash_hex: String, reason: St
             reason: Some(reason),
         },
     );
+    world.last_tx_hash = Some(tx.hash);
     world.tx_reader_stub.insert(tx);
 }
 
@@ -113,6 +116,7 @@ async fn reader_knows_pending(world: &mut AppWorld, hash_hex: String) {
     tx.block_hash = None;
     tx.tx_index = None;
     tx.gas_used = None;
+    world.last_tx_hash = Some(tx.hash);
     world.tx_reader_stub.insert(tx);
 }
 
@@ -141,6 +145,7 @@ async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
         topics: vec![topic],
         data: Vec::new(),
     });
+    world.last_tx_hash = Some(tx.hash);
     world.tx_reader_stub.insert(tx);
 }
 
@@ -157,6 +162,55 @@ async fn sigdb_has_transfer_event(world: &mut AppWorld) {
         .set_event_topic(topic, "Transfer(address,address,uint256)");
 }
 
+#[given(regex = r"^the simulator reports 1 native ETH transfer for that tx$")]
+async fn simulator_reports_one_transfer(world: &mut AppWorld) {
+    let hash = last_tx_hash(world);
+    let from = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+    let to = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    world.tx_simulation_stub.set_changes(
+        hash,
+        vec![AssetChange {
+            kind: AssetChangeKind::Transfer,
+            asset: AssetKind::Native,
+            from: Some(from),
+            to: Some(to),
+            amount: Wei::new(1_000_000_000_000_000_000),
+        }],
+    );
+}
+
+#[given(regex = r"^the tracer reports that the state-diff is unsupported$")]
+async fn tracer_unsupported(world: &mut AppWorld) {
+    world.tx_trace_stub.mark_unsupported();
+}
+
+#[given(regex = r"^the tracer reports a balance diff for the sender$")]
+async fn tracer_has_balance_diff(world: &mut AppWorld) {
+    let hash = last_tx_hash(world);
+    let from = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+    world.tx_trace_stub.set_state_diff(
+        hash,
+        StateDiff {
+            entries: vec![AddressStateDiff {
+                address: from,
+                balance: DiffChange::Changed {
+                    from: "0xde0b6b3a7640000".into(),
+                    to: "0xde0b6b3a7630000".into(),
+                },
+                nonce: DiffChange::Unchanged,
+                code: DiffChange::Unchanged,
+                storage: Vec::new(),
+            }],
+        },
+    );
+}
+
+fn last_tx_hash(world: &AppWorld) -> TxHash {
+    world
+        .last_tx_hash
+        .expect("scenario must provide the tx hash via the tx reader Given step")
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -168,6 +222,29 @@ async fn opens_tx_detail(world: &mut AppWorld, hash_hex: String) {
     let hash = TxHash::from_hex(&hash_hex).unwrap();
     let reader = world.tx_reader_stub.clone();
     let screen = spawn_tx_detail(chain, hash, reader);
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[when(regex = r#"^the user opens TxDetail with full enrichment for hash "(0x[0-9a-fA-F]{64})"$"#)]
+async fn opens_tx_detail_with_full_enrichment(world: &mut AppWorld, hash_hex: String) {
+    build_stack(world);
+    let chain = world.active_chain.expect("chain");
+    let hash = TxHash::from_hex(&hash_hex).unwrap();
+    let reader = world.tx_reader_stub.clone();
+    let contract_source = world.contract_source_stub.clone();
+    let signatures = world.signatures_stub.clone();
+    let sim = world.tx_simulation_stub.clone();
+    let tracer = world.tx_trace_stub.clone();
+    let screen = spawn_tx_detail_with_full_enrichment(
+        chain,
+        hash,
+        reader,
+        contract_source,
+        signatures,
+        sim,
+        tracer,
+    );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
 }
@@ -217,6 +294,43 @@ fn spawn_tx_detail_with_decoding(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
+fn spawn_tx_detail_with_full_enrichment(
+    chain: Chain,
+    hash: TxHash,
+    reader: crate::support::stubs::StubTxReaderPort,
+    contract_source: crate::support::stubs::StubContractSourcePort,
+    signatures: crate::support::stubs::StubSignatureDirectoryPort,
+    sim: crate::support::stubs::StubTxSimulationPort,
+    tracer: crate::support::stubs::StubTxTracePort,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = tx_feed();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::TxFeedSender {
+            updates_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(h) = input_rx.recv().await {
+            let Ok(mut view) = load_tx_overview::run_with_decoding(
+                &reader,
+                &contract_source,
+                &signatures,
+                h,
+                chain,
+            )
+            .await
+            else {
+                continue;
+            };
+            load_tx_overview::load_asset_changes(&sim, &mut view, chain).await;
+            load_tx_overview::load_state_diff(&tracer, &mut view, chain).await;
+            if updates_tx.send(view).is_err() {
+                break;
+            }
+        }
+    });
+    Box::new(TxDetailScreen::loading(chain, hash, feed))
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
@@ -257,6 +371,63 @@ async fn overview_method_from_abi(world: &mut AppWorld, expected: String) {
         method.source,
         blockexplorer_tui::application::SignatureSource::Abi
     );
+}
+
+#[then(
+    regex = r#"^once the transaction is loaded, the Asset Changes tab lists (\d+) change$"#
+)]
+async fn asset_changes_lists_n(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_tx_detail(s).current().map(|v| &v.asset_changes),
+            Some(LoadStatus::Loaded(_)) | Some(LoadStatus::Unsupported)
+        )
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    match &view.asset_changes {
+        LoadStatus::Loaded(changes) => assert_eq!(changes.len(), expected as usize),
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
+#[then(
+    regex = r#"^once the transaction is loaded, the State Changes tab reports it is unsupported$"#
+)]
+async fn state_changes_unsupported(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_tx_detail(s).current().map(|v| &v.state_diff),
+            Some(LoadStatus::Unsupported) | Some(LoadStatus::Loaded(_))
+        )
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    assert!(matches!(view.state_diff, LoadStatus::Unsupported));
+}
+
+#[then(
+    regex = r#"^once the transaction is loaded, the State Changes tab lists (\d+) address(?:es)?$"#
+)]
+async fn state_changes_lists_n(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_tx_detail(s).current().map(|v| &v.state_diff),
+            Some(LoadStatus::Loaded(_)) | Some(LoadStatus::Unsupported)
+        )
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    match &view.state_diff {
+        LoadStatus::Loaded(diff) => assert_eq!(diff.entries.len(), expected as usize),
+        other => panic!("expected Loaded, got {other:?}"),
+    }
 }
 
 #[then(

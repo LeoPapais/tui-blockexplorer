@@ -30,8 +30,9 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemyTokenReader,
-            AlchemyTxLookup, AlchemyTxReader, RpcClient,
+            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemySimulation,
+            AlchemyTokenReader, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer,
+            RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
@@ -58,20 +59,24 @@ fn live_tx_detail_screen(
     rpc: RpcClient,
     etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
-    let reader = AlchemyTxReader::new(rpc);
+    let reader = AlchemyTxReader::new(rpc.clone());
     let (feed, sender) = tx_feed();
 
     let signatures = SourcifySignatureDirectory::with_default_http().ok();
+    let sim = AlchemySimulation::new(rpc.clone());
+    let trace = AlchemyTxTracer::new(rpc);
 
     if let (Some(key), Some(signatures)) = (etherscan_key, signatures)
         && let Ok(client) = EtherscanClient::with_default_http(key)
     {
         let contract_source = EtherscanContractSource::new(client);
-        std::mem::drop(tx_feed::spawn_with_decoding(
+        std::mem::drop(tx_feed::spawn_full(
             chain,
             reader,
             contract_source,
             signatures,
+            sim,
+            trace,
             sender,
         ));
         return Box::new(TxDetailScreen::loading(chain, hash, feed));

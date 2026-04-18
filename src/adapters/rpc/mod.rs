@@ -17,6 +17,8 @@ pub mod proxy_detection;
 pub mod token_reader;
 pub mod tx_lookup;
 pub mod tx_reader;
+pub mod tx_simulation;
+pub mod tx_trace;
 
 pub use address_lookup::AlchemyAddressLookup;
 pub use address_reader::AlchemyAddressReader;
@@ -30,3 +32,5 @@ pub use proxy_detection::AlchemyProxyDetector;
 pub use token_reader::AlchemyTokenReader;
 pub use tx_lookup::AlchemyTxLookup;
 pub use tx_reader::AlchemyTxReader;
+pub use tx_simulation::AlchemySimulation;
+pub use tx_trace::AlchemyTxTracer;

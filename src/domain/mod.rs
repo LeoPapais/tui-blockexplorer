@@ -19,6 +19,8 @@ pub mod search;
 pub mod timestamp;
 pub mod token;
 pub mod tx;
+pub mod tx_simulation;
+pub mod tx_trace;
 
 pub use address::{Address, AddressOverview};
 pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary};
@@ -33,3 +35,5 @@ pub use search::{AddressKind, ResolvedEntity};
 pub use timestamp::UnixTimestamp;
 pub use token::{TokenMetadata, TokenOverview};
 pub use tx::{LogEntry, Transaction, TxHash, TxStatus, TxSummary, TxType};
+pub use tx_simulation::{AssetChange, AssetChangeKind, AssetKind};
+pub use tx_trace::{AddressStateDiff, DiffChange, StateDiff, StorageSlotDiff};

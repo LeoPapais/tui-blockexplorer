@@ -3,9 +3,10 @@
 //! See `plan/4-tx-detail.md` section 12.1.
 
 use blockexplorer_tui::{
-    application::{SignatureSource, use_cases::load_tx_overview},
+    application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
-        Address, BlockHash, BlockNumber, Chain, ContractAbi, DomainError, LogEntry,
+        AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
+        BlockNumber, Chain, ContractAbi, DiffChange, DomainError, LogEntry, StateDiff,
         Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
@@ -13,6 +14,7 @@ use pretty_assertions::assert_eq;
 
 use crate::support::stubs::{
     StubContractSourcePort, StubSignatureDirectoryPort, StubTxReaderPort,
+    StubTxSimulationPort, StubTxTracePort,
 };
 
 fn base_tx(hash_hex: &str) -> Transaction {
@@ -208,6 +210,91 @@ async fn logs_are_decoded_via_signature_directory() {
     assert_eq!(got.decoded_logs.len(), 1);
     let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
     assert_eq!(sig.signature, "Transfer(address,address,uint256)");
+}
+
+#[tokio::test]
+async fn asset_changes_become_loaded_when_sim_returns_entries() {
+    let sim = StubTxSimulationPort::new();
+    let tx = base_tx(
+        "0xdada016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394da",
+    );
+    sim.set_changes(
+        tx.hash,
+        vec![AssetChange {
+            kind: AssetChangeKind::Transfer,
+            asset: AssetKind::Native,
+            from: Some(tx.from),
+            to: tx.to,
+            amount: Wei::new(42),
+        }],
+    );
+
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_asset_changes(&sim, &mut view, Chain::Ethereum).await;
+    match view.asset_changes {
+        LoadStatus::Loaded(changes) => {
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].amount.value(), 42);
+        }
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn asset_changes_become_unsupported_on_feature_unavailable() {
+    let sim = StubTxSimulationPort::new();
+    sim.mark_unsupported();
+
+    let tx = base_tx(
+        "0xabab016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ab",
+    );
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_asset_changes(&sim, &mut view, Chain::Ethereum).await;
+    assert!(matches!(view.asset_changes, LoadStatus::Unsupported));
+}
+
+#[tokio::test]
+async fn state_diff_becomes_loaded_when_tracer_returns_entries() {
+    let tracer = StubTxTracePort::new();
+    let tx = base_tx(
+        "0xecec016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ec",
+    );
+    tracer.set_state_diff(
+        tx.hash,
+        StateDiff {
+            entries: vec![AddressStateDiff {
+                address: tx.from,
+                balance: DiffChange::Changed {
+                    from: "0xff".into(),
+                    to: "0xfe".into(),
+                },
+                nonce: DiffChange::Unchanged,
+                code: DiffChange::Unchanged,
+                storage: Vec::new(),
+            }],
+        },
+    );
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_state_diff(&tracer, &mut view, Chain::Ethereum).await;
+    match view.state_diff {
+        LoadStatus::Loaded(diff) => {
+            assert_eq!(diff.entries.len(), 1);
+            assert!(diff.entries[0].balance.is_change());
+        }
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn state_diff_becomes_unsupported_on_feature_unavailable() {
+    let tracer = StubTxTracePort::new();
+    tracer.mark_unsupported();
+    let tx = base_tx(
+        "0xfbfb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fb",
+    );
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_state_diff(&tracer, &mut view, Chain::Ethereum).await;
+    assert!(matches!(view.state_diff, LoadStatus::Unsupported));
 }
 
 #[tokio::test]

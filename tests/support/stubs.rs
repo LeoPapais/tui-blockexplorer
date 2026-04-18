@@ -17,13 +17,13 @@ use blockexplorer_tui::{
         ChainRegistryPort, ContractSourcePort, EnsResolverPort, GasOraclePort,
         NetworkStatusPort, PendingTxStreamPort, ProxyDetectionPort,
         SignatureDirectoryPort, TokenReaderPort, TokenSearchPort, TxLookupPort,
-        TxReaderPort,
+        TxReaderPort, TxSimulationPort, TxTracePort,
     },
     domain::{
-        Address, AddressKind, AddressOverview, Block, BlockHash, BlockId, BlockNumber,
-        BlockSummary, Chain, ContractAbi, DomainError, GasSnapshot, Gwei, NetworkStatus,
-        PendingTx, PendingTxEvent, PendingTxFilter, ProxyInfo, TokenMetadata,
-        TokenOverview, Transaction, TxHash, TxSummary, Wei,
+        Address, AddressKind, AddressOverview, AssetChange, Block, BlockHash, BlockId,
+        BlockNumber, BlockSummary, Chain, ContractAbi, DomainError, GasSnapshot, Gwei,
+        NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff,
+        TokenMetadata, TokenOverview, Transaction, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -793,5 +793,95 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
     ) -> Result<Option<String>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.topics.get(&topic).cloned())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TxSimulationPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TxSimulationState {
+    by_hash: HashMap<TxHash, Vec<AssetChange>>,
+    unsupported: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTxSimulationPort {
+    inner: Arc<Mutex<TxSimulationState>>,
+}
+
+impl StubTxSimulationPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_changes(&self, hash: TxHash, changes: Vec<AssetChange>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(hash, changes);
+    }
+
+    pub fn mark_unsupported(&self) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.unsupported = true;
+    }
+}
+
+impl TxSimulationPort for StubTxSimulationPort {
+    async fn simulate_asset_changes(
+        &self,
+        tx: &Transaction,
+        _chain: Chain,
+    ) -> Result<Vec<AssetChange>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        if state.unsupported {
+            return Err(DomainError::FeatureUnavailable);
+        }
+        Ok(state.by_hash.get(&tx.hash).cloned().unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TxTracePort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TxTraceState {
+    by_hash: HashMap<TxHash, StateDiff>,
+    unsupported: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTxTracePort {
+    inner: Arc<Mutex<TxTraceState>>,
+}
+
+impl StubTxTracePort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_state_diff(&self, hash: TxHash, diff: StateDiff) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(hash, diff);
+    }
+
+    pub fn mark_unsupported(&self) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.unsupported = true;
+    }
+}
+
+impl TxTracePort for StubTxTracePort {
+    async fn state_diff(
+        &self,
+        hash: TxHash,
+        _chain: Chain,
+    ) -> Result<StateDiff, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        if state.unsupported {
+            return Err(DomainError::FeatureUnavailable);
+        }
+        Ok(state.by_hash.get(&hash).cloned().unwrap_or_default())
     }
 }

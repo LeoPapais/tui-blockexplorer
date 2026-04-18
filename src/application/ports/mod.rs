@@ -19,6 +19,8 @@ pub mod token_reader;
 pub mod token_search;
 pub mod tx_lookup;
 pub mod tx_reader;
+pub mod tx_simulation;
+pub mod tx_trace;
 
 pub use address_lookup::AddressLookupPort;
 pub use address_reader::AddressReaderPort;
@@ -36,3 +38,5 @@ pub use token_reader::TokenReaderPort;
 pub use token_search::TokenSearchPort;
 pub use tx_lookup::TxLookupPort;
 pub use tx_reader::TxReaderPort;
+pub use tx_simulation::TxSimulationPort;
+pub use tx_trace::TxTracePort;

@@ -10,8 +10,11 @@ use serde_json::Value;
 
 use crate::{
     application::{
-        DecodedLog, DecodedMethod, DecodedSignature, SignatureSource, TxView,
-        ports::{ContractSourcePort, SignatureDirectoryPort, TxReaderPort},
+        DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
+        ports::{
+            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort,
+            TxTracePort,
+        },
     },
     domain::{Chain, DomainError, LogEntry, TxHash},
 };
@@ -67,7 +70,39 @@ where
         tx,
         decoded_method,
         decoded_logs,
+        asset_changes: LoadStatus::Pending,
+        state_diff: LoadStatus::Pending,
     })
+}
+
+/// Resolve asset changes for a loaded [`TxView`]. Uses
+/// [`LoadStatus`] so the UI can distinguish between "not available
+/// on this chain" and a transient fetch failure.
+pub async fn load_asset_changes<S: TxSimulationPort>(
+    sim: &S,
+    view: &mut TxView,
+    chain: Chain,
+) {
+    let status = match sim.simulate_asset_changes(&view.tx, chain).await {
+        Ok(changes) => LoadStatus::Loaded(changes),
+        Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
+        Err(err) => LoadStatus::Failed(format!("{err}")),
+    };
+    view.asset_changes = status;
+}
+
+/// Resolve the state diff for a loaded [`TxView`].
+pub async fn load_state_diff<T: TxTracePort>(
+    tracer: &T,
+    view: &mut TxView,
+    chain: Chain,
+) {
+    let status = match tracer.state_diff(view.tx.hash, chain).await {
+        Ok(diff) => LoadStatus::Loaded(diff),
+        Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
+        Err(err) => LoadStatus::Failed(format!("{err}")),
+    };
+    view.state_diff = status;
 }
 
 async fn decode_method<C, S>(

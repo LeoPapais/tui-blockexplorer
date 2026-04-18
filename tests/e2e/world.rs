@@ -9,7 +9,7 @@ use std::fmt;
 use blockexplorer_tui::{
     adapters::ui::ScreenStack,
     application::HomeSession,
-    domain::Chain,
+    domain::{Chain, TxHash},
 };
 use cucumber::World;
 
@@ -18,7 +18,7 @@ use crate::support::stubs::{
     StubChainRegistry, StubContractSourcePort, StubEnsResolverPort, StubGasOraclePort,
     StubNetworkStatusPort, StubPendingTxStreamPort, StubProxyDetectionPort,
     StubSignatureDirectoryPort, StubTokenReaderPort, StubTokenSearchPort, StubTxLookupPort,
-    StubTxReaderPort,
+    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession =
@@ -51,6 +51,17 @@ pub struct AppWorld {
     /// Signature-directory (Sourcify 4byte) stub used by the
     /// tx-detail decoding scenarios.
     pub signatures_stub: StubSignatureDirectoryPort,
+
+    /// Asset-change simulation stub for the Asset Changes tab.
+    pub tx_simulation_stub: StubTxSimulationPort,
+
+    /// State-diff trace stub for the State Changes tab.
+    pub tx_trace_stub: StubTxTracePort,
+
+    /// Hash captured by the latest "the tx reader knows tx ... "
+    /// step. Used by follow-up `Given`s to attach simulator /
+    /// tracer data without repeating the hash in natural language.
+    pub last_tx_hash: Option<TxHash>,
 
     /// Mempool stub.
     pub pending_stub: StubPendingTxStreamPort,

@@ -1,10 +1,10 @@
 # 4 — Transaction Detail
 
-Status: **expanded** — MVP Overview + Raw tabs shipped earlier and
-this phase extends the screen with ABI-based method decoding, the
-Logs / Asset-Changes / State-Changes tabs and pending-tx support.
-The Internal-calls tab (Trace namespace) stays explicitly deferred;
-see section 12.5.
+Status: **done** — MVP Overview + Raw tabs shipped earlier and this
+phase extended the screen with ABI-based method decoding, the Logs /
+Asset-Changes / State-Changes tabs and pending-tx support. The
+Internal-calls tab (Trace namespace) stays explicitly deferred; see
+section 12.5.
 
 The most feature-dense screen. Six tabs: Overview, Logs, Internal, State Changes,
 Asset Changes, Raw. Heavy reliance on Alchemy's Trace, Debug and Simulation APIs,

@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "changes": [
+      {
+        "assetType": "NATIVE",
+        "changeType": "TRANSFER",
+        "from": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "rawAmount": "0xde0b6b3a7640000",
+        "symbol": "ETH",
+        "decimals": 18
+      },
+      {
+        "assetType": "ERC20",
+        "changeType": "TRANSFER",
+        "from": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "to": "0x0000000000000000000000000000000000000099",
+        "rawAmount": "0xf4240",
+        "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "symbol": "USDC",
+        "decimals": 6
+      }
+    ]
+  }
+}

@@ -81,3 +81,9 @@ mod etherscan_contract_source;
 
 #[path = "functional/sourcify_signatures.rs"]
 mod sourcify_signatures;
+
+#[path = "functional/alchemy_tx_simulation.rs"]
+mod alchemy_tx_simulation;
+
+#[path = "functional/alchemy_tx_trace.rs"]
+mod alchemy_tx_trace;
