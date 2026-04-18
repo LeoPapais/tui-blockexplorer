@@ -12,12 +12,16 @@ use std::{
 };
 
 use blockexplorer_tui::{
-    application::ports::{
-        AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-        ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort, EventLogPort,
-        GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort, PricesPort,
-        ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort, TokenSearchPort,
-        TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
+    application::{
+        SignatureSource,
+        ports::{
+            AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
+            ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
+            EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
+            PricesPort, ProxyDetectionPort, SignatureDirectoryPort, SignatureHit, StoragePort,
+            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
+            TxSimulationPort, TxTracePort,
+        },
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
@@ -770,8 +774,8 @@ impl ContractSourcePort for StubContractSourcePort {
 
 #[derive(Default)]
 struct SignatureState {
-    selectors: HashMap<[u8; 4], String>,
-    topics: HashMap<[u8; 32], String>,
+    selectors: HashMap<[u8; 4], SignatureHit>,
+    topics: HashMap<[u8; 32], SignatureHit>,
 }
 
 #[derive(Default, Clone)]
@@ -784,24 +788,64 @@ impl StubSignatureDirectoryPort {
         Self::default()
     }
 
+    /// Prime a selector hit. Defaults the provenance to
+    /// [`SignatureSource::Openchain`], matching the live fallback
+    /// chain's primary. Use [`Self::set_selector_with_source`] when
+    /// a test wants to pin Samczsun as the source.
     pub fn set_selector(&self, selector: [u8; 4], signature: &str) {
+        self.set_selector_with_source(selector, signature, SignatureSource::Openchain);
+    }
+
+    pub fn set_selector_with_source(
+        &self,
+        selector: [u8; 4],
+        signature: &str,
+        source: SignatureSource,
+    ) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.selectors.insert(selector, signature.to_string());
+        state.selectors.insert(
+            selector,
+            SignatureHit {
+                signature: signature.to_string(),
+                source,
+            },
+        );
     }
 
     pub fn set_event_topic(&self, topic: [u8; 32], signature: &str) {
+        self.set_event_topic_with_source(topic, signature, SignatureSource::Openchain);
+    }
+
+    pub fn set_event_topic_with_source(
+        &self,
+        topic: [u8; 32],
+        signature: &str,
+        source: SignatureSource,
+    ) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.topics.insert(topic, signature.to_string());
+        state.topics.insert(
+            topic,
+            SignatureHit {
+                signature: signature.to_string(),
+                source,
+            },
+        );
     }
 }
 
 impl SignatureDirectoryPort for StubSignatureDirectoryPort {
-    async fn lookup_selector(&self, selector: [u8; 4]) -> Result<Option<String>, DomainError> {
+    async fn lookup_selector(
+        &self,
+        selector: [u8; 4],
+    ) -> Result<Option<SignatureHit>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.selectors.get(&selector).cloned())
     }
 
-    async fn lookup_event_topic(&self, topic: [u8; 32]) -> Result<Option<String>, DomainError> {
+    async fn lookup_event_topic(
+        &self,
+        topic: [u8; 32],
+    ) -> Result<Option<SignatureHit>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.topics.get(&topic).cloned())
     }

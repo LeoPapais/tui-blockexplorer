@@ -159,7 +159,7 @@ async fn decoding_falls_back_to_signature_directory() {
 
     let method = got.decoded_method.expect("method decoded");
     assert_eq!(method.signature, "transfer(address,uint256)");
-    assert_eq!(method.source, SignatureSource::SignatureDirectory);
+    assert_eq!(method.source, SignatureSource::Openchain);
 }
 
 #[tokio::test]

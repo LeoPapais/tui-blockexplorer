@@ -48,9 +48,18 @@ pub struct AppWorld {
     /// decoding scenarios.
     pub contract_source_stub: StubContractSourcePort,
 
-    /// Signature-directory (Sourcify 4byte) stub used by the
-    /// tx-detail decoding scenarios.
+    /// Signature-directory stub used by the tx-detail decoding
+    /// scenarios that only care about "signature resolved somehow"
+    /// without pinning the provenance.
     pub signatures_stub: StubSignatureDirectoryPort,
+
+    /// Primary directory (openchain) used by the composite-backed
+    /// scenarios. See `plan/15-backlog.md` section 3.2.
+    pub openchain_stub: StubSignatureDirectoryPort,
+
+    /// Fallback directory (Samczsun) used by the composite-backed
+    /// scenarios.
+    pub samczsun_stub: StubSignatureDirectoryPort,
 
     /// Asset-change simulation stub for the Asset Changes tab.
     pub tx_simulation_stub: StubTxSimulationPort,

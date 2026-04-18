@@ -43,7 +43,7 @@ pub use pending_tx_stream::PendingTxStreamPort;
 pub use portfolio::PortfolioPort;
 pub use prices::PricesPort;
 pub use proxy_detection::ProxyDetectionPort;
-pub use signature_directory::SignatureDirectoryPort;
+pub use signature_directory::{SignatureDirectoryPort, SignatureHit};
 pub use storage::StoragePort;
 pub use token_reader::TokenReaderPort;
 pub use token_search::TokenSearchPort;

@@ -35,6 +35,19 @@ Feature: Transaction detail
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the decoded method is "transfer(address,uint256)" from ABI
 
+  Scenario: Unknown selector resolves via openchain
+    Given a tx whose target has no verified ABI
+    And openchain returns "transfer(address,uint256)" for the selector
+    When the user opens TxDetail
+    Then the Overview tab shows that signature sourced from the directory
+
+  Scenario: Openchain miss falls back to Samczsun
+    Given a tx whose target has no verified ABI
+    And openchain returns no match for the selector
+    And samczsun returns "transfer(address,uint256)" for the selector
+    When the user opens TxDetail
+    Then the Overview tab shows that signature with provenance samczsun
+
   Scenario: Logs tab shows decoded event signatures
     Given the tx reader knows tx "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc" emitted a Transfer event
     And the signature directory resolves the Transfer event topic

@@ -35,7 +35,9 @@ use crate::{
             AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
             AlchemyTxTracer, RpcClient,
         },
-        signatures::SourcifySignatureDirectory,
+        signatures::{
+            CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
+        },
         ui::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
@@ -72,9 +74,7 @@ fn live_tx_detail_screen(
         .map(TxContractSource::Etherscan)
         .unwrap_or(TxContractSource::Noop);
 
-    let signatures = SourcifySignatureDirectory::with_default_http()
-        .map(TxSignatureDir::Sourcify)
-        .unwrap_or(TxSignatureDir::Noop);
+    let signatures = build_signature_directory();
 
     std::mem::drop(tx_feed::spawn_full(
         chain,
@@ -334,12 +334,17 @@ impl crate::application::ports::ContractSourcePort for TxContractSource {
     }
 }
 
-/// Same idea for the signature directory. When the Sourcify HTTP
-/// client cannot be built we fall back to a Noop and the UI shows the
-/// raw selector / topic0, but the heavier tabs still populate.
+/// Same idea for the signature directory: when a concrete adapter
+/// cannot be built (offline CI, unexpected URL parse failure, ...) we
+/// fall back to a Noop and the UI shows the raw selector / topic0,
+/// but the heavier tabs still populate.
 #[derive(Clone)]
 enum TxSignatureDir {
-    Sourcify(SourcifySignatureDirectory),
+    /// openchain (primary) + Samczsun (fallback) wired behind a
+    /// composite per `plan/15-backlog.md` section 3.2.
+    Composite(CompositeSignatureDirectory<HttpSignatureDirectory, SamczsunSignatureDirectory>),
+    /// openchain only, when the Samczsun adapter could not be built.
+    Openchain(HttpSignatureDirectory),
     Noop,
 }
 
@@ -347,9 +352,10 @@ impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
     async fn lookup_selector(
         &self,
         selector: [u8; 4],
-    ) -> Result<Option<String>, crate::domain::DomainError> {
+    ) -> Result<Option<crate::application::ports::SignatureHit>, crate::domain::DomainError> {
         match self {
-            TxSignatureDir::Sourcify(inner) => inner.lookup_selector(selector).await,
+            TxSignatureDir::Composite(inner) => inner.lookup_selector(selector).await,
+            TxSignatureDir::Openchain(inner) => inner.lookup_selector(selector).await,
             TxSignatureDir::Noop => Ok(None),
         }
     }
@@ -357,13 +363,30 @@ impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
     async fn lookup_event_topic(
         &self,
         topic: [u8; 32],
-    ) -> Result<Option<String>, crate::domain::DomainError> {
+    ) -> Result<Option<crate::application::ports::SignatureHit>, crate::domain::DomainError> {
         match self {
-            TxSignatureDir::Sourcify(inner) => inner.lookup_event_topic(topic).await,
+            TxSignatureDir::Composite(inner) => inner.lookup_event_topic(topic).await,
+            TxSignatureDir::Openchain(inner) => inner.lookup_event_topic(topic).await,
             TxSignatureDir::Noop => Ok(None),
         }
     }
 }
+
+/// Wire the fallback chain openchain → Samczsun, degrading to a
+/// Noop when neither client can be built.
+fn build_signature_directory() -> TxSignatureDir {
+    let openchain = HttpSignatureDirectory::openchain_with_default_http().ok();
+    let samczsun = SamczsunSignatureDirectory::with_default_http().ok();
+
+    match (openchain, samczsun) {
+        (Some(primary), Some(fallback)) => {
+            TxSignatureDir::Composite(CompositeSignatureDirectory::new(primary, fallback))
+        }
+        (Some(primary), None) => TxSignatureDir::Openchain(primary),
+        (None, _) => TxSignatureDir::Noop,
+    }
+}
+
 
 pub use config::{ApiCredentials, AppConfig, ConfigLoader};
 

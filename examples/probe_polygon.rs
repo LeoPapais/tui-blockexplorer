@@ -1,7 +1,11 @@
 //! Probe: runs the same use-cases the TUI screens dispatch, against
-//! live Alchemy / Etherscan / Sourcify on Polygon mainnet, for a
-//! fixed set of fixtures supplied by the user. Read-only; prints a
-//! human-readable report.
+//! live Alchemy / Etherscan / openchain / Samczsun on Polygon
+//! mainnet, for a fixed set of fixtures supplied by the user.
+//! Read-only; prints a human-readable report.
+//!
+//! The signature fallback chain exercised here mirrors
+//! `plan/15-backlog.md` section 3.2: openchain first, Samczsun only
+//! when openchain misses, raw selector otherwise.
 //!
 //! Usage:
 //!   ALCHEMY_API_KEY=... ETHERSCAN_API_KEY=... cargo run --example probe_polygon
@@ -19,7 +23,9 @@ use blockexplorer_tui::{
             AlchemyEnsResolver, AlchemyProxyDetector, AlchemyTokenReader, AlchemyTxLookup,
             AlchemyTxReader, RpcClient,
         },
-        signatures::SourcifySignatureDirectory,
+        signatures::{
+            CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
+        },
     },
     application::{
         ports::{AddressLookupPort, ContractSourcePort, TokenSearchPort},
@@ -87,7 +93,10 @@ async fn main() -> anyhow::Result<()> {
             None
         }
     };
-    let sigs = SourcifySignatureDirectory::with_default_http()?;
+    let sigs = CompositeSignatureDirectory::new(
+        HttpSignatureDirectory::openchain_with_default_http()?,
+        SamczsunSignatureDirectory::with_default_http()?,
+    );
 
     // Inputs supplied by the operator.
     let token_addr = Address::from_hex("0xe6a537a407488807f0bbeb0038b79004f19dddfb")?;

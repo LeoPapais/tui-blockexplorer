@@ -2,9 +2,14 @@
 //! tab of the TxDetail screen, enriched with decoded method and logs.
 //!
 //! Signature decoding falls through:
-//!   ABI (Etherscan) -> signature directory (Sourcify 4byte) -> raw.
+//!   ABI (Etherscan) -> openchain -> Samczsun -> raw.
+//! The directory fallbacks sit behind `SignatureDirectoryPort`
+//! (composed of openchain + Samczsun adapters by `infra`); the
+//! returned [`SignatureHit`] carries the provenance, which the UI
+//! surfaces via [`SignatureSource`].
 //!
-//! See `plan/4-tx-detail.md` sections 12.1 and 12.4.2.
+//! See `plan/4-tx-detail.md` sections 12.1 and 12.4.2 and
+//! `plan/15-backlog.md` section 3.2.
 
 use serde_json::Value;
 
@@ -116,10 +121,10 @@ where
             source: SignatureSource::Abi,
         });
     }
-    if let Ok(Some(signature)) = signatures.lookup_selector(selector).await {
+    if let Ok(Some(hit)) = signatures.lookup_selector(selector).await {
         return Some(DecodedMethod {
-            signature,
-            source: SignatureSource::SignatureDirectory,
+            signature: hit.signature,
+            source: hit.source,
         });
     }
     None
@@ -144,10 +149,10 @@ where
             source: SignatureSource::Abi,
         });
     }
-    if let Ok(Some(signature)) = signatures.lookup_event_topic(topic0).await {
+    if let Ok(Some(hit)) = signatures.lookup_event_topic(topic0).await {
         return Some(DecodedSignature {
-            signature,
-            source: SignatureSource::SignatureDirectory,
+            signature: hit.signature,
+            source: hit.source,
         });
     }
     None

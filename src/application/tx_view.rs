@@ -9,13 +9,20 @@
 use crate::domain::{AssetChange, LogEntry, StateDiff, Transaction};
 
 /// Where a decoded signature came from. Surfaced to the UI so users
-/// can tell an ABI-backed decoding from a best-effort 4byte lookup.
+/// can tell an ABI-backed decoding from a best-effort directory
+/// lookup, and — within the directory fallback chain — which mirror
+/// resolved the selector.
+///
+/// See `.cursor/rules/external-apis.mdc` (fallback chain: ABI →
+/// openchain → Samczsun → raw) and `plan/15-backlog.md` section 3.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignatureSource {
     /// Signature extracted from the contract's verified ABI.
     Abi,
-    /// Signature pulled from a 4byte-compatible directory.
-    SignatureDirectory,
+    /// Signature pulled from `api.openchain.xyz`.
+    Openchain,
+    /// Signature pulled from the Samczsun signature DB mirror.
+    Samczsun,
 }
 
 impl SignatureSource {
@@ -23,7 +30,8 @@ impl SignatureSource {
     pub const fn tag(self) -> &'static str {
         match self {
             SignatureSource::Abi => "from ABI",
-            SignatureSource::SignatureDirectory => "from sigdb",
+            SignatureSource::Openchain => "from openchain",
+            SignatureSource::Samczsun => "from samczsun",
         }
     }
 }
