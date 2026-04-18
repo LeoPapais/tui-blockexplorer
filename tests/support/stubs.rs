@@ -9,6 +9,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use blockexplorer_tui::{
@@ -16,7 +17,7 @@ use blockexplorer_tui::{
         SignatureSource,
         ports::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-            ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
+            ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort, EnsResolverPort,
             EventLogPort, GasOraclePort, NetworkStatusPort, NewHeadsStreamPort,
             PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
             SignatureDirectoryPort, SignatureHit, StoragePort, TokenReaderPort, TokenSearchPort,
@@ -1299,5 +1300,48 @@ impl StoragePort for StubStoragePort {
             .get(&(address, slot))
             .copied()
             .unwrap_or([0u8; 32]))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: Clock
+// ---------------------------------------------------------------------------
+
+/// Manually-driven clock used in tests. Wraps a `Mutex<Instant>` so the
+/// test can step forward via `advance` without needing to wait for
+/// wall-clock time to pass.
+///
+/// See `plan/2-search.md` section 12.5.
+#[derive(Clone)]
+pub struct FrozenClock {
+    inner: Arc<Mutex<Instant>>,
+}
+
+impl FrozenClock {
+    /// Construct a clock anchored to `now` (usually `Instant::now()`
+    /// captured once at the top of the test).
+    #[must_use]
+    pub fn at(now: Instant) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(now)),
+        }
+    }
+
+    /// Move the clock forward by `delta`.
+    pub fn advance(&self, delta: Duration) {
+        let mut guard = self.inner.lock().expect("clock lock poisoned");
+        *guard += delta;
+    }
+}
+
+impl Default for FrozenClock {
+    fn default() -> Self {
+        Self::at(Instant::now())
+    }
+}
+
+impl Clock for FrozenClock {
+    fn now(&self) -> Instant {
+        *self.inner.lock().expect("clock lock poisoned")
     }
 }
