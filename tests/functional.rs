@@ -150,3 +150,12 @@ mod domain_block;
 
 #[path = "functional/classify_address.rs"]
 mod classify_address;
+
+#[path = "functional/ttl_cache.rs"]
+mod ttl_cache;
+
+#[path = "functional/etherscan_token_search.rs"]
+mod etherscan_token_search;
+
+#[path = "functional/search_feed_cache.rs"]
+mod search_feed_cache;
