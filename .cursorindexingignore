@@ -1,0 +1,14 @@
+# Drops these paths from Cursor's semantic index. The agent can still
+# open them on demand via @file or `read_file`, but they stop polluting
+# semantic search results.
+#
+# See https://cursor.com/docs/reference/ignore-file
+
+# Wiremock response fixtures: dozens of near-identical JSON-RPC envelopes
+# that match every search for unrelated keywords ("id", "jsonrpc",
+# "result").
+tests/fixtures/
+
+# Build artefacts. Redundant with .gitignore but belt-and-suspenders so
+# the indexer never touches them while a build is live.
+target/
