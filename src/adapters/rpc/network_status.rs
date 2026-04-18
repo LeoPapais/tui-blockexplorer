@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use super::client::{RpcClient, parse_hex_u128, parse_hex_u64};
+use super::client::{RpcClient, parse_hex_u64, parse_hex_u128};
 use crate::{
     application::ports::NetworkStatusPort,
     domain::{BlockNumber, Chain, DomainError, NetworkStatus, Wei},

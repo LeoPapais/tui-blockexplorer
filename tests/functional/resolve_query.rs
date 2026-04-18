@@ -106,10 +106,7 @@ fn classification_of_uppercase_ens_name_is_normalised() {
 
 #[test]
 fn classification_of_ticker() {
-    assert_eq!(
-        classify("USDC"),
-        Classification::TokenTicker("USDC".into())
-    );
+    assert_eq!(classify("USDC"), Classification::TokenTicker("USDC".into()));
 }
 
 #[test]

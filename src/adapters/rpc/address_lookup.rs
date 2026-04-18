@@ -22,14 +22,13 @@ impl AlchemyAddressLookup {
 }
 
 impl AddressLookupPort for AlchemyAddressLookup {
-    async fn classify(
-        &self,
-        address: Address,
-        _chain: Chain,
-    ) -> Result<AddressKind, DomainError> {
+    async fn classify(&self, address: Address, _chain: Chain) -> Result<AddressKind, DomainError> {
         let code: String = self
             .client
-            .call("eth_getCode", serde_json::json!([address.to_hex(), "latest"]))
+            .call(
+                "eth_getCode",
+                serde_json::json!([address.to_hex(), "latest"]),
+            )
             .await
             .map_err(|e| e.into_domain())?;
 

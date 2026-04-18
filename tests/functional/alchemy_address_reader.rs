@@ -26,20 +26,20 @@ fn reader_for(url: &str) -> AlchemyAddressReader {
 async fn mount_common_eoa_responses(server: &MockServer) {
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBalance"})))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("rpc__eth_getBalance__0xd8da.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBalance__0xd8da.json"),
+            "application/json",
+        ))
         .mount(server)
         .await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionCount"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionCount__0xd8da.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionCount"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionCount__0xd8da.json"),
+            "application/json",
+        ))
         .mount(server)
         .await;
 }
@@ -80,12 +80,10 @@ async fn contract_returns_kind_contract() {
     mount_common_eoa_responses(&server).await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getCode"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getCode__contract.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getCode__contract.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

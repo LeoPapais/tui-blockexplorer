@@ -38,8 +38,7 @@ async fn happy_path_returns_spot_price() {
 #[tokio::test]
 async fn unknown_token_returns_none() {
     let prices = StubPricesPort::new();
-    let unknown =
-        Address::from_hex("0x0000000000000000000000000000000000000099").unwrap();
+    let unknown = Address::from_hex("0x0000000000000000000000000000000000000099").unwrap();
 
     let got = load_token_price::run(&prices, unknown, Chain::Ethereum)
         .await

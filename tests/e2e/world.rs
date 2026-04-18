@@ -18,12 +18,11 @@ use crate::support::stubs::{
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
     StubPortfolioPort, StubPricesPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
-    StubStoragePort, StubTokenReaderPort, StubTokenSearchPort, StubTransfersPort,
-    StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubStoragePort, StubTokenReaderPort, StubTokenSearchPort, StubTransfersPort, StubTxLookupPort,
+    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
-pub type AppHomeSession =
-    HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
+pub type AppHomeSession = HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
 
 #[derive(Default, World)]
 pub struct AppWorld {

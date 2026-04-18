@@ -28,12 +28,10 @@ async fn zero_slot_reports_no_proxy() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getStorageAt"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getStorageAt__eip1967_zero.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getStorageAt__eip1967_zero.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -48,12 +46,10 @@ async fn populated_slot_decodes_implementation() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getStorageAt"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getStorageAt__eip1967_impl.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getStorageAt__eip1967_impl.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

@@ -9,17 +9,15 @@ use blockexplorer_tui::{
     adapters::ui::{Command, Screen, ScreenStack, TokenDetailScreen, TokenTab},
     domain::{
         Address, BlockNumber, Chain, PricePoint, PriceSeries, PriceWindow, TokenMetadata,
-        TokenOverview, TokenPrice, Transaction, TransferAsset, TransferCategory,
-        TransferEvent, TransferPage, TxHash, TxStatus, TxType, UnixTimestamp, Wei,
+        TokenOverview, TokenPrice, Transaction, TransferAsset, TransferCategory, TransferEvent,
+        TransferPage, TxHash, TxStatus, TxType, UnixTimestamp, Wei,
     },
 };
-use cucumber::{given, then, when};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use cucumber::{given, then, when};
 
 use crate::{
-    steps::search::{
-        build_stack, spawn_token_detail, spawn_token_detail_with_full_feeds,
-    },
+    steps::search::{build_stack, spawn_token_detail, spawn_token_detail_with_full_feeds},
     world::AppWorld,
 };
 
@@ -240,11 +238,7 @@ async fn opens_token_detail_with_full_feeds(world: &mut AppWorld, addr_hex: Stri
 }
 
 #[when(regex = r#"^the user presses "([123])" to select window "([^"]+)"$"#)]
-async fn presses_digit_to_select_window(
-    world: &mut AppWorld,
-    digit: char,
-    _window: String,
-) {
+async fn presses_digit_to_select_window(world: &mut AppWorld, digit: char, _window: String) {
     let stack = world.stack.as_mut().expect("stack");
     let screen = current_mut(stack);
     let cmd = screen.handle_key(make_key(KeyCode::Char(digit)));
@@ -335,9 +329,7 @@ async fn active_window_is(world: &mut AppWorld, label: String) {
     assert_eq!(current(stack).active_window(), parse_window(&label));
 }
 
-#[then(
-    regex = r#"^once the feeds complete, the chart holds (\d+) points for window "([^"]+)"$"#
-)]
+#[then(regex = r#"^once the feeds complete, the chart holds (\d+) points for window "([^"]+)"$"#)]
 async fn chart_holds_points(world: &mut AppWorld, n: usize, label: String) {
     let expected_window = parse_window(&label);
     let stack = world.stack.as_mut().expect("stack");

@@ -14,7 +14,5 @@ pub trait PendingTxStreamPort: Send + Sync {
         &self,
         chain: Chain,
         filter: PendingTxFilter,
-    ) -> impl std::future::Future<
-        Output = Result<UnboundedReceiver<PendingTxEvent>, DomainError>,
-    > + Send;
+    ) -> impl std::future::Future<Output = Result<UnboundedReceiver<PendingTxEvent>, DomainError>> + Send;
 }

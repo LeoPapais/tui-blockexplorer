@@ -75,19 +75,13 @@ mod tests {
     #[test]
     fn parses_a_lowercase_hex_address() {
         let a = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
-        assert_eq!(
-            a.to_hex(),
-            "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-        );
+        assert_eq!(a.to_hex(), "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     }
 
     #[test]
     fn parses_an_uppercase_hex_address() {
         let a = Address::from_hex("0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045").unwrap();
-        assert_eq!(
-            a.to_hex(),
-            "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-        );
+        assert_eq!(a.to_hex(), "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     }
 
     #[test]

@@ -20,7 +20,10 @@ fn parses_function_entries_and_skips_events() {
     assert_eq!(balance_of.signature(), "balanceOf(address)");
     assert_eq!(balance_of.inputs.len(), 1);
     assert!(matches!(balance_of.inputs[0].kind, AbiParamType::Address));
-    assert!(matches!(balance_of.outputs[0].kind, AbiParamType::Uint { bits: 256 }));
+    assert!(matches!(
+        balance_of.outputs[0].kind,
+        AbiParamType::Uint { bits: 256 }
+    ));
 
     let transfer = fns.iter().find(|f| f.name == "transfer").unwrap();
     assert!(!transfer.is_read_only);

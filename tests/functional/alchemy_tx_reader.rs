@@ -27,33 +27,30 @@ fn reader_for(url: &str) -> AlchemyTxReader {
 async fn happy_path_returns_successful_tx() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionByHash"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionByHash__usdc_transfer.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionByHash"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionByHash__usdc_transfer.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionReceipt"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text(
-                    "rpc__eth_getTransactionReceipt__usdc_transfer_success.json",
-                ),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionReceipt"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionReceipt__usdc_transfer_success.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let reader = reader_for(&server.uri());
-    let hash = TxHash::from_hex(
-        "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b")
+            .unwrap();
     let tx = reader
         .get(hash, Chain::Ethereum)
         .await
@@ -76,31 +73,30 @@ async fn happy_path_returns_successful_tx() {
 async fn reverted_tx_exposes_reason() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionByHash"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionByHash__usdc_transfer.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionByHash"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionByHash__usdc_transfer.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionReceipt"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionReceipt__reverted.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionReceipt"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionReceipt__reverted.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let reader = reader_for(&server.uri());
-    let hash = TxHash::from_hex(
-        "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b")
+            .unwrap();
     let tx = reader
         .get(hash, Chain::Ethereum)
         .await
@@ -119,29 +115,30 @@ async fn reverted_tx_exposes_reason() {
 async fn missing_tx_returns_none() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionByHash"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionByHash__null.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionByHash"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionByHash__null.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionReceipt"})))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("rpc__eth_getTransactionByHash__null.json"), "application/json"),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionReceipt"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionByHash__null.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let reader = reader_for(&server.uri());
-    let hash = TxHash::from_hex(
-        "0x0000000000000000000000000000000000000000000000000000000000000001",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0x0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
     let got = reader.get(hash, Chain::Ethereum).await.expect("ok");
     assert!(got.is_none());
 }

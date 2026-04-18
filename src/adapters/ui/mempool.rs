@@ -117,16 +117,18 @@ impl Screen for MempoolScreen {
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(3),
+            ])
             .split(area);
 
         // Header
         let pause_badge = if self.paused { "  [paused]" } else { "" };
         let header = format!("Mempool  items: {}{pause_badge}", self.items.len());
         frame.render_widget(
-            Paragraph::new(header).block(
-                Block::default().borders(Borders::ALL).title("Mempool"),
-            ),
+            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Mempool")),
             chunks[0],
         );
 
@@ -136,18 +138,15 @@ impl Screen for MempoolScreen {
             None => "filter: none".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(filter).block(
-                Block::default().borders(Borders::ALL).title("Filter"),
-            ),
+            Paragraph::new(filter).block(Block::default().borders(Borders::ALL).title("Filter")),
             chunks[1],
         );
 
         // Body
         if self.items.is_empty() {
             frame.render_widget(
-                Paragraph::new("waiting for pending txs...").block(
-                    Block::default().borders(Borders::ALL).title("Stream"),
-                ),
+                Paragraph::new("waiting for pending txs...")
+                    .block(Block::default().borders(Borders::ALL).title("Stream")),
                 chunks[2],
             );
             return;
@@ -180,9 +179,7 @@ impl Screen for MempoolScreen {
             .collect();
 
         frame.render_widget(
-            List::new(items).block(
-                Block::default().borders(Borders::ALL).title("Stream"),
-            ),
+            List::new(items).block(Block::default().borders(Borders::ALL).title("Stream")),
             chunks[2],
         );
     }

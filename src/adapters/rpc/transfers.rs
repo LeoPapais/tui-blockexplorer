@@ -111,10 +111,7 @@ impl AlchemyTransfers {
         }
 
         self.client
-            .call(
-                "alchemy_getAssetTransfers",
-                json!([Value::Object(params)]),
-            )
+            .call("alchemy_getAssetTransfers", json!([Value::Object(params)]))
             .await
             .map_err(|e: RpcError| match e {
                 RpcError::Rpc { code: -32601, .. } => DomainError::FeatureUnavailable,
@@ -153,10 +150,7 @@ impl AlchemyTransfers {
         }
 
         self.client
-            .call(
-                "alchemy_getAssetTransfers",
-                json!([Value::Object(params)]),
-            )
+            .call("alchemy_getAssetTransfers", json!([Value::Object(params)]))
             .await
             .map_err(|e: RpcError| match e {
                 RpcError::Rpc { code: -32601, .. } => DomainError::FeatureUnavailable,
@@ -210,7 +204,9 @@ impl TransfersPort for AlchemyTransfers {
         // directions of the ERC-20 Transfer event. Cursors are plain
         // pageKeys (no direction split).
         let page_key = cursor.as_ref().map(|c| c.0.clone());
-        let raw = self.fetch_by_contract(contract, page_key.as_deref()).await?;
+        let raw = self
+            .fetch_by_contract(contract, page_key.as_deref())
+            .await?;
         let mut events = Vec::new();
         for raw in raw.transfers.iter() {
             if let Some(event) = map_transfer(raw, chain) {
@@ -220,7 +216,10 @@ impl TransfersPort for AlchemyTransfers {
         events.sort_by_key(|e| std::cmp::Reverse(e.block_number.value()));
         events.truncate(MAX_TOTAL);
 
-        let next_cursor = raw.page_key.as_deref().map(|k| TransferCursor(k.to_string()));
+        let next_cursor = raw
+            .page_key
+            .as_deref()
+            .map(|k| TransferCursor(k.to_string()));
         Ok(TransferPage {
             events,
             next_cursor,
@@ -303,7 +302,10 @@ fn map_transfer(raw: &RawTransfer, chain: Chain) -> Option<TransferEvent> {
                 .as_ref()
                 .and_then(|v| v.first())
                 .cloned();
-            let token_id = first.as_ref().map(|e| e.token_id.clone()).unwrap_or_default();
+            let token_id = first
+                .as_ref()
+                .map(|e| e.token_id.clone())
+                .unwrap_or_default();
             TransferAsset::Nft {
                 contract: contract_address?,
                 kind: NftKind::Erc1155,

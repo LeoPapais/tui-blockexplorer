@@ -32,11 +32,9 @@ impl DetailPlaceholderScreen {
 
     fn body(&self) -> String {
         match &self.entity {
-            ResolvedEntity::Block { number, hash } => format!(
-                "Block #{}\nhash {}",
-                number.value(),
-                hash.to_hex()
-            ),
+            ResolvedEntity::Block { number, hash } => {
+                format!("Block #{}\nhash {}", number.value(), hash.to_hex())
+            }
             ResolvedEntity::Tx { hash, block } => {
                 let block_line = match block {
                     Some(b) => format!("\nin block #{}", b.value()),
@@ -91,8 +89,12 @@ impl Screen for DetailPlaceholderScreen {
     }
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title(self.title_label());
-        let p = Paragraph::new(self.body()).block(block).wrap(Wrap { trim: false });
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(self.title_label());
+        let p = Paragraph::new(self.body())
+            .block(block)
+            .wrap(Wrap { trim: false });
         frame.render_widget(p, area);
     }
 

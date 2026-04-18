@@ -21,20 +21,17 @@ fn adapter_for(url: &str) -> AlchemyTxTracer {
 async fn parses_state_diff_into_address_entries() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("alchemy__trace_replay__state_diff.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("alchemy__trace_replay__state_diff.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let hash = TxHash::from_hex(
-        "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa")
+            .unwrap();
 
     let diff = adapter.state_diff(hash, Chain::Ethereum).await.expect("ok");
     assert_eq!(diff.entries.len(), 2);
@@ -86,10 +83,9 @@ async fn method_not_found_maps_to_feature_unavailable() {
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let hash = TxHash::from_hex(
-        "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa")
+            .unwrap();
 
     let err = adapter
         .state_diff(hash, Chain::Ethereum)

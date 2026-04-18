@@ -41,8 +41,7 @@ impl Respond for DirectionalResponder {
         } else {
             "alchemy__asset_transfers__to.json"
         };
-        ResponseTemplate::new(200)
-            .set_body_raw(load_text(fixture), "application/json")
+        ResponseTemplate::new(200).set_body_raw(load_text(fixture), "application/json")
     }
 }
 
@@ -109,11 +108,9 @@ async fn merges_from_and_to_transfers_sorted_desc() {
 async fn empty_responses_yield_empty_page() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(
-                r#"{"jsonrpc":"2.0","id":1,"result":{"transfers":[],"pageKey":null}}"#,
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"transfers":[],"pageKey":null}}"#,
+        ))
         .mount(&server)
         .await;
 

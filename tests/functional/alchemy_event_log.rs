@@ -8,10 +8,7 @@ use blockexplorer_tui::{
     domain::{Address, BlockNumber, Chain},
 };
 use url::Url;
-use wiremock::{
-    Mock, MockServer, ResponseTemplate,
-    matchers::method,
-};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 
@@ -45,7 +42,10 @@ async fn decodes_log_rows_from_eth_get_logs() {
 
     assert_eq!(logs.len(), 1);
     let log = &logs[0];
-    assert_eq!(log.address.to_hex(), "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    assert_eq!(
+        log.address.to_hex(),
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    );
     assert_eq!(log.topics.len(), 3);
     // Transfer(address,address,uint256) topic0.
     let topic0 = hex::encode(log.topics[0]);

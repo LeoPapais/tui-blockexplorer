@@ -9,15 +9,11 @@ use blockexplorer_tui::{
     adapters::rpc::{AlchemyContractReader, RpcClient},
     application::ports::ContractReaderPort,
     domain::{
-        AbiFunction, AbiParam, AbiParamType, AbiValue, Address, Chain, DecodedValue,
-        DomainError,
+        AbiFunction, AbiParam, AbiParamType, AbiValue, Address, Chain, DecodedValue, DomainError,
     },
 };
 use url::Url;
-use wiremock::{
-    Mock, MockServer, ResponseTemplate,
-    matchers::method,
-};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 

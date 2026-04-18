@@ -65,9 +65,7 @@ impl RpcClient {
     /// Convenience constructor: builds a `reqwest::Client` with sane
     /// defaults (10 second timeout, rustls-only TLS).
     pub fn with_default_http(base_url: Url) -> Result<Self, RpcError> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
         Ok(Self::new(base_url, http))
     }
 
@@ -101,10 +99,7 @@ impl RpcClient {
         let body: Value = resp.json().await?;
 
         if let Some(error) = body.get("error") {
-            let code = error
-                .get("code")
-                .and_then(Value::as_i64)
-                .unwrap_or(-32000);
+            let code = error.get("code").and_then(Value::as_i64).unwrap_or(-32000);
             let message = error
                 .get("message")
                 .and_then(Value::as_str)
@@ -113,13 +108,10 @@ impl RpcClient {
             return Err(RpcError::Rpc { code, message });
         }
 
-        let result = body
-            .get("result")
-            .cloned()
-            .ok_or_else(|| RpcError::Rpc {
-                code: -32000,
-                message: "missing `result` field".to_string(),
-            })?;
+        let result = body.get("result").cloned().ok_or_else(|| RpcError::Rpc {
+            code: -32000,
+            message: "missing `result` field".to_string(),
+        })?;
 
         serde_json::from_value(result).map_err(RpcError::Decode)
     }

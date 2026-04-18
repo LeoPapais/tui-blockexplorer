@@ -92,10 +92,10 @@ impl ConfigLoader {
         let env_etherscan = (self.env)(ENV_ETHERSCAN_KEY);
         let env_chain = (self.env)(ENV_CHAIN);
 
-        let alchemy = env_alchemy
-            .or_else(|| file.credentials.as_ref().and_then(|c| c.alchemy.clone()));
-        let etherscan = env_etherscan
-            .or_else(|| file.credentials.as_ref().and_then(|c| c.etherscan.clone()));
+        let alchemy =
+            env_alchemy.or_else(|| file.credentials.as_ref().and_then(|c| c.alchemy.clone()));
+        let etherscan =
+            env_etherscan.or_else(|| file.credentials.as_ref().and_then(|c| c.etherscan.clone()));
 
         let chain = match env_chain.or(file.defaults.and_then(|d| d.chain)) {
             Some(slug) => Chain::from_slug(&slug)?,
@@ -113,8 +113,9 @@ impl ConfigLoader {
             return Ok(ConfigFile::default());
         };
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str::<ConfigFile>(&text)
-                .map_err(|e| DomainError::Config(format!("malformed config {}: {e}", path.display()))),
+            Ok(text) => toml::from_str::<ConfigFile>(&text).map_err(|e| {
+                DomainError::Config(format!("malformed config {}: {e}", path.display()))
+            }),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFile::default()),
             Err(err) => Err(DomainError::Config(format!(
                 "failed to read {}: {err}",
@@ -184,10 +185,8 @@ mod tests {
 
     #[test]
     fn env_chain_is_parsed() {
-        let loader = ConfigLoader::with_env(env_map(vec![
-            (ENV_ALCHEMY_KEY, "k"),
-            (ENV_CHAIN, "base"),
-        ]));
+        let loader =
+            ConfigLoader::with_env(env_map(vec![(ENV_ALCHEMY_KEY, "k"), (ENV_CHAIN, "base")]));
         let cfg = loader.load().expect("ok");
 
         assert_eq!(cfg.chain, Chain::Base);

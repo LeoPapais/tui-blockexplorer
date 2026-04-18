@@ -281,19 +281,13 @@ impl AddressDetailScreen {
 
     fn next_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + tabs.len() - 1) % tabs.len()]
     }
 
@@ -414,11 +408,7 @@ impl AddressDetailScreen {
     }
 
     fn clamp_tx_selection(&mut self) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             self.tx_list_state.select(None);
             return;
@@ -481,9 +471,7 @@ impl Screen for AddressDetailScreen {
             None => "Address (loading...)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(header).block(
-                Block::default().borders(Borders::ALL).title("Address"),
-            ),
+            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Address")),
             chunks[0],
         );
 
@@ -577,22 +565,19 @@ implementation resolution, source on Etherscan once wired).",
                     addr = self.address.to_hex(),
                 );
                 frame.render_widget(
-                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
-                        Block::default().borders(Borders::ALL).title("Contract"),
-                    ),
+                    Paragraph::new(body)
+                        .wrap(Wrap { trim: false })
+                        .block(Block::default().borders(Borders::ALL).title("Contract")),
                     chunks[2],
                 );
             }
             AddressTab::Tokens => {
                 let block = Block::default().borders(Borders::ALL).title("Tokens");
                 match self.holdings.as_ref() {
-                    None => frame.render_widget(
-                        Paragraph::new("Loading tokens...").block(block),
-                        chunks[2],
-                    ),
+                    None => frame
+                        .render_widget(Paragraph::new("Loading tokens...").block(block), chunks[2]),
                     Some(holdings) if holdings.is_empty() => frame.render_widget(
-                        Paragraph::new("No ERC-20 holdings found for this address.")
-                            .block(block),
+                        Paragraph::new("No ERC-20 holdings found for this address.").block(block),
                         chunks[2],
                     ),
                     Some(holdings) => {
@@ -661,8 +646,7 @@ implementation resolution, source on Etherscan once wired).",
 impl AddressDetailScreen {
     fn dispatch_key(&mut self, key: KeyEvent) -> Command {
         let is_back_tab = key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab
-                && key.modifiers.contains(KeyModifiers::SHIFT));
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
@@ -714,10 +698,7 @@ impl AddressDetailScreen {
                 self.select_delta(-1);
                 Command::None
             }
-            (
-                AddressTab::Transactions | AddressTab::Tokens,
-                KeyCode::Down | KeyCode::Char('j'),
-            ) => {
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Down | KeyCode::Char('j')) => {
                 self.select_delta(1);
                 Command::None
             }

@@ -5,9 +5,7 @@
 
 use crate::{
     application::ports::ProxyDetectionPort,
-    domain::{
-        AbiSource, Address, Chain, ContractAbi, ContractSource, DomainError, ResolvedAbi,
-    },
+    domain::{AbiSource, Address, Chain, ContractAbi, ContractSource, DomainError, ResolvedAbi},
 };
 
 pub trait ContractSourcePort: Send + Sync {

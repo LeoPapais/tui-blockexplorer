@@ -72,16 +72,13 @@ impl PricesClient {
     /// a client with a 10-second timeout pointing at the canonical
     /// Alchemy host.
     pub fn with_api_key(api_key: &str) -> Result<Self, PricesError> {
-        let url = Url::parse(&format!(
-            "https://api.g.alchemy.com/prices/v1/{api_key}/"
-        ))
-        .map_err(|e| PricesError::Api {
-            status: 0,
-            body: format!("invalid base URL: {e}"),
-        })?;
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let url = Url::parse(&format!("https://api.g.alchemy.com/prices/v1/{api_key}/")).map_err(
+            |e| PricesError::Api {
+                status: 0,
+                body: format!("invalid base URL: {e}"),
+            },
+        )?;
+        let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
         Ok(Self::new(url, http))
     }
 
@@ -92,13 +89,10 @@ impl PricesClient {
         path: &str,
         body: &B,
     ) -> Result<R, PricesError> {
-        let url = self
-            .base_url
-            .join(path)
-            .map_err(|e| PricesError::Api {
-                status: 0,
-                body: format!("invalid path: {e}"),
-            })?;
+        let url = self.base_url.join(path).map_err(|e| PricesError::Api {
+            status: 0,
+            body: format!("invalid path: {e}"),
+        })?;
 
         let resp = self.http.post(url).json(body).send().await?;
         let status = resp.status();

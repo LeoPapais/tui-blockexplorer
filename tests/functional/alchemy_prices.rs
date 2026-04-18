@@ -34,12 +34,10 @@ async fn spot_price_returns_some_when_provider_has_data() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/by-address"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("prices__by_address__usdc.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("prices__by_address__usdc.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -61,12 +59,10 @@ async fn spot_price_returns_none_when_provider_has_no_prices() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/by-address"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("prices__by_address__unknown.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("prices__by_address__unknown.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -87,12 +83,10 @@ async fn historical_series_is_parsed_and_chronological() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/historical"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("prices__historical__usdc_1d.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("prices__historical__usdc_1d.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -122,12 +116,10 @@ async fn historical_request_sends_epoch_numbers_not_strings() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/historical"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("prices__historical__usdc_1d.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("prices__historical__usdc_1d.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

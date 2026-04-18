@@ -24,7 +24,10 @@ fn sample(kind: AddressKind, hex: &str) -> AddressOverview {
 #[tokio::test]
 async fn happy_path_for_an_eoa() {
     let reader = StubAddressReaderPort::new();
-    let ov = sample(AddressKind::Eoa, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    let ov = sample(
+        AddressKind::Eoa,
+        "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    );
     reader.insert(ov.clone());
 
     let got = load_address_overview::run(&reader, ov.address, Chain::Ethereum)
@@ -38,7 +41,10 @@ async fn happy_path_for_an_eoa() {
 #[tokio::test]
 async fn happy_path_for_a_contract() {
     let reader = StubAddressReaderPort::new();
-    let ov = sample(AddressKind::Contract, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let ov = sample(
+        AddressKind::Contract,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    );
     reader.insert(ov.clone());
 
     let got = load_address_overview::run(&reader, ov.address, Chain::Ethereum)

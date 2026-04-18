@@ -8,9 +8,8 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{AddressDetailScreen, AddressTab, Command, ScreenStack},
     domain::{
-        Address, AddressKind, AddressOverview, BlockNumber, Chain, TokenHolding,
-        TokenMetadata, TransferAsset, TransferCategory, TransferEvent, TransferPage,
-        TxHash, Wei,
+        Address, AddressKind, AddressOverview, BlockNumber, Chain, TokenHolding, TokenMetadata,
+        TransferAsset, TransferCategory, TransferEvent, TransferPage, TxHash, Wei,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -64,24 +63,14 @@ fn insert_overview(world: &AppWorld, addr_hex: &str, kind: AddressKind, balance:
 #[given(
     regex = r#"^the address reader knows EOA "(0x[0-9a-fA-F]{40})" with balance (\d+) and nonce (\d+)$"#
 )]
-async fn reader_knows_eoa(
-    world: &mut AppWorld,
-    addr_hex: String,
-    balance: u128,
-    nonce: u64,
-) {
+async fn reader_knows_eoa(world: &mut AppWorld, addr_hex: String, balance: u128, nonce: u64) {
     insert_overview(world, &addr_hex, AddressKind::Eoa, balance, nonce);
 }
 
 #[given(
     regex = r#"^the address reader knows contract "(0x[0-9a-fA-F]{40})" with balance (\d+) and nonce (\d+)$"#
 )]
-async fn reader_knows_contract(
-    world: &mut AppWorld,
-    addr_hex: String,
-    balance: u128,
-    nonce: u64,
-) {
+async fn reader_knows_contract(world: &mut AppWorld, addr_hex: String, balance: u128, nonce: u64) {
     insert_overview(world, &addr_hex, AddressKind::Contract, balance, nonce);
 }
 
@@ -135,9 +124,7 @@ fn seed_tx_reader(world: &AppWorld, hash: TxHash) {
         ),
         tx_index: Some(0),
         from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
-        to: Some(
-            Address::from_hex("0x0000000000000000000000000000000000000099").unwrap(),
-        ),
+        to: Some(Address::from_hex("0x0000000000000000000000000000000000000099").unwrap()),
         value: Wei::new(1_000_000_000_000_000_000),
         gas_price: Wei::new(14_000_000_000),
         gas_used: Some(21_000),
@@ -231,11 +218,8 @@ async fn portfolio_feed_knows_n(world: &mut AppWorld, count: u32, addr_hex: Stri
     let holdings: Vec<TokenHolding> = (0..count as usize)
         .map(|i| TokenHolding {
             metadata: TokenMetadata {
-                address: Address::from_hex(&format!(
-                    "0x{:040x}",
-                    (0x1000_0000_u64 + i as u64)
-                ))
-                .unwrap(),
+                address: Address::from_hex(&format!("0x{:040x}", (0x1000_0000_u64 + i as u64)))
+                    .unwrap(),
                 symbol: format!("TKN{i}"),
                 name: format!("Token {i}"),
                 decimals: 18,
@@ -298,12 +282,7 @@ async fn tokens_tab_empty(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| current(s).holdings().is_some()).await;
     let screen = current(stack);
-    assert!(
-        screen
-            .holdings()
-            .map(|h| h.is_empty())
-            .unwrap_or(false)
-    );
+    assert!(screen.holdings().map(|h| h.is_empty()).unwrap_or(false));
 }
 
 #[when("the user selects the first holding and presses Enter")]
@@ -442,9 +421,7 @@ async fn tab_bar_no_token(world: &mut AppWorld) {
     );
 }
 
-#[then(
-    regex = r#"^the inline Token overview shows symbol "([^"]+)" and price "\$([0-9.]+)"$"#
-)]
+#[then(regex = r#"^the inline Token overview shows symbol "([^"]+)" and price "\$([0-9.]+)"$"#)]
 async fn inline_token_shows_symbol_and_price(
     world: &mut AppWorld,
     expected_symbol: String,

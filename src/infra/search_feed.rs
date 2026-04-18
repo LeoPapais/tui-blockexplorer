@@ -24,8 +24,8 @@ use crate::{
     adapters::ui::{SearchFeedSender, SearchFeedUpdate},
     application::{
         ports::{
-            AddressLookupPort, BlockLookupPort, EnsResolverPort, TokenReaderPort,
-            TokenSearchPort, TxLookupPort,
+            AddressLookupPort, BlockLookupPort, EnsResolverPort, TokenReaderPort, TokenSearchPort,
+            TxLookupPort,
         },
         use_cases::resolve_query::ResolveQuery,
     },

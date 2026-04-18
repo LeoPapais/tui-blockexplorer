@@ -17,14 +17,13 @@ use blockexplorer_tui::{
     application::{
         ConnectionStatus, HomeViewModel,
         ports::{
-            AddressReaderPort, BlockReaderPort, ProxyDetectionPort, TokenReaderPort,
-            TxReaderPort,
+            AddressReaderPort, BlockReaderPort, ProxyDetectionPort, TokenReaderPort, TxReaderPort,
         },
         use_cases::load_contract_overview,
     },
     domain::{
-        Address, AddressKind, BlockHash, BlockId, BlockNumber, BlockSummary, Chain,
-        ResolvedEntity, TxHash, TxSummary,
+        Address, AddressKind, BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ResolvedEntity,
+        TxHash, TxSummary,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -125,9 +124,7 @@ pub(crate) fn build_search_factory(
                     block_reader.clone(),
                     tx_reader.clone(),
                 ),
-                ResolvedEntity::Tx { hash, .. } => {
-                    spawn_tx_detail(chain, hash, tx_reader.clone())
-                }
+                ResolvedEntity::Tx { hash, .. } => spawn_tx_detail(chain, hash, tx_reader.clone()),
                 ResolvedEntity::Address { address, kind, .. } => match kind {
                     AddressKind::Contract => spawn_contract_detail(
                         chain,
@@ -211,8 +208,7 @@ pub(crate) fn spawn_contract_detail<
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
-            if let Ok(ov) =
-                load_contract_overview::run(&reader, &detector, addr, chain).await
+            if let Ok(ov) = load_contract_overview::run(&reader, &detector, addr, chain).await
                 && updates_tx.send(ov).is_err()
             {
                 break;
@@ -393,9 +389,8 @@ pub(crate) fn spawn_address_detail_with_transfers<
     });
 
     let tx_reader_for_open = tx_reader.clone();
-    let open_tx: OpenTxFactory = Box::new(move |hash| {
-        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
-    });
+    let open_tx: OpenTxFactory =
+        Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
 
     Box::new(
         blockexplorer_tui::adapters::ui::AddressDetailScreen::with_open_tx(
@@ -466,9 +461,8 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
     });
 
     let tx_reader_for_open = tx_reader.clone();
-    let open_tx: OpenTxFactory = Box::new(move |hash| {
-        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
-    });
+    let open_tx: OpenTxFactory =
+        Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
 
     let token_reader_for_open = token_reader.clone();
     let open_token: OpenTokenFactory = Box::new(move |contract| {
@@ -511,9 +505,7 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
     token_reader: Tok,
     prices: Pr,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
-    use blockexplorer_tui::adapters::ui::{
-        OpenTokenFactory, address_detail::OpenTxFactory,
-    };
+    use blockexplorer_tui::adapters::ui::{OpenTokenFactory, address_detail::OpenTxFactory};
     let (feed, sender) = address_feed();
     std::mem::drop(blockexplorer_tui::infra::address_feed::spawn(
         chain,
@@ -526,9 +518,8 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
     ));
 
     let tx_reader_for_open = tx_reader.clone();
-    let open_tx: OpenTxFactory = Box::new(move |hash| {
-        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
-    });
+    let open_tx: OpenTxFactory =
+        Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
     let token_reader_for_open = token_reader.clone();
     let open_token: OpenTokenFactory = Box::new(move |contract| {
         spawn_token_detail(chain, contract, token_reader_for_open.clone())
@@ -589,10 +580,7 @@ fn apply_command(stack: &mut ScreenStack, cmd: Command) {
 }
 
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
-    let cmd = stack
-        .top_mut()
-        .expect("stack non-empty")
-        .handle_key(key);
+    let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
     apply_command(stack, cmd);
 }
 
@@ -603,10 +591,7 @@ fn tick(stack: &mut ScreenStack) {
 
 async fn type_and_resolve(stack: &mut ScreenStack, input: &str) {
     // Press `/` from Home to open the Search screen.
-    press(
-        stack,
-        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
-    );
+    press(stack, KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
     assert_eq!(stack.top().unwrap().title(), "Search");
 
     for c in input.chars() {
@@ -685,10 +670,9 @@ async fn stub_ens_forward(world: &mut AppWorld, name: String, addr_hex: String) 
 
 #[given(regex = r#"^the stub knows block (\d+)$"#)]
 async fn stub_knows_block(world: &mut AppWorld, number: u64) {
-    let hash = BlockHash::from_hex(
-        "0xabcdef0000000000000000000000000000000000000000000000000000000000",
-    )
-    .unwrap();
+    let hash =
+        BlockHash::from_hex("0xabcdef0000000000000000000000000000000000000000000000000000000000")
+            .unwrap();
     world.block_stub.insert(BlockSummary {
         number: BlockNumber::new(number),
         hash,
@@ -770,9 +754,7 @@ async fn single_not_found(world: &mut AppWorld) {
     ));
 }
 
-#[then(
-    regex = r#"^the candidates include a "contract" entry for "(0x[0-9a-fA-F]{40})"$"#
-)]
+#[then(regex = r#"^the candidates include a "contract" entry for "(0x[0-9a-fA-F]{40})"$"#)]
 async fn candidates_include_contract_for(world: &mut AppWorld, addr_hex: String) {
     let expected = Address::from_hex(&addr_hex).unwrap();
     let stack = world.stack.as_ref().expect("stack exists");
@@ -786,9 +768,7 @@ async fn candidates_include_contract_for(world: &mut AppWorld, addr_hex: String)
     );
 }
 
-#[then(
-    regex = r#"^once the ERC-20 probe completes, a "token" candidate "([^"]+)" is appended$"#
-)]
+#[then(regex = r#"^once the ERC-20 probe completes, a "token" candidate "([^"]+)" is appended$"#)]
 async fn erc20_probe_appends_token(world: &mut AppWorld, expected_symbol: String) {
     let stack = world.stack.as_mut().expect("stack exists");
     // The probe runs on a Tokio task after the base update; poll
@@ -797,10 +777,12 @@ async fn erc20_probe_appends_token(world: &mut AppWorld, expected_symbol: String
     for _ in 0..50 {
         tick(stack);
         let cands = current_candidates(stack);
-        if cands.iter().any(|c| matches!(
-            c,
-            ResolvedEntity::Token(m) if m.symbol == expected_symbol
-        )) {
+        if cands.iter().any(|c| {
+            matches!(
+                c,
+                ResolvedEntity::Token(m) if m.symbol == expected_symbol
+            )
+        }) {
             landed = true;
             break;
         }
@@ -812,9 +794,7 @@ async fn erc20_probe_appends_token(world: &mut AppWorld, expected_symbol: String
     );
 }
 
-#[then(
-    regex = r#"^the primary candidate is still "(transaction|block|address|token|not found)"$"#
-)]
+#[then(regex = r#"^the primary candidate is still "(transaction|block|address|token|not found)"$"#)]
 async fn primary_candidate_is_still(world: &mut AppWorld, kind: String) {
     primary_candidate_is(world, kind).await;
 }

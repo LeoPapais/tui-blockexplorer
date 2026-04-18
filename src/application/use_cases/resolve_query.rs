@@ -7,9 +7,7 @@ use crate::{
     application::ports::{
         AddressLookupPort, BlockLookupPort, EnsResolverPort, TokenSearchPort, TxLookupPort,
     },
-    domain::{
-        Address, BlockHash, BlockNumber, Chain, DomainError, ResolvedEntity, TxHash,
-    },
+    domain::{Address, BlockHash, BlockNumber, Chain, DomainError, ResolvedEntity, TxHash},
 };
 
 /// Five-port coordinator that produces a ranked list of candidates for
@@ -40,11 +38,7 @@ where
     /// Execute the resolver. Returns at least one entry: a
     /// [`ResolvedEntity::NotFound`] when every plausible lookup came
     /// back empty.
-    pub async fn run(
-        &self,
-        input: &str,
-        chain: Chain,
-    ) -> Result<Vec<ResolvedEntity>, DomainError> {
+    pub async fn run(&self, input: &str, chain: Chain) -> Result<Vec<ResolvedEntity>, DomainError> {
         let normalized = input.trim();
         if normalized.is_empty() {
             return Err(DomainError::InvalidInput("empty search input".into()));

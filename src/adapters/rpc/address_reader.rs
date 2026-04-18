@@ -7,7 +7,7 @@
 //!
 //! See `plan/6-address-detail.md` section 12.2.
 
-use super::client::{RpcClient, RpcError, parse_hex_u128, parse_hex_u64};
+use super::client::{RpcClient, RpcError, parse_hex_u64, parse_hex_u128};
 use crate::{
     application::ports::AddressReaderPort,
     domain::{Address, AddressKind, AddressOverview, Chain, DomainError, Wei},
@@ -38,10 +38,14 @@ impl AddressReaderPort for AlchemyAddressReader {
             Result<String, RpcError>,
             Result<String, RpcError>,
         ) = tokio::join!(
-            self.client.call("eth_getBalance", serde_json::json!([hex, "latest"])),
             self.client
-                .call("eth_getTransactionCount", serde_json::json!([hex, "latest"])),
-            self.client.call("eth_getCode", serde_json::json!([hex, "latest"])),
+                .call("eth_getBalance", serde_json::json!([hex, "latest"])),
+            self.client.call(
+                "eth_getTransactionCount",
+                serde_json::json!([hex, "latest"])
+            ),
+            self.client
+                .call("eth_getCode", serde_json::json!([hex, "latest"])),
         );
 
         let balance_hex = balance_res.map_err(|e| e.into_domain())?;

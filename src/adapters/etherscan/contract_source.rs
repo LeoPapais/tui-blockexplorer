@@ -95,8 +95,7 @@ impl ContractSourcePort for EtherscanContractSource {
             .as_str()
             .ok_or_else(|| DomainError::Internal("etherscan result must be a string".into()))?;
         if parsed.status != "1" {
-            if result_str == Self::UNVERIFIED_MARKER
-                || parsed.message.eq_ignore_ascii_case("NOTOK")
+            if result_str == Self::UNVERIFIED_MARKER || parsed.message.eq_ignore_ascii_case("NOTOK")
             {
                 return Ok(None);
             }
@@ -161,8 +160,7 @@ impl ContractSourcePort for EtherscanContractSource {
 
         let implementation = if raw.implementation.is_empty()
             || raw.implementation == "0x"
-            || raw.implementation
-                == "0x0000000000000000000000000000000000000000"
+            || raw.implementation == "0x0000000000000000000000000000000000000000"
         {
             None
         } else {

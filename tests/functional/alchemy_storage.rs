@@ -8,10 +8,7 @@ use blockexplorer_tui::{
     domain::{Address, Chain},
 };
 use url::Url;
-use wiremock::{
-    Mock, MockServer, ResponseTemplate,
-    matchers::method,
-};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 

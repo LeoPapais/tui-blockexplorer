@@ -40,8 +40,12 @@ fn render_to_buffer(view: &HomeViewModel) -> Buffer {
 fn renders_chain_name_latest_block_and_gas_tiers() {
     let view = HomeViewModel {
         chain: Chain::Ethereum,
-        network: Some(NetworkStatusFixture::load("home__network_status__ethereum.json")),
-        gas: Some(GasSnapshotFixture::load("home__gas_snapshot__ethereum.json")),
+        network: Some(NetworkStatusFixture::load(
+            "home__network_status__ethereum.json",
+        )),
+        gas: Some(GasSnapshotFixture::load(
+            "home__gas_snapshot__ethereum.json",
+        )),
         connection: ConnectionStatus::Connected,
     };
 
@@ -59,8 +63,12 @@ fn renders_chain_name_latest_block_and_gas_tiers() {
 fn renders_disconnected_badge_when_connection_dropped() {
     let view = HomeViewModel {
         chain: Chain::Ethereum,
-        network: Some(NetworkStatusFixture::load("home__network_status__ethereum.json")),
-        gas: Some(GasSnapshotFixture::load("home__gas_snapshot__ethereum.json")),
+        network: Some(NetworkStatusFixture::load(
+            "home__network_status__ethereum.json",
+        )),
+        gas: Some(GasSnapshotFixture::load(
+            "home__gas_snapshot__ethereum.json",
+        )),
         connection: ConnectionStatus::Disconnected {
             reconnect_scheduled: true,
         },

@@ -41,7 +41,9 @@ pub struct TxSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TxStatus {
     Success,
-    Failed { reason: Option<String> },
+    Failed {
+        reason: Option<String>,
+    },
     /// Observed in the mempool; not yet mined. Set when the receipt
     /// is null at fetch time.
     Pending,
@@ -183,10 +185,9 @@ mod tests {
 
     #[test]
     fn parses_a_lowercase_tx_hash() {
-        let h = TxHash::from_hex(
-            "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-        )
-        .unwrap();
+        let h =
+            TxHash::from_hex("0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b")
+                .unwrap();
         assert_eq!(
             h.to_hex(),
             "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"

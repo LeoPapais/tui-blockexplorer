@@ -5,8 +5,7 @@
 use blockexplorer_tui::{
     application::use_cases::load_contract_overview,
     domain::{
-        Address, AddressKind, AddressOverview, Chain, DomainError, ProxyInfo, ProxyKind,
-        Wei,
+        Address, AddressKind, AddressOverview, Chain, DomainError, ProxyInfo, ProxyKind, Wei,
     },
 };
 use pretty_assertions::assert_eq;
