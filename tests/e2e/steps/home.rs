@@ -323,7 +323,7 @@ async fn network_card_renders_last_known_block(world: &mut AppWorld) {
         .as_ref()
         .expect("last-known network snapshot must survive the drop");
     let buffer = render_home(world);
-    let rendered = format!("{}", format_u64(network.latest_block.value()));
+    let rendered = format_u64(network.latest_block.value());
     assert!(
         buffer_contains(&buffer, &rendered),
         "the Network card must still show {rendered} while reconnecting"
