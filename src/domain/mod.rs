@@ -39,7 +39,7 @@ pub use gas::{Gwei, Wei};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use network_status::{GasSnapshot, NetworkStatus};
 pub use portfolio::TokenHolding;
-pub use price::{PricePoint, PriceSeries, PriceWindow, TokenPrice};
+pub use price::{PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenPrice};
 pub use search::{AddressKind, ResolvedEntity};
 pub use timestamp::UnixTimestamp;
 pub use token::{TokenMetadata, TokenOverview};
