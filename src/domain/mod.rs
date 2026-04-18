@@ -13,6 +13,7 @@ pub mod contract;
 pub mod contract_read;
 pub mod contract_source;
 pub mod errors;
+pub mod events;
 pub mod gas;
 pub mod label;
 pub mod mempool;
@@ -33,12 +34,13 @@ pub use block::{
     BlockTxReceipt, TxCategory, Withdrawal,
 };
 pub use chain::Chain;
-pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
+pub use contract::{ContractOverview, ProxyInfo, ProxyKind, ProxySource};
 pub use contract_read::{
     AbiFunction, AbiParam, AbiParamType, AbiValue, DecodedValue, parse_abi_functions,
 };
 pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, SourceFile};
 pub use errors::DomainError;
+pub use events::EventsPage;
 pub use gas::{Gwei, Wei};
 pub use label::{Label, LabelSource};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};

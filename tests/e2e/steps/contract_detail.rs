@@ -11,12 +11,13 @@ use blockexplorer_tui::{
     application::{
         ports::{
             AddressReaderPort, ContractReaderPort, ContractSourcePort, EventLogPort,
-            ProxyDetectionPort, StoragePort,
+            NetworkStatusPort, ProxyDetectionPort, StoragePort,
         },
-        use_cases::load_contract_overview,
+        use_cases::{load_contract_events_page, load_contract_overview},
     },
     domain::{
-        Address, Chain, ContractSource, DecodedValue, LogEntry, ProxyInfo, ProxyKind, SourceFile,
+        Address, BlockNumber, Chain, ContractSource, DecodedValue, LogEntry, NetworkStatus,
+        ProxyInfo, ProxyKind, SourceFile, Wei,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -59,13 +60,9 @@ where
 async fn proxy_reports_impl(world: &mut AppWorld, impl_hex: String, proxy_hex: String) {
     let impl_addr = Address::from_hex(&impl_hex).unwrap();
     let proxy_addr = Address::from_hex(&proxy_hex).unwrap();
-    world.proxy_detector_stub.set(
-        proxy_addr,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation: impl_addr,
-        },
-    );
+    world
+        .proxy_detector_stub
+        .set(proxy_addr, ProxyInfo::eip1967_slot(impl_addr));
 }
 
 #[when(regex = r#"^the user opens ContractDetail for "(0x[0-9a-fA-F]{40})"$"#)]
@@ -451,6 +448,17 @@ async fn opens_contract_detail_with_all_wiring(world: &mut AppWorld, addr_hex: S
     let contract_reader = world.contract_reader_stub.clone();
     let event_log = world.event_log_stub.clone();
     let storage = world.storage_stub.clone();
+    let network_status = world.network_stub.clone();
+    // Prime the network-status stub with a deterministic head so
+    // load_contract_events_page can compute a concrete 5_000-block
+    // window. 20_000 ensures every scenario has `has_older = true`
+    // for the first page.
+    network_status.set_snapshot(NetworkStatus {
+        chain: Chain::Ethereum,
+        latest_block: BlockNumber::new(20_000),
+        base_fee: Wei::new(0),
+        block_time_avg_ms: 12_000,
+    });
     let screen = spawn_contract_detail_full_full(
         Chain::Ethereum,
         addr,
@@ -460,6 +468,7 @@ async fn opens_contract_detail_with_all_wiring(world: &mut AppWorld, addr_hex: S
         contract_reader,
         event_log,
         storage,
+        network_status,
     );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
@@ -473,6 +482,7 @@ fn spawn_contract_detail_full_full<
     CR: ContractReaderPort + Clone + 'static,
     E: EventLogPort + Clone + 'static,
     St: StoragePort + Clone + 'static,
+    N: NetworkStatusPort + Clone + 'static,
 >(
     chain: Chain,
     address: Address,
@@ -482,6 +492,7 @@ fn spawn_contract_detail_full_full<
     contract_reader: CR,
     event_log: E,
     storage: St,
+    network_status: N,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     let (feed, sender) = contract_feed();
     tokio::spawn(async move {
@@ -525,7 +536,15 @@ fn spawn_contract_detail_full_full<
                 req = events_rx.recv() => {
                     let Some(req) = req else { break };
                     let Some(a) = active else { continue };
-                    let result = event_log.get_logs(a, chain, req.range).await;
+                    let result = load_contract_events_page::run(
+                        &network_status,
+                        &event_log,
+                        a,
+                        chain,
+                        req.head_hint,
+                        req.offset,
+                    )
+                    .await;
                     if events_tx.send(result).is_err() { break; }
                 }
                 req = storage_rx.recv() => {
@@ -571,6 +590,38 @@ async fn events_tab_lists_n(world: &mut AppWorld, expected: u32) {
     tick_until(stack, |s| current(s).events_count().is_some()).await;
     let count = current(stack).events_count().unwrap_or(0);
     assert_eq!(count, expected as usize);
+}
+
+#[when(regex = r#"^the user presses "(n|N)" on the Events tab$"#)]
+async fn presses_n_or_big_n_on_events(world: &mut AppWorld, key: String) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Wait until the first page has settled so pressing `n` is not
+    // a no-op against `has_older = unknown`.
+    tick_until(stack, |s| current(s).events_count().is_some()).await;
+    let ch = key.chars().next().unwrap();
+    press_key(stack, KeyCode::Char(ch));
+    // After the key, we clear `events` locally; wait for the
+    // reload to arrive.
+    tick_until(stack, |s| current(s).events_count().is_some()).await;
+}
+
+#[then(regex = r#"^once reloaded, the Events tab window moved backwards by (\d+) blocks$"#)]
+async fn events_window_moved_back(world: &mut AppWorld, delta: u64) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).events_count().is_some()).await;
+    let (from, to) = current(stack).events_window().expect("window loaded");
+    // Head is seeded at 20_000 in `opens_contract_detail_with_all_wiring`;
+    // first page covers 15_001..=20_000, second page 10_001..=15_000.
+    assert_eq!(to, 20_000 - delta);
+    assert_eq!(from, 20_000 - delta - 4_999);
+}
+
+#[then(regex = r#"^once reloaded, the Events tab page offset is (\d+)$"#)]
+async fn events_offset_eq(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).events_count().is_some()).await;
+    let got = current(stack).events_offset();
+    assert_eq!(got, expected);
 }
 
 #[then(regex = r#"^once loaded, the Storage tab shows the value (\d+)$"#)]

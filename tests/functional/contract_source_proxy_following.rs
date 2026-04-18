@@ -5,7 +5,7 @@
 
 use blockexplorer_tui::{
     application::ports::ContractSourcePort,
-    domain::{AbiSource, Address, Chain, ContractAbi, ProxyInfo, ProxyKind},
+    domain::{AbiSource, Address, Chain, ContractAbi, ProxyInfo},
 };
 use pretty_assertions::assert_eq;
 
@@ -62,13 +62,7 @@ async fn returns_proxy_implementation_when_direct_is_missing() {
     let implementation = implementation_address();
 
     // No direct ABI; proxy detection and implementation ABI are primed.
-    detector.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    detector.set(proxy, ProxyInfo::eip1967_slot(implementation));
     source.insert(implementation, transfer_abi());
 
     let got = source
@@ -98,13 +92,7 @@ async fn returns_none_when_proxy_detected_but_implementation_abi_missing() {
     let proxy = contract_address();
     let implementation = implementation_address();
 
-    detector.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    detector.set(proxy, ProxyInfo::eip1967_slot(implementation));
     // No ABI primed for either proxy or implementation.
 
     let got = source
@@ -141,13 +129,7 @@ async fn direct_abi_wins_even_when_detection_would_otherwise_trigger() {
     let implementation = implementation_address();
 
     source.insert(proxy, proxy_only_abi());
-    detector.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    detector.set(proxy, ProxyInfo::eip1967_slot(implementation));
     source.insert(implementation, transfer_abi());
 
     let got = source

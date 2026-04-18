@@ -16,13 +16,13 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
     },
-    application::ports::BlockRange,
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, BlockNumber, Chain, ContractOverview,
-        ContractSource, DecodedValue, DomainError, LogEntry, SourceFile, parse_abi_functions,
+        ContractSource, DecodedValue, DomainError, EventsPage, SourceFile, parse_abi_functions,
     },
 };
 
@@ -39,15 +39,18 @@ pub struct ReadRequest {
 /// reason so the UI can render it on the result pane.
 pub type ReadResult = Result<Vec<DecodedValue>, DomainError>;
 
-/// Request shape for the Events tab: the caller passes the block
-/// range and the background task answers with the decoded logs.
-#[derive(Debug, Clone)]
+/// Request shape for the Events tab. `head_hint` is `Some` after
+/// the first page has been loaded so subsequent pages do not
+/// re-resolve the chain head; `offset = 0` is the newest window.
+/// See `plan/7-contract-detail.md` §12.5.3.
+#[derive(Debug, Clone, Copy)]
 pub struct EventsRequest {
-    pub range: BlockRange,
+    pub head_hint: Option<BlockNumber>,
+    pub offset: u32,
 }
 
 /// Result of a single Events tab refresh.
-pub type EventsResult = Result<Vec<LogEntry>, DomainError>;
+pub type EventsResult = Result<EventsPage, DomainError>;
 
 /// Request shape for the Storage tab. Slot is already a 32-byte
 /// buffer (parsed from the user-supplied decimal or hex string).
@@ -209,8 +212,13 @@ pub struct ContractDetailScreen {
     last_result_for: Option<String>,
 
     /// Events tab state.
-    events: Option<Result<Vec<LogEntry>, String>>,
-    events_range: Option<BlockRange>,
+    events: Option<Result<EventsPage, String>>,
+    /// Pagination cursor. `offset = 0` is the newest window; each
+    /// `n` press increments it, `Shift+N` decrements it. We store
+    /// the head from the first page so further pages align with
+    /// the same reference height.
+    events_offset: u32,
+    events_head: Option<BlockNumber>,
     events_requested: bool,
 
     /// Storage tab state. `slot_buffer` is the raw input string so
@@ -247,7 +255,8 @@ impl ContractDetailScreen {
             last_result: None,
             last_result_for: None,
             events: None,
-            events_range: None,
+            events_offset: 0,
+            events_head: None,
             events_requested: false,
             slot_buffer: "0".to_string(),
             storage_result: None,
@@ -293,7 +302,23 @@ impl ContractDetailScreen {
     #[must_use]
     pub fn events_count(&self) -> Option<usize> {
         match self.events.as_ref() {
-            Some(Ok(rows)) => Some(rows.len()),
+            Some(Ok(page)) => Some(page.logs.len()),
+            _ => None,
+        }
+    }
+
+    /// Test helper: current Events tab page offset.
+    #[must_use]
+    pub fn events_offset(&self) -> u32 {
+        self.events_offset
+    }
+
+    /// Test helper: loaded Events window as (from, to) block
+    /// numbers. Returns `None` until the first page has arrived.
+    #[must_use]
+    pub fn events_window(&self) -> Option<(u64, u64)> {
+        match self.events.as_ref() {
+            Some(Ok(page)) => Some((page.window_from.value(), page.window_to.value())),
             _ => None,
         }
     }
@@ -335,6 +360,11 @@ impl ContractDetailScreen {
             self.last_result_for = self.selected_function().map(|f| f.signature());
         }
         while let Ok(result) = self.feed.events_rx.try_recv() {
+            if let Ok(page) = result.as_ref() {
+                // Cache the resolved head so the next page request
+                // reuses it instead of re-running NetworkStatus.
+                self.events_head = Some(page.head);
+            }
             self.events = Some(result.map_err(|e| domain_error_message(&e)));
         }
         while let Ok(result) = self.feed.storage_rx.try_recv() {
@@ -616,12 +646,10 @@ impl Screen for ContractDetailScreen {
         // opens the tab; that way we never issue an eth_getLogs for
         // contracts the user just glances at.
         if self.active_tab == ContractTab::Events && !self.events_requested {
-            let range = BlockRange {
-                from: BlockNumber::new(0),
-                to: BlockNumber::new(u64::MAX),
-            };
-            self.events_range = Some(range);
-            let _ = self.feed.events_tx.send(EventsRequest { range });
+            let _ = self.feed.events_tx.send(EventsRequest {
+                head_hint: self.events_head,
+                offset: self.events_offset,
+            });
             self.events_requested = true;
         }
         Command::None
@@ -932,14 +960,40 @@ Contract may be unverified or expose only events / constructors.",
     fn handle_events_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
             KeyCode::Char('r') | KeyCode::Enter => {
-                // Force-refresh with the sentinel "latest" range.
-                let range = BlockRange {
-                    from: BlockNumber::new(0),
-                    to: BlockNumber::new(u64::MAX),
-                };
-                self.events_range = Some(range);
+                // Force-refresh the current window. Head hint is
+                // preserved so the refresh stays aligned with the
+                // same chain height as the first load.
                 self.events = None;
-                let _ = self.feed.events_tx.send(EventsRequest { range });
+                let _ = self.feed.events_tx.send(EventsRequest {
+                    head_hint: self.events_head,
+                    offset: self.events_offset,
+                });
+            }
+            // Plan 12.5.3: `n` pages to older blocks, only when the
+            // current page has an older window available.
+            KeyCode::Char('n') => {
+                let can_advance = matches!(
+                    self.events.as_ref(),
+                    Some(Ok(page)) if page.has_older
+                );
+                if can_advance {
+                    self.events_offset = self.events_offset.saturating_add(1);
+                    self.events = None;
+                    let _ = self.feed.events_tx.send(EventsRequest {
+                        head_hint: self.events_head,
+                        offset: self.events_offset,
+                    });
+                }
+            }
+            // `N` (Shift+n) pages back towards the head. Floored at
+            // 0 so the key is a no-op on the newest window.
+            KeyCode::Char('N') if self.events_offset > 0 => {
+                self.events_offset -= 1;
+                self.events = None;
+                let _ = self.feed.events_tx.send(EventsRequest {
+                    head_hint: self.events_head,
+                    offset: self.events_offset,
+                });
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.with_scroll(|s| {
@@ -1002,26 +1056,29 @@ Contract may be unverified or expose only events / constructors.",
     }
 
     fn render_events_tab(&self, frame: &mut Frame<'_>, area: Rect) {
-        let range_line = match self.events_range {
-            Some(range) if range.to.value() == u64::MAX => {
-                "Range: latest 5,000 blocks   [r] refresh".to_string()
-            }
-            Some(range) => format!(
-                "Range: #{} -> #{}   [r] refresh",
-                range.from.value(),
-                range.to.value()
+        let page_num = self.events_offset + 1;
+        let header = match self.events.as_ref() {
+            Some(Ok(page)) => format!(
+                "Window #{from}..#{to}  (page {page_num})   [n] older  [N] newer  [r] refresh",
+                from = page.window_from.value(),
+                to = page.window_to.value(),
             ),
-            None => "Range: (pending)   [r] refresh".to_string(),
+            _ => format!("Window (pending)  (page {page_num})   [n] older  [N] newer  [r] refresh"),
         };
         let body = match self.events.as_ref() {
-            None => format!("{range_line}\n\nLoading events..."),
-            Some(Err(msg)) => format!("{range_line}\n\nERROR: {msg}"),
-            Some(Ok(logs)) if logs.is_empty() => {
-                format!("{range_line}\n\nNo events in this window.")
+            None => format!("{header}\n\nLoading events..."),
+            Some(Err(msg)) => format!("{header}\n\nERROR: {msg}"),
+            Some(Ok(page)) if page.logs.is_empty() => {
+                let tail = if page.has_older {
+                    "\n[n] page to older blocks"
+                } else {
+                    ""
+                };
+                format!("{header}\n\nNo events in this window.{tail}")
             }
-            Some(Ok(logs)) => {
-                let mut out = format!("{range_line}\n\n");
-                for (idx, log) in logs.iter().enumerate() {
+            Some(Ok(page)) => {
+                let mut out = format!("{header}\n\n");
+                for (idx, log) in page.logs.iter().enumerate() {
                     let topic0 = log
                         .topics
                         .first()
@@ -1133,10 +1190,22 @@ once a decompiler integration lands (see plan/7 section 13).",
         let title = file
             .map(|f| f.path.clone())
             .unwrap_or_else(|| "Source".to_string());
-        let content = file.map(|f| f.content.clone()).unwrap_or_default();
-        let offset = self.bound_scroll_for(&content, columns[1]);
+        let content = file.map(|f| f.content.as_str()).unwrap_or("");
+        // For scroll-clamping we only need the line count, which
+        // matches the highlighted output line-for-line. We pass the
+        // raw string to `bound_scroll_for` so the existing helper
+        // stays ignorant of the highlighter.
+        let offset = self.bound_scroll_for(content, columns[1]);
+        let is_solidity = file
+            .map(|f| f.path.to_ascii_lowercase().ends_with(".sol"))
+            .unwrap_or(false);
+        let paragraph = if is_solidity && !content.is_empty() {
+            Paragraph::new(highlight_solidity(content))
+        } else {
+            Paragraph::new(content.to_string())
+        };
         frame.render_widget(
-            Paragraph::new(content)
+            paragraph
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
                 .block(Block::default().borders(Borders::ALL).title(title)),
@@ -1164,11 +1233,23 @@ fn overview_body(
         return "Loading...".to_string();
     };
     let proxy_line = match ov.proxy {
-        Some(info) => format!(
-            "Proxy       {kind} -> {impl_addr}",
-            kind = info.kind.label(),
-            impl_addr = info.implementation.to_hex(),
-        ),
+        Some(info) => {
+            // For Transparent proxies the address stored in `info`
+            // is actually the admin (plan/7 §12.5.2); label it so
+            // the user is not misled into thinking it is the
+            // implementation.
+            let role = match info.kind {
+                crate::domain::ProxyKind::Transparent => "admin",
+                _ => "impl",
+            };
+            format!(
+                "Proxy       {kind} [{source}] -> {role} {impl_addr}",
+                kind = info.kind.label(),
+                source = info.source.label(),
+                role = role,
+                impl_addr = info.implementation.to_hex(),
+            )
+        }
         None => "Proxy       not detected".to_string(),
     };
     let source_line = match source {

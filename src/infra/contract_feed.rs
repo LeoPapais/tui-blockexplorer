@@ -3,10 +3,11 @@
 //! Composes `AddressReaderPort` + `ProxyDetectionPort` for the
 //! Overview, fires `ContractSourcePort::get_source` for the Source /
 //! ABI tabs, and answers on-demand requests from the Read / Events /
-//! Storage tabs.
+//! Storage tabs. The Events tab paginates by windowed block range
+//! using `load_contract_events_page` (plan/7 §12.5.3).
 //!
-//! See `plan/7-contract-detail.md` sections 12.3, 12.4.1, 12.4.2 and
-//! 12.4.3.
+//! See `plan/7-contract-detail.md` sections 12.3, 12.4.1, 12.4.2,
+//! 12.4.3 and 12.5.3.
 
 use tokio::task::JoinHandle;
 
@@ -15,15 +16,15 @@ use crate::{
     application::{
         ports::{
             AddressReaderPort, ContractReaderPort, ContractSourcePort, EventLogPort,
-            ProxyDetectionPort, StoragePort,
+            NetworkStatusPort, ProxyDetectionPort, StoragePort,
         },
-        use_cases::load_contract_overview,
+        use_cases::{load_contract_events_page, load_contract_overview},
     },
     domain::{Address, Chain},
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn spawn<A, P, S, R, E, St>(
+pub fn spawn<A, P, S, R, E, St, N>(
     chain: Chain,
     address_reader: A,
     proxy_detector: P,
@@ -31,6 +32,7 @@ pub fn spawn<A, P, S, R, E, St>(
     reader: R,
     event_log: E,
     storage: St,
+    network_status: N,
     sender: ContractFeedSender,
 ) -> JoinHandle<()>
 where
@@ -40,6 +42,7 @@ where
     R: ContractReaderPort + Clone + 'static,
     E: EventLogPort + Clone + 'static,
     St: StoragePort + Clone + 'static,
+    N: NetworkStatusPort + Clone + 'static,
 {
     tokio::spawn(async move {
         let ContractFeedSender {
@@ -91,7 +94,15 @@ where
                 req = events_rx.recv() => {
                     let Some(req) = req else { break };
                     let Some(address) = active else { continue };
-                    let result = event_log.get_logs(address, chain, req.range).await;
+                    let result = load_contract_events_page::run(
+                        &network_status,
+                        &event_log,
+                        address,
+                        chain,
+                        req.head_hint,
+                        req.offset,
+                    )
+                    .await;
                     if events_tx.send(result).is_err() {
                         break;
                     }

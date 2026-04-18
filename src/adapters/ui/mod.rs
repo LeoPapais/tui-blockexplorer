@@ -11,6 +11,7 @@ pub mod contract_detail;
 pub mod detail_placeholder;
 pub mod format;
 pub mod gas_tracker;
+pub mod highlight;
 pub mod home;
 pub mod mempool;
 pub mod screen;

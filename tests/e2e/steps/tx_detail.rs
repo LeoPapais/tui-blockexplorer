@@ -13,8 +13,8 @@ use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
-        CallKind, CallNode, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind,
-        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
+        CallKind, CallNode, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, StateDiff,
+        Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -160,13 +160,9 @@ async fn contract_source_has_impl_abi(world: &mut AppWorld, addr_hex: String) {
 async fn proxy_detector_maps(world: &mut AppWorld, proxy_hex: String, impl_hex: String) {
     let proxy = Address::from_hex(&proxy_hex).unwrap();
     let implementation = Address::from_hex(&impl_hex).unwrap();
-    world.proxy_detector_stub.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    world
+        .proxy_detector_stub
+        .set(proxy, ProxyInfo::eip1967_slot(implementation));
 }
 
 #[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" emitted a Transfer event$"#)]

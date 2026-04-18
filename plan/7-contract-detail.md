@@ -1,9 +1,12 @@
 # 7 — Contract Detail
 
 Status: **done** — MVP Overview + EIP-1967 proxy detection shipped
-earlier, and this phase landed the Source, ABI, Read, Events and
-Storage tabs so the screen matches the plan layout end to end. The
-Write tab and decompiler integration stay deferred; see section 13.
+earlier; Source, ABI, Read, Events and Storage tabs landed next; and
+section 12.5 wraps up the April-2026 follow-ups (UUPS + Transparent
+slot probing, Etherscan proxy hint, Events tab pagination with
+next/prev window and Solidity keyword highlighting on the Source
+tab). The Write tab and the decompiler integration stay deferred;
+see section 13.
 
 Inspect and read a smart contract. Tabs in MVP: Overview, Source, ABI, Read, Events,
 Storage. The Write tab is deferred because it requires a signer.
@@ -83,13 +86,25 @@ Tabs:
 ### 4.4 `DetectProxyImplementation`
 
 - **Input**: `Address`, chain.
-- **Output**: `Option<ProxyInfo { kind, implementation, admin, beacon }>`.
-- **Ports**: `ProxyDetectionPort::detect`.
-- **Behaviour**: reads EIP-1967 slots via `eth_getStorageAt`:
-  - implementation slot `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
-  - admin slot          `0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103`
-  - beacon slot         `0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50`
-  If all zero, tries common transparent and UUPS signatures via `eth_call`.
+- **Output**: `Option<ProxyInfo { kind, implementation, source }>`.
+- **Ports**: `ProxyDetectionPort::detect`, optionally composed with
+  `EtherscanProxyHintPort::implementation_hint` (see 12.5.1).
+- **Behaviour**: reads three EIP-1967-family slots via
+  `eth_getStorageAt` at tag `"latest"` and returns the first non-
+  zero result (see 12.5.2):
+  - EIP-1967 impl slot
+    `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
+    → `Eip1967`, `source = Eip1967Slot`.
+  - EIP-1822 (UUPS) PROXIABLE slot
+    `0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7`
+    → `Uups`, `source = Eip1822Slot`.
+  - OpenZeppelin Transparent admin slot
+    `0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103`
+    → `Transparent`, `source = TransparentSlot`.
+  When all three slots are zero and an Etherscan key is available,
+  the composite detector asks `getsourcecode`'s `Implementation`
+  field. When that returns an address, the result is surfaced as
+  `Eip1967` with `source = EtherscanHint`.
 
 ### 4.5 `LoadContractEvents`
 
@@ -175,18 +190,41 @@ Feature: Contract detail
 - `etherscan__getsourcecode__not_verified.json`
 - `openchain__event__transfer_topic0.json`
 
-## 10. Open questions
+## 10. Resolved questions
 
-- Do we paginate the Events tab by block range or by item count? Decision: block
-  range with a configurable window (default 5,000 blocks) plus a next-window action.
-- Should we respect Etherscan proxy hints when EIP-1967 detection returns zero?
-  Yes, use Etherscan's `Implementation` field from `getsourcecode` as a second
-  source of truth.
+All three open questions below are **resolved** and shipped under
+section 12.5 (April 2026, branch
+`probe/8.8-contract-detail-followups`):
+
+- Events tab pagination — **block range, default 5,000 blocks**, with
+  `N` / `Shift+N` actions to page backwards / forwards through
+  windows. Plan 12.5.3. The previous single-window UI is now the
+  `window 0` case of the pagination UI.
+- Etherscan proxy hint as a second source when EIP-1967 detection
+  returns zero — **yes**, use the `Implementation` field from
+  Etherscan `contract/getsourcecode` as a composite fallback. Plan
+  12.5.1.
+- Syntax highlighting for the Source tab — **hand-rolled minimal
+  Solidity highlighter** shipped today; `syntect` stays documented
+  as the preferred future route once we decide whether to bundle a
+  Solidity `.sublime-syntax` or swap to `tree-sitter-solidity`.
+  The minimal highlighter covers keywords, primitive types, numeric
+  and string literals, and `//` / `/* */` comments; `.vy` (Vyper)
+  stays plain text until we pick a parser. Plan 12.5.4.
 
 ## 11. Deferred
 
-- Write tab with transaction signing.
-- Decompiler integration (panoramix, heimdall) for unverified contracts.
+- Write tab with transaction signing (requires a signer — hardware
+  wallet, browser extension or plaintext key; parked on the
+  credential-strategy decision).
+- Decompiler integration (panoramix, heimdall) for unverified
+  contracts.
+- Upgrading the Solidity highlighter to a full grammar via
+  `syntect` (bundled `.sublime-syntax`) or `tree-sitter-solidity`.
+  See 12.5.4.
+- Vyper (`.vy`) syntax highlighting — currently renders as plain
+  text next to the Solidity highlighter; a shared tokeniser trait
+  lands together with the highlighter upgrade above.
 
 ## 12. Implementation plan
 
@@ -363,6 +401,195 @@ BDD:
 - Events tab renders decoded log rows.
 - Storage tab reads the requested slot.
 
+## 12.5 April 2026 follow-ups (branch `probe/8.8-contract-detail-followups`)
+
+Four loose ends from sections 10 / 11 / 13 landed together in this
+slice. The two WONT-DO items (Write tab, Decompiler integration)
+stay in section 13.
+
+### 12.5.1 Etherscan proxy hint as a second source
+
+**Problem.** Some upgradeable patterns (Minimal Proxy / EIP-1167,
+diamonds, older custom proxies) leave the EIP-1967 implementation
+slot zeroed even though Etherscan knows the implementation through
+its own proxy flag. Today `AlchemyProxyDetector::detect` returns
+`None` in that case and downstream ABI resolution falls straight
+through to "unverified".
+
+**Fix.**
+
+- New application port
+  `EtherscanProxyHintPort::implementation_hint(address, chain) ->
+  Option<Address>` backed by the existing `getsourcecode` adapter —
+  the `Implementation` field is already parsed inside
+  `EtherscanContractSource::get_source`, so the new adapter
+  (`src/adapters/etherscan/proxy_hint.rs`) only extracts the
+  address without any new HTTP shape.
+- New adapter `CompositeProxyDetector` in
+  `src/adapters/rpc/composite_proxy_detection.rs` composes any
+  `ProxyDetectionPort` (primary) with an
+  `EtherscanProxyHintPort` (fallback). When the primary returns
+  `None` and the fallback returns `Some`, the composite emits
+  `ProxyInfo { kind: ProxyKind::Eip1967, implementation,
+  source: ProxySource::EtherscanHint }`.
+- Domain type `ProxySource { Eip1967Slot, Eip1822Slot,
+  TransparentSlot, EtherscanHint }` is added to `ProxyInfo` so the
+  UI can distinguish hint-based detection from slot-based
+  detection. The Overview tab renders the source inline after the
+  implementation address.
+- Results from the hint adapter are cached behind the existing
+  `TtlCache<Address, Address>` with a 5-minute TTL, matching
+  §8.3's cache TTL rule-of-thumb.
+
+**Wiring.** `live_contract_detail_screen` (and the tx-detail pipeline
+where it follows proxy ABIs) wires the composite detector when an
+Etherscan key is available. When the key is absent the composite
+degrades to the base detector and the hint fallback is a no-op.
+
+**Tests.** Functional test for the hint adapter
+(`tests/functional/etherscan_proxy_hint.rs`, two `wiremock`
+scenarios: proxy + non-proxy row) and for the composite
+(`tests/functional/composite_proxy_detector.rs`, four cases:
+primary hits / primary misses and fallback hits / both miss /
+primary error short-circuits).
+
+### 12.5.2 UUPS and Transparent proxy detection
+
+**Problem.** The existing detector only probes the EIP-1967
+implementation slot. UUPS contracts that follow EIP-1822 keep a
+different slot populated, and Transparent proxies keep the admin
+slot populated alongside the impl slot.
+
+**Fix.** `AlchemyProxyDetector::detect` now probes three slots in
+order and returns the first non-zero result:
+
+1. EIP-1967 impl slot
+   `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
+   → `ProxyKind::Eip1967`, `ProxySource::Eip1967Slot`.
+2. EIP-1822 (UUPS) PROXIABLE slot
+   `0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7`
+   → `ProxyKind::Uups`, `ProxySource::Eip1822Slot`.
+3. OpenZeppelin Transparent admin slot
+   `0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103`
+   → `ProxyKind::Transparent`, `ProxySource::TransparentSlot`.
+
+The slot returned in case 3 is technically the admin address, not
+the implementation. For MVP we surface it under the existing
+`implementation` field so the Overview tab stays stable; the UI
+labels the row as "admin" when `kind == Transparent` so the user
+knows what the address means. A future follow-up (tracked in §13)
+will read both impl + admin slots and render them as separate
+rows.
+
+**Tests.** Functional tests in
+`tests/functional/alchemy_proxy_detector.rs` extend the existing
+two cases to five: zero slot, EIP-1967 hit, UUPS hit, Transparent
+admin hit, all three zero. New fixtures under `tests/fixtures/`
+cover each slot response.
+
+### 12.5.3 Events tab pagination by block range
+
+**Problem.** The Events tab calls `eth_getLogs` once at open time
+with the `u64::MAX` sentinel ("latest"). Users cannot browse older
+events without leaving the screen.
+
+**Fix.**
+
+- Domain type `EventsPage { logs, window: BlockRange, has_older }`
+  in `src/domain/events.rs`.
+- Use case
+  `load_contract_events_page(network_status, event_log, address,
+  chain, head: Option<BlockNumber>, offset: u32) -> EventsPage`
+  in `src/application/use_cases/load_contract_events_page.rs`.
+  `head` defaults to the current chain head (via
+  `NetworkStatusPort::snapshot`); `offset` picks which 5_000-block
+  window to read (0 = newest). `has_older` is `true` when `window.from > 0`.
+- UI state in `ContractDetailScreen`:
+  - Initial request uses `offset = 0`.
+  - `n` (KeyCode `Char('n')`) increments `offset`, fetches the next
+    older window.
+  - `Shift+N` (`Char('N')`) decrements `offset`, fetches the newer
+    window; floors at 0.
+  - Header renders `window N..M  (page k)` where `N..M` are the
+    resolved block numbers and `k` is `offset + 1`.
+  - When the page is empty, the body renders `No events in this
+    window — press [n] for older blocks.`.
+- `EventsRequest` now carries `{ head_hint: Option<BlockNumber>,
+  offset: u32 }`; `EventsResult` carries `EventsPage` so the UI
+  knows the exact range it drew.
+- Background task updated to resolve the head via
+  `NetworkStatusPort` before the first `get_logs` call and cache it
+  across pagination requests; subsequent page fetches reuse the
+  cached head to keep the windows aligned.
+
+**Tests.**
+
+- `tests/functional/load_contract_events_page.rs`: happy path
+  (offset 0), happy path (offset 3 → window `head - 20_000 + 1..=
+  head - 15_000`), edge case (`from` underflows to 0 and
+  `has_older` is `false`), failure path (network-status error
+  bubbles out).
+- `tests/e2e/features/contract_detail.feature` gets two new
+  scenarios: "paginates the Events tab backwards" (press `n`,
+  assert the visible range moved backwards by 5_000 blocks) and
+  "page can return to the newest window with Shift+N".
+
+### 12.5.4 Source tab syntax highlighting (Solidity)
+
+**Decision.** MVP ships a **hand-rolled minimal Solidity
+highlighter** under `src/adapters/ui/highlight.rs`. `syntect` is the
+preferred long-term route but was **rejected for this slice** because
+shipping it without a Solidity `.sublime-syntax` bundled in the
+repo buys us nothing over the hand-rolled scanner, and bundling a
+real `.sublime-syntax` is out of scope for this worktree (licence
+review + asset vendoring). The §13 deferred list keeps syntect and
+tree-sitter-solidity queued as upgrade paths.
+
+**Highlighter shape.** A pure function
+`highlight_solidity(source: &str, theme: &Theme) -> Vec<Line<'static>>`
+returns a `Vec<ratatui::text::Line>` whose spans are coloured through
+semantic theme tokens (`keyword`, `type`, `string`, `number`,
+`comment`, `plain`). The tokeniser is a small hand-written state
+machine that understands:
+
+- `//` line comments and `/* */` block comments (nested `/*` not
+  supported — matches Solidity),
+- Double-quoted string and hex/byte literals,
+- Numeric literals (including `_` separators and `ether` / `wei`
+  suffixes),
+- Solidity keywords (`pragma`, `contract`, `function`, `returns`,
+  `view`, `pure`, `payable`, `public`, `private`, `internal`,
+  `external`, `if`, `else`, `for`, `while`, `return`, `new`,
+  `delete`, `using`, `library`, `interface`, `struct`, `enum`,
+  `event`, `emit`, `modifier`, `constructor`, `try`, `catch`,
+  `override`, `virtual`, `abstract`, `import`, `mapping`, `memory`,
+  `storage`, `calldata`),
+- Primitive types (`uint`, `int`, `uint8`…`uint256` by regex,
+  `address`, `bool`, `string`, `bytes`, `bytes1`…`bytes32` by
+  regex).
+
+Everything else is emitted as `plain`. The highlighter never
+allocates per-character: it produces one span per contiguous token
+run.
+
+**UI integration.** `render_source_tab` switches on the selected
+file's extension: `.sol` routes through `highlight_solidity`,
+everything else (today `.vy` and `.txt`) stays as the existing
+plain-`Text` rendering. The `Paragraph` block renders
+`Text::from(Vec<Line>)` instead of `Text::from(String)`; wrapping
+and scrolling semantics stay identical.
+
+**Tests.**
+
+- `tests/functional/highlight_solidity.rs`: span-level assertions
+  (keyword is highlighted with the keyword colour, comment runs
+  swallow everything up to the newline, string literal survives
+  internal whitespace, numeric literal matches).
+- `tests/e2e/features/contract_detail.feature`: "Source tab
+  highlights Solidity keywords" scenario asserts that the rendered
+  `TestBackend` frame has the `pragma` token styled with the
+  keyword theme colour.
+
 ## 13. Still deferred (post plan-7 expansion)
 
 - **Write tab**: requires a signer (hardware wallet, browser
@@ -370,9 +597,12 @@ BDD:
   credential strategy.
 - **Decompiler integration** (panoramix / heimdall / etc.) for
   unverified contracts.
-- Source file syntax highlighting (the current Source tab renders
-  plain text).
+- Upgrading the Solidity highlighter to a full grammar via
+  `syntect` (bundled `.sublime-syntax`) or
+  `tree-sitter-solidity`, plus Vyper highlighting. See 12.5.4.
 - Storage slot mapping helpers (e.g. resolving `mapping(address
   => uint)` slot layouts automatically).
-- Historical event streaming with "load older" pagination beyond
-  the current page.
+- Transparent-proxy: render `implementation` and `admin` as two
+  separate rows once the detector reads both slots.
+- Historical event streaming beyond the windowed pagination
+  (long-lived subscription / `logs` WebSocket).

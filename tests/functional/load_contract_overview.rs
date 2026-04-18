@@ -46,13 +46,7 @@ async fn contract_with_eip1967_proxy() {
     let ov = sample_contract("0xa0a1000000000000000000000000000000000001");
     let impl_addr = Address::from_hex("0xb0b1000000000000000000000000000000000002").unwrap();
     addr_reader.insert(ov.clone());
-    proxy.set(
-        ov.address,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation: impl_addr,
-        },
-    );
+    proxy.set(ov.address, ProxyInfo::eip1967_slot(impl_addr));
 
     let got = load_contract_overview::run(&addr_reader, &proxy, ov.address, Chain::Ethereum)
         .await

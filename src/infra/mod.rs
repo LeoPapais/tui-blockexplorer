@@ -29,14 +29,17 @@ use crate::{
     adapters::{
         cache::TtlCache,
         config::InMemoryChainRegistry,
-        etherscan::{EtherscanClient, EtherscanContractSource, EtherscanTokenSearch},
+        etherscan::{
+            CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
+            EtherscanTokenSearch,
+        },
         prices::{AlchemyPrices, PricesClient},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
             AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
             AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector, AlchemySimulation,
             AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
-            AlchemyTxTracer, RpcClient,
+            AlchemyTxTracer, CompositeProxyDetector, RpcClient,
         },
         signatures::{
             CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
@@ -75,7 +78,7 @@ fn live_tx_detail_screen(
 
     let sim = AlchemySimulation::new(rpc.clone());
     let trace = AlchemyTxTracer::new(rpc.clone());
-    let proxy_detector = AlchemyProxyDetector::new(rpc);
+    let proxy_detector = build_proxy_detector(rpc.clone(), etherscan_key.as_deref());
 
     let contract_source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -186,10 +189,11 @@ fn live_contract_detail_screen(
     etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
-    let detector = AlchemyProxyDetector::new(rpc.clone());
+    let detector = build_proxy_detector(rpc.clone(), etherscan_key.as_deref());
     let contract_reader = AlchemyContractReader::new(rpc.clone());
     let event_log = AlchemyEventLog::new(rpc.clone());
-    let storage = AlchemyStorage::new(rpc);
+    let storage = AlchemyStorage::new(rpc.clone());
+    let network_status = AlchemyNetworkStatusAdapter::new(rpc);
 
     let source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -206,6 +210,7 @@ fn live_contract_detail_screen(
         contract_reader,
         event_log,
         storage,
+        network_status,
         sender,
     ));
     Box::new(ContractDetailScreen::loading(chain, address, feed))
@@ -324,6 +329,27 @@ impl crate::application::ports::TokenSearchPort for TokenSearchBackend {
             TokenSearchBackend::Noop => Ok(Vec::new()),
         }
     }
+}
+
+/// Build the live proxy detector used by Contract Detail and the
+/// tx-decoding pipeline: Alchemy slot-probing primary (EIP-1967 +
+/// UUPS + Transparent) composed with an optional, TTL-cached
+/// Etherscan implementation-hint fallback.
+///
+/// When the Etherscan key is missing or the client cannot be built
+/// (should not happen with a valid key), the composite degrades to
+/// the primary detector — callers retain the previous behaviour.
+/// See `plan/7-contract-detail.md` sections 12.5.1 and 12.5.2.
+fn build_proxy_detector(
+    rpc: RpcClient,
+    etherscan_key: Option<&str>,
+) -> CompositeProxyDetector<AlchemyProxyDetector, CachedEtherscanProxyHint<EtherscanProxyHint>> {
+    let primary = AlchemyProxyDetector::new(rpc);
+    let hint = etherscan_key
+        .and_then(|key| EtherscanClient::with_default_http(key.to_string()).ok())
+        .map(EtherscanProxyHint::new)
+        .map(CachedEtherscanProxyHint::new);
+    CompositeProxyDetector::new(primary, hint)
 }
 
 fn build_token_search(etherscan_key: Option<&str>) -> TokenSearchBackend {
