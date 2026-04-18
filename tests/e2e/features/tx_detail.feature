@@ -90,3 +90,11 @@ Feature: Transaction detail
     When the user opens TxDetail with full enrichment for hash "0xd3d3016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d3"
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the State Changes tab lists 1 address
+
+  Scenario: Overview renders before trace finishes
+    Given the tx reader knows tx "0xfade016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa" was successful
+    And the tracer is slow
+    And the simulator is slow
+    When the user opens TxDetail with full enrichment for hash "0xfade016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa"
+    Then a "Transaction" screen is on top
+    And the Overview tab loads before the tracer stub has been called

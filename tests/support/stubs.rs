@@ -1048,6 +1048,14 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
 struct TxSimulationState {
     by_hash: HashMap<TxHash, Vec<AssetChange>>,
     unsupported: bool,
+    /// Artificial delay injected before answering. Used by
+    /// `plan/4-tx-detail.md` section 12.6.1 to prove the Overview
+    /// base view reaches the channel before the heavier enrichment
+    /// calls return.
+    delay: Option<Duration>,
+    /// Count of `simulate_asset_changes` invocations since
+    /// construction.
+    call_count: usize,
 }
 
 #[derive(Default, Clone)]
@@ -1069,6 +1077,18 @@ impl StubTxSimulationPort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.unsupported = true;
     }
+
+    /// Hold every incoming call for `delay` before answering. Used
+    /// to prove ordering claims (see `plan/4-tx-detail.md` 12.6.1).
+    pub fn set_delay(&self, delay: Duration) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.delay = Some(delay);
+    }
+
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
 }
 
 impl TxSimulationPort for StubTxSimulationPort {
@@ -1077,11 +1097,24 @@ impl TxSimulationPort for StubTxSimulationPort {
         tx: &Transaction,
         _chain: Chain,
     ) -> Result<Vec<AssetChange>, DomainError> {
-        let state = self.inner.lock().expect("stub lock poisoned");
-        if state.unsupported {
+        let (delay, unsupported, canned) = {
+            let state = self.inner.lock().expect("stub lock poisoned");
+            (
+                state.delay,
+                state.unsupported,
+                state.by_hash.get(&tx.hash).cloned().unwrap_or_default(),
+            )
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        // Count only calls that finished (ran past the delay). See
+        // the sibling comment on `StubTxTracePort::state_diff`.
+        self.inner.lock().expect("stub lock poisoned").call_count += 1;
+        if unsupported {
             return Err(DomainError::FeatureUnavailable);
         }
-        Ok(state.by_hash.get(&tx.hash).cloned().unwrap_or_default())
+        Ok(canned)
     }
 }
 
@@ -1093,6 +1126,11 @@ impl TxSimulationPort for StubTxSimulationPort {
 struct TxTraceState {
     by_hash: HashMap<TxHash, StateDiff>,
     unsupported: bool,
+    /// Artificial delay injected before answering. See the sibling
+    /// comment on `StubTxSimulationPort::set_delay`.
+    delay: Option<Duration>,
+    /// Count of `state_diff` invocations since construction.
+    call_count: usize,
 }
 
 #[derive(Default, Clone)]
@@ -1114,15 +1152,39 @@ impl StubTxTracePort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.unsupported = true;
     }
+
+    pub fn set_delay(&self, delay: Duration) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.delay = Some(delay);
+    }
+
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
 }
 
 impl TxTracePort for StubTxTracePort {
     async fn state_diff(&self, hash: TxHash, _chain: Chain) -> Result<StateDiff, DomainError> {
-        let state = self.inner.lock().expect("stub lock poisoned");
-        if state.unsupported {
+        let (delay, unsupported, canned) = {
+            let state = self.inner.lock().expect("stub lock poisoned");
+            (
+                state.delay,
+                state.unsupported,
+                state.by_hash.get(&hash).cloned().unwrap_or_default(),
+            )
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        // Count only calls that finished (ran past the delay). This
+        // keeps the "call_count == 0" assertion in the ordering
+        // tests aligned with "tracer has not finished yet".
+        self.inner.lock().expect("stub lock poisoned").call_count += 1;
+        if unsupported {
             return Err(DomainError::FeatureUnavailable);
         }
-        Ok(state.by_hash.get(&hash).cloned().unwrap_or_default())
+        Ok(canned)
     }
 }
 

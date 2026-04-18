@@ -403,3 +403,108 @@ async fn missing_tx_returns_not_found() {
 
     assert!(matches!(err, DomainError::NotFound));
 }
+
+// ---------------------------------------------------------------------------
+// Plan 12.6.1 — Overview tab must never wait on slow RPC methods.
+// ---------------------------------------------------------------------------
+
+/// `run_with_decoding` must not call the tracer or the simulator.
+/// Those live on `load_state_diff` / `load_asset_changes` so the
+/// Overview tab can render off the reader + Etherscan response
+/// alone, without waiting for the slow trace/debug methods.
+#[tokio::test]
+async fn run_with_decoding_never_hits_tracer_or_simulator() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+    let sim = StubTxSimulationPort::new();
+    let tracer = StubTxTracePort::new();
+
+    let tx = base_tx("0xfa51016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa");
+    reader.insert(tx.clone());
+
+    let _ = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("decoding ok");
+
+    assert_eq!(sim.call_count(), 0, "simulator must not be touched");
+    assert_eq!(tracer.call_count(), 0, "tracer must not be touched");
+}
+
+/// When the simulator / tracer are slow, the base overview view
+/// must still be delivered first. This mirrors what
+/// `infra::tx_feed::spawn_full` does: it sends the base view before
+/// awaiting the enrichment join. We exercise the two steps here
+/// directly against the use case.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn base_view_resolves_before_tracer_finishes() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+    let sim = StubTxSimulationPort::new();
+    let tracer = StubTxTracePort::new();
+
+    let tx = base_tx("0xde1a016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394de");
+    reader.insert(tx.clone());
+    sim.set_delay(std::time::Duration::from_secs(5));
+    tracer.set_delay(std::time::Duration::from_secs(5));
+    tracer.set_state_diff(
+        tx.hash,
+        StateDiff {
+            entries: Vec::new(),
+        },
+    );
+
+    // Base view: reader + ABI + signature lookup only. No delay
+    // injected by our trace/sim stubs fires yet.
+    let base = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+    assert_eq!(sim.call_count(), 0);
+    assert_eq!(tracer.call_count(), 0);
+    assert!(matches!(
+        base.asset_changes,
+        blockexplorer_tui::application::LoadStatus::Pending
+    ));
+    assert!(matches!(
+        base.state_diff,
+        blockexplorer_tui::application::LoadStatus::Pending
+    ));
+
+    // Enrichment path: must call sim + tracer exactly once.
+    // Clone into two views so the concurrent enrichments do not
+    // alias the same mutable borrow (mirrors how `spawn_full`
+    // splits the join body).
+    let mut view_sim = base.clone();
+    let mut view_trace = base.clone();
+    tokio::join!(
+        load_tx_overview::load_asset_changes(&sim, &mut view_sim, Chain::Ethereum),
+        load_tx_overview::load_state_diff(&tracer, &mut view_trace, Chain::Ethereum),
+    );
+    assert_eq!(sim.call_count(), 1);
+    assert_eq!(tracer.call_count(), 1);
+    assert!(!matches!(
+        view_sim.asset_changes,
+        blockexplorer_tui::application::LoadStatus::Pending
+    ));
+    assert!(!matches!(
+        view_trace.state_diff,
+        blockexplorer_tui::application::LoadStatus::Pending
+    ));
+}
