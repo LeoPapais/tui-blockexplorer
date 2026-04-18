@@ -192,6 +192,12 @@ pub struct AddressDetailScreen {
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
     open_contract: Option<OpenContractFactory>,
+    /// Latest value produced by the `y` / `Y` / `e` bindings. A real
+    /// OS clipboard adapter stays deferred (see `plan/3-block-detail.md`
+    /// §12.1 and `plan/15-backlog.md` §8.16); the field lets tests
+    /// inspect the payload without any terminal wiring. Mirrors
+    /// `BlockDetailScreen::last_copied_value`.
+    last_copied_value: Option<String>,
 }
 
 impl AddressDetailScreen {
@@ -251,6 +257,7 @@ impl AddressDetailScreen {
             open_tx,
             open_token,
             open_contract,
+            last_copied_value: None,
         }
     }
 
@@ -436,6 +443,83 @@ impl AddressDetailScreen {
         let current = state.selected().unwrap_or(0) as i32;
         let next = (current + delta).clamp(0, len as i32 - 1);
         state.select(Some(next as usize));
+    }
+
+    /// Latest value produced by the `y` / `Y` / `e` clipboard
+    /// bindings. Returns `None` until the user triggers a copy.
+    ///
+    /// Mirrors `BlockDetailScreen::last_copied_value`; an OS-backed
+    /// clipboard adapter stays deferred (see plan/15 §8.16).
+    #[must_use]
+    pub fn last_copied_value(&self) -> Option<&str> {
+        self.last_copied_value.as_deref()
+    }
+
+    /// Copy the hex address to the in-screen clipboard sink. No-op
+    /// while the overview is still loading — the address field is
+    /// populated from the initial `AddressDetailScreen::loading`
+    /// call, but we gate on the overview for symmetry with the
+    /// block-detail screen (`plan/3-block-detail.md` §12.1).
+    fn copy_address_hex(&mut self) {
+        if self.current.is_none() {
+            return;
+        }
+        self.last_copied_value = Some(self.address.to_hex());
+    }
+
+    /// Copy the ENS name when the loaded overview has one; otherwise
+    /// fall back to the hex address so the binding still feels
+    /// useful for wallets without a reverse record.
+    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
+    fn copy_ens_or_address(&mut self) {
+        let Some(ov) = self.current.as_ref() else {
+            return;
+        };
+        self.last_copied_value = Some(match ov.ens_name.as_deref() {
+            Some(name) => name.to_string(),
+            None => ov.address.to_hex(),
+        });
+    }
+
+    /// Serialise the currently-active tab into a CSV blob and land
+    /// it in `last_copied_value`. No filesystem I/O is performed —
+    /// the clipboard sink keeps the export testable end-to-end.
+    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
+    fn copy_active_as_csv(&mut self) {
+        if self.current.is_none() {
+            return;
+        }
+        let csv = match self.active_tab {
+            AddressTab::Transactions => csv_for_transfers(self.transfers.as_ref()),
+            AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
+            AddressTab::Overview
+            | AddressTab::Token
+            | AddressTab::Contract => csv_for_overview(self.current.as_ref()),
+        };
+        self.last_copied_value = Some(csv);
+    }
+
+    // ------------------------------------------------------------------
+    // Test-only seeding helpers. The production feed populates these
+    // fields through `drain_feed`; functional tests for the key
+    // bindings use these setters to bypass the async runtime.
+    // ------------------------------------------------------------------
+
+    #[doc(hidden)]
+    pub fn set_overview_for_test(&mut self, overview: AddressOverview) {
+        self.current = Some(overview);
+    }
+
+    #[doc(hidden)]
+    pub fn set_transfers_for_test(&mut self, page: TransferPage) {
+        self.transfers = Some(page);
+        self.clamp_tx_selection();
+    }
+
+    #[doc(hidden)]
+    pub fn set_holdings_for_test(&mut self, holdings: Vec<TokenHolding>) {
+        self.holdings = Some(holdings);
+        self.clamp_token_selection();
     }
 }
 
@@ -657,6 +741,25 @@ impl AddressDetailScreen {
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
+
+            // Clipboard bindings — see plan/6 §3 + §11 "Shipped":
+            //   `y` copies the hex address,
+            //   `Y` copies the ENS name (falls back to hex),
+            //   `e` exports the active tab as CSV.
+            // All three feed the same `last_copied_value` sink used
+            // by snapshot tests and the future OS clipboard adapter.
+            (_, KeyCode::Char('y')) => {
+                self.copy_address_hex();
+                Command::None
+            }
+            (_, KeyCode::Char('Y')) => {
+                self.copy_ens_or_address();
+                Command::None
+            }
+            (_, KeyCode::Char('e')) => {
+                self.copy_active_as_csv();
+                Command::None
+            }
             (_, _) if is_back_tab => {
                 self.active_tab = self.prev_tab();
                 self.scroll = 0;
@@ -875,4 +978,140 @@ fn short_addr(s: &str) -> String {
         return s.to_string();
     }
     format!("{}...{}", &s[..6], &s[s.len() - 4..])
+}
+
+// ---------------------------------------------------------------------------
+// CSV export helpers
+// ---------------------------------------------------------------------------
+//
+// See `plan/6-address-detail.md` §11 "Shipped" and
+// `plan/15-backlog.md` §8.7. The exporters are deterministic and do
+// not touch the filesystem; they feed `last_copied_value` so tests
+// can assert on the CSV body and a future clipboard adapter can
+// forward the same blob to the OS.
+
+fn csv_for_overview(overview: Option<&AddressOverview>) -> String {
+    let mut buf = String::from("address,ens,kind,balance,nonce\n");
+    if let Some(ov) = overview {
+        let kind = match ov.kind {
+            AddressKind::Eoa {
+                delegated_to: Some(_),
+            } => "eoa_delegated",
+            AddressKind::Eoa { delegated_to: None } => "eoa",
+            AddressKind::Contract => "contract",
+        };
+        let ens = ov.ens_name.as_deref().unwrap_or("");
+        buf.push_str(&format!(
+            "{addr},{ens},{kind},{bal},{nonce}\n",
+            addr = ov.address.to_hex(),
+            ens = ens,
+            kind = kind,
+            bal = ov.balance.value(),
+            nonce = ov.nonce,
+        ));
+    }
+    buf
+}
+
+fn csv_for_transfers(page: Option<&TransferPage>) -> String {
+    let mut buf =
+        String::from("block,tx_hash,category,from,to,asset,symbol,decimals,value\n");
+    let Some(page) = page else { return buf };
+    for event in &page.events {
+        let (asset_kind, symbol, decimals) = match &event.asset {
+            TransferAsset::Native { symbol } => ("native", symbol.as_str(), String::new()),
+            TransferAsset::Erc20 {
+                symbol, decimals, ..
+            } => ("erc20", symbol.as_str(), decimals.to_string()),
+            TransferAsset::Nft { kind, .. } => match kind {
+                crate::domain::NftKind::Erc721 => ("erc721", "", String::new()),
+                crate::domain::NftKind::Erc1155 => ("erc1155", "", String::new()),
+            },
+        };
+        let to = event
+            .to
+            .map(|a| a.to_hex())
+            .unwrap_or_else(|| "0x".to_string());
+        buf.push_str(&format!(
+            "{block},{tx},{cat},{from},{to},{asset_kind},{symbol},{decimals},{value}\n",
+            block = event.block_number.value(),
+            tx = event.tx_hash.to_hex(),
+            cat = event.category.label().to_ascii_lowercase(),
+            from = event.from.to_hex(),
+            to = to,
+            asset_kind = asset_kind,
+            symbol = symbol,
+            decimals = decimals,
+            value = event.value.value(),
+        ));
+    }
+    buf
+}
+
+fn csv_for_holdings(holdings: Option<&Vec<TokenHolding>>) -> String {
+    let mut buf = String::from(
+        "symbol,name,contract,decimals,balance,price_usd,price_status,value_usd\n",
+    );
+    let Some(holdings) = holdings else { return buf };
+    for h in holdings {
+        let (price_column, status, value_column) = match &h.price {
+            PriceLookup::Available(p) => {
+                let usd_value = token_usd_value(h.balance.value(), h.metadata.decimals, p.value);
+                (
+                    format_csv_number(p.value),
+                    "available".to_string(),
+                    format_csv_number(usd_value),
+                )
+            }
+            PriceLookup::Unsupported { provider } => {
+                (String::new(), format!("unsupported:{provider}"), String::new())
+            }
+            PriceLookup::Pending => (String::new(), "pending".to_string(), String::new()),
+        };
+        buf.push_str(&format!(
+            "{sym},{name},{contract},{dec},{bal},{price_column},{status},{value_column}\n",
+            sym = h.metadata.symbol,
+            name = h.metadata.name,
+            contract = h.metadata.address.to_hex(),
+            dec = h.metadata.decimals,
+            bal = h.balance.value(),
+            price_column = price_column,
+            status = status,
+            value_column = value_column,
+        ));
+    }
+    buf
+}
+
+/// Compute the USD value of a holding given the raw balance, the
+/// token's decimals, and the per-token USD spot price. The balance
+/// is an unsigned 128-bit integer in the token's smallest
+/// denomination; the returned float is the sum of integer and
+/// fractional parts scaled independently so we do not lose
+/// precision on tokens with 18 decimals and balances above 2^53.
+pub(crate) fn token_usd_value(raw_balance: u128, decimals: u8, price_usd: f64) -> f64 {
+    if decimals == 0 {
+        return (raw_balance as f64) * price_usd;
+    }
+    // Clamp the divisor at 10^38 — anything above that produces
+    // infinity anyway on IEEE-754 doubles.
+    let power = u32::from(decimals.min(38));
+    let divisor = 10f64.powi(power as i32);
+    (raw_balance as f64) / divisor * price_usd
+}
+
+/// Format a float with at most 6 significant decimals and strip
+/// trailing zeros. Keeps CSV output compact without pulling in a
+/// dedicated formatting crate.
+fn format_csv_number(v: f64) -> String {
+    if !v.is_finite() {
+        return String::new();
+    }
+    let formatted = format!("{v:.6}");
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

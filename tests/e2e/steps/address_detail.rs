@@ -436,6 +436,73 @@ async fn tab_bar_no_token(world: &mut AppWorld) {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Reverse ENS + Y / e clipboard bindings (plan/6 §11 "Shipped")
+// ---------------------------------------------------------------------------
+
+#[given(
+    regex = r#"^the ENS resolver knows that "(0x[0-9a-fA-F]{40})" resolves reverse to "([^"]+)"$"#
+)]
+async fn ens_knows_reverse(world: &mut AppWorld, addr_hex: String, name: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    world.ens_stub.set_reverse(address, &name);
+}
+
+#[when(regex = r#"^the user opens AddressDetail with reverse ENS for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn opens_address_detail_with_reverse_ens(world: &mut AppWorld, addr_hex: String) {
+    use crate::steps::search::spawn_address_detail_with_reverse_ens;
+    build_stack(world);
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let reader = world.address_reader_stub.clone();
+    let ens = world.ens_stub.clone();
+    let screen = spawn_address_detail_with_reverse_ens(Chain::Ethereum, addr, reader, ens);
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[then(regex = r#"^once the overview is loaded, pressing Y copies "([^"]+)"$"#)]
+async fn overview_loaded_then_y_copies(world: &mut AppWorld, expected: String) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).current().is_some()).await;
+    let screen = stack.top_mut().expect("stack non-empty");
+    let cmd = screen.handle_key(KeyEvent {
+        code: KeyCode::Char('Y'),
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::empty(),
+    });
+    match cmd {
+        Command::None | Command::Refresh => {}
+        other => panic!("unexpected command after Y: {other:?}"),
+    }
+    let copied = current(stack).last_copied_value().map(str::to_string);
+    assert_eq!(copied.as_deref(), Some(expected.as_str()));
+}
+
+#[when("the user presses e on the Tokens tab")]
+async fn presses_e_on_tokens(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    assert_eq!(current(stack).active_tab(), AddressTab::Tokens);
+    press_key(stack, KeyCode::Char('e'));
+}
+
+#[then(regex = r#"^the clipboard sink holds a Tokens CSV with (\d+) data rows$"#)]
+async fn clipboard_has_tokens_csv(world: &mut AppWorld, expected_rows: usize) {
+    let stack = world.stack.as_ref().expect("stack");
+    let screen = current(stack);
+    let csv = screen
+        .last_copied_value()
+        .expect("clipboard sink must hold a CSV blob");
+    let mut lines = csv.lines();
+    let header = lines.next().expect("CSV header line");
+    assert!(
+        header.starts_with("symbol,name,contract,"),
+        "unexpected header: {header}",
+    );
+    let data_rows = lines.filter(|l| !l.is_empty()).count();
+    assert_eq!(data_rows, expected_rows);
+}
+
 #[then(regex = r#"^the inline Token overview shows symbol "([^"]+)" and price "\$([0-9.]+)"$"#)]
 async fn inline_token_shows_symbol_and_price(
     world: &mut AppWorld,

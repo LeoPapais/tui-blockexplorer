@@ -487,6 +487,50 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
     )
 }
 
+/// Address-detail spawner that overlays the reverse-ENS stub onto
+/// the `AddressOverview` returned by the reader. Mirrors the
+/// production composition (`load_address_overview` threads an
+/// `EnsResolverPort` once plan/6 §11 "Shipped" lands) without
+/// pulling the full feed.
+#[allow(dead_code)]
+pub(crate) fn spawn_address_detail_with_reverse_ens<
+    R: AddressReaderPort + Clone + 'static,
+    E: blockexplorer_tui::application::ports::EnsResolverPort + Clone + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    ens: E,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = address_feed();
+    let reader_for_task = reader.clone();
+    let ens_for_task = ens.clone();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
+            updates_tx,
+            mut input_rx,
+            ..
+        } = sender;
+        while let Some(addr) = input_rx.recv().await {
+            let (ov_res, rev_res) = tokio::join!(
+                reader_for_task.get(addr, chain),
+                ens_for_task.reverse(addr, chain),
+            );
+            if let Ok(Some(mut ov)) = ov_res {
+                if ov.ens_name.is_none()
+                    && let Ok(Some(name)) = rev_res.as_ref()
+                {
+                    ov.ens_name = Some(name.clone());
+                }
+                if updates_tx.send(ov).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    Box::new(AddressDetailScreen::loading(chain, address, feed))
+}
+
 /// Address-detail spawner for the ERC-20 inline Token tab
 /// scenarios. Uses the production `infra::address_feed::spawn`
 /// directly so the gated-probe behaviour is exercised end-to-end.
