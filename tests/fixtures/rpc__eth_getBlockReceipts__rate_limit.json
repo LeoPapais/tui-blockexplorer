@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32005,
+    "message": "Your app has exceeded its compute units per second capacity. If you have retries enabled, you can safely ignore this error. Otherwise, contact Alchemy support if you wish to raise your limits."
+  }
+}

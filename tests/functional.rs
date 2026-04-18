@@ -162,3 +162,9 @@ mod search_feed_cache;
 
 #[path = "functional/block_detail_screen_keys.rs"]
 mod block_detail_screen_keys;
+
+#[path = "functional/load_block_transactions.rs"]
+mod load_block_transactions;
+
+#[path = "functional/alchemy_block_receipts.rs"]
+mod alchemy_block_receipts;

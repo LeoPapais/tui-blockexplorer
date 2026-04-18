@@ -27,7 +27,10 @@ pub mod tx_simulation;
 pub mod tx_trace;
 
 pub use address::{Address, AddressOverview};
-pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary, TxCategory};
+pub use block::{
+    Block, BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxCursor, BlockTxPage,
+    BlockTxReceipt, TxCategory,
+};
 pub use chain::Chain;
 pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
 pub use contract_read::{

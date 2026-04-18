@@ -3,7 +3,7 @@
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use tiny_keccak::{Hasher, Keccak};
 
-use crate::domain::{Address, Chain, DomainError, TxHash, UnixTimestamp, Wei, tx};
+use crate::domain::{Address, Chain, DomainError, TxHash, TxStatus, UnixTimestamp, Wei, tx};
 
 /// A block height. Wrapped in a newtype to avoid mixing with other `u64`
 /// quantities.
@@ -180,6 +180,127 @@ impl TxCategory {
             Self::Interaction => "interaction",
         }
     }
+}
+
+/// One row on the Block Detail "Transactions" tab. Produced by the
+/// application-layer `load_block_transactions` use case from the
+/// `BlockReceiptsPort` response. See `plan/3-block-detail.md` §12.3.
+///
+/// The shape combines just enough receipt fields (`gas_used`,
+/// `status`, `contract_address`) with just enough tx fields
+/// (`value`, `has_calldata`) to render a dense single-line row
+/// per transaction while keeping the transport cheap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockTxReceipt {
+    pub hash: TxHash,
+    pub tx_index: u64,
+    pub from: Address,
+    /// `None` on contract-creation transactions (see also
+    /// `contract_address`).
+    pub to: Option<Address>,
+    pub value: Wei,
+    /// True when the original tx carried any calldata past the
+    /// `0x` prefix. Stored as a boolean so the adapter does not
+    /// need to ship kilobytes of input for every tx row.
+    pub has_calldata: bool,
+    /// `None` while the receipt is still missing (should never
+    /// happen for confirmed block txs, kept optional for
+    /// defensive mapping).
+    pub gas_used: Option<u64>,
+    pub status: TxStatus,
+    /// Set when the tx deployed a new contract. Equal to the
+    /// receipt's `contractAddress` field.
+    pub contract_address: Option<Address>,
+    /// Precomputed through [`TxCategory::classify`] so the UI can
+    /// render the badge without re-deriving it each frame.
+    pub category: TxCategory,
+}
+
+impl BlockTxReceipt {
+    /// Build a row from the raw fields exposed by
+    /// `eth_getBlockByNumber(fullTxs=true)` + `eth_getBlockReceipts`.
+    /// Computes `has_calldata` from `input` and the category via
+    /// [`TxCategory::classify`].
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_fields(
+        hash: TxHash,
+        tx_index: u64,
+        from: Address,
+        to: Option<Address>,
+        value: Wei,
+        input: &[u8],
+        gas_used: Option<u64>,
+        status: TxStatus,
+        contract_address: Option<Address>,
+    ) -> Self {
+        let has_calldata = !input.is_empty();
+        let category = TxCategory::classify(to, input, value);
+        Self {
+            hash,
+            tx_index,
+            from,
+            to,
+            value,
+            has_calldata,
+            gas_used,
+            status,
+            contract_address,
+            category,
+        }
+    }
+}
+
+/// Pagination cursor used by `load_block_transactions`. Cursor-based
+/// so callers never need to know the full row count up front.
+///
+/// - `offset` is the 0-indexed row to start at.
+/// - `page_size` is the number of rows to return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockTxCursor {
+    pub offset: usize,
+    pub page_size: usize,
+}
+
+impl BlockTxCursor {
+    /// Default cursor used by the Transactions tab: first page,
+    /// 20 rows.
+    #[must_use]
+    pub const fn first_page() -> Self {
+        Self {
+            offset: 0,
+            page_size: 20,
+        }
+    }
+
+    /// Cursor pointing at the page immediately after the current
+    /// page. Clamped at the page size defined by `self`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self {
+            offset: self.offset + self.page_size,
+            page_size: self.page_size,
+        }
+    }
+}
+
+impl Default for BlockTxCursor {
+    fn default() -> Self {
+        Self::first_page()
+    }
+}
+
+/// One page of `BlockTxReceipt` rows, carrying enough metadata for
+/// the screen to know whether another page is available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockTxPage {
+    pub rows: Vec<BlockTxReceipt>,
+    /// Cursor to pass to the next call to `load_block_transactions`;
+    /// `None` when the current page reached the end of the block.
+    pub next: Option<BlockTxCursor>,
+    /// Total number of rows in the underlying block. Exposed so the
+    /// UI can render "showing 20 of 312" without a second call.
+    pub total: usize,
 }
 
 /// Recover the Polygon PoS validator that sealed a block.
