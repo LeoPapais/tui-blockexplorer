@@ -1,9 +1,9 @@
 //! Mempool screen (MVP: stub-driven stream, no filter modal).
 //!
-//! See `plan/5-mempool.md` section 11.2. The Alchemy WebSocket adapter
-//! that turns this screen into a live view ships in a later slice; for
-//! now the screen works end-to-end only when the composition root
-//! injects a stub.
+//! See `plan/5-mempool.md` section 11.2 for the base slice and
+//! section 11.3 for the §8.6 follow-ups: the `update_filter` control
+//! channel (§11.3.2) and the reconnecting badge fed by a status
+//! channel (§11.3.3).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -12,10 +12,11 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
+    application::ConnectionStatus,
     domain::{PendingTx, PendingTxEvent, PendingTxFilter, TxHash},
 };
 
@@ -33,6 +34,16 @@ pub struct MempoolScreen {
     selected: usize,
     paused: bool,
     open_tx_factory: OpenPendingTxFactory,
+    /// Control channel that receives filter updates so the composition
+    /// root can forward them to `PendingTxStreamPort::update_filter`.
+    /// `None` means the screen runs without a server-side counterpart
+    /// (demo mode, most BDD scenarios); filter changes still apply
+    /// client-side.
+    filter_control: Option<UnboundedSender<PendingTxFilter>>,
+    /// Optional stream-connection status feed. `None` keeps the screen
+    /// at [`ConnectionStatus::Connected`] for its entire lifetime.
+    status_rx: Option<UnboundedReceiver<ConnectionStatus>>,
+    stream_state: ConnectionStatus,
 }
 
 impl MempoolScreen {
@@ -52,7 +63,28 @@ impl MempoolScreen {
             selected: 0,
             paused: false,
             open_tx_factory,
+            filter_control: None,
+            status_rx: None,
+            stream_state: ConnectionStatus::Connected,
         }
+    }
+
+    /// Attach the control-channel sender used to forward filter
+    /// changes to `PendingTxStreamPort::update_filter`. See
+    /// `plan/5-mempool.md` §11.3.2.
+    #[must_use]
+    pub fn with_filter_control(mut self, control: UnboundedSender<PendingTxFilter>) -> Self {
+        self.filter_control = Some(control);
+        self
+    }
+
+    /// Attach a `ConnectionStatus` feed produced by the composition
+    /// root. Drained on every tick; the latest status controls the
+    /// reconnecting badge. See `plan/5-mempool.md` §11.3.3.
+    #[must_use]
+    pub fn with_status_feed(mut self, status_rx: UnboundedReceiver<ConnectionStatus>) -> Self {
+        self.status_rx = Some(status_rx);
+        self
     }
 
     /// Read-only access to the rendered items. Exposed for tests.
@@ -67,13 +99,37 @@ impl MempoolScreen {
         self.paused
     }
 
+    /// Access the active client-side filter. Exposed for tests that
+    /// assert on the default filter.
+    #[must_use]
+    pub fn filter(&self) -> &PendingTxFilter {
+        &self.filter
+    }
+
+    /// Current connection status as surfaced by the header badge.
+    #[must_use]
+    pub fn stream_state(&self) -> &ConnectionStatus {
+        &self.stream_state
+    }
+
     /// Update the client-side filter at runtime. Items already on
-    /// screen that no longer match are pruned immediately.
+    /// screen that no longer match are pruned immediately (see
+    /// `plan/5-mempool.md` §11.3.2 for the rationale behind the
+    /// prune-on-change semantic). When a control channel is attached
+    /// (`with_filter_control`) the same filter is broadcast on that
+    /// channel for the composition root to forward to
+    /// `PendingTxStreamPort::update_filter`.
     pub fn set_filter(&mut self, filter: PendingTxFilter) {
         self.filter = filter;
         self.items.retain(|tx| self.filter.matches(tx));
         if self.selected >= self.items.len() {
             self.selected = self.items.len().saturating_sub(1);
+        }
+        if let Some(control) = self.filter_control.as_ref() {
+            // Fire-and-forget: losing the server-side consumer is
+            // acceptable because the client-side filter we just
+            // applied already masks non-matching events.
+            let _ = control.send(filter);
         }
     }
 
@@ -100,11 +156,45 @@ impl MempoolScreen {
     }
 
     fn drain_feed(&mut self) {
+        self.drain_status();
         if self.paused {
             return;
         }
-        while let Ok(event) = self.rx.try_recv() {
-            self.apply_event(event);
+        loop {
+            match self.rx.try_recv() {
+                Ok(event) => self.apply_event(event),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    // The upstream sender vanished without publishing
+                    // a status frame (stub/adapter crashed, socket
+                    // closed, etc.). Reuse the same "reconnecting"
+                    // state Home surfaces so the UX is consistent.
+                    self.stream_state = ConnectionStatus::Disconnected {
+                        reconnect_scheduled: true,
+                    };
+                    break;
+                }
+            }
+        }
+    }
+
+    fn drain_status(&mut self) {
+        let Some(rx) = self.status_rx.as_mut() else {
+            return;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok(status) => self.stream_state = status,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    // Status channel is gone. Drop it so we never poll
+                    // a dead receiver; leave stream_state at its
+                    // current value so a previously-seen Disconnected
+                    // stays visible.
+                    self.status_rx = None;
+                    break;
+                }
+            }
         }
     }
 }
@@ -126,7 +216,19 @@ impl Screen for MempoolScreen {
 
         // Header
         let pause_badge = if self.paused { "  [paused]" } else { "" };
-        let header = format!("Mempool  items: {}{pause_badge}", self.items.len());
+        let status_badge = match self.stream_state {
+            ConnectionStatus::Connected => "",
+            ConnectionStatus::Disconnected {
+                reconnect_scheduled: true,
+            } => "  [reconnecting]",
+            ConnectionStatus::Disconnected {
+                reconnect_scheduled: false,
+            } => "  [disconnected]",
+        };
+        let header = format!(
+            "Mempool  items: {}{pause_badge}{status_badge}",
+            self.items.len()
+        );
         frame.render_widget(
             Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Mempool")),
             chunks[0],

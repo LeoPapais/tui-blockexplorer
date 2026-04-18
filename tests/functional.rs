@@ -58,6 +58,15 @@ mod alchemy_tx_reader;
 #[path = "functional/observe_pending_txs.rs"]
 mod observe_pending_txs;
 
+#[path = "functional/mempool_screen.rs"]
+mod mempool_screen;
+
+#[path = "functional/mempool_screen_render.rs"]
+mod mempool_screen_render;
+
+#[path = "functional/alchemy_pending_tx_stream.rs"]
+mod alchemy_pending_tx_stream;
+
 #[path = "functional/observe_new_heads.rs"]
 mod observe_new_heads;
 
