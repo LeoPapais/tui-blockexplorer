@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "result": {
+    "event": {},
+    "function": {
+      "0xa9059cbb": [
+        {
+          "name": "transfer(address,uint256)",
+          "filtered": false
+        },
+        {
+          "name": "many_msg_babbage(bytes1)",
+          "filtered": true
+        }
+      ]
+    }
+  }
+}

@@ -2,9 +2,14 @@
 //! tab of the TxDetail screen, enriched with decoded method and logs.
 //!
 //! Signature decoding falls through:
-//!   ABI (Etherscan) -> signature directory (Sourcify 4byte) -> raw.
+//!   ABI (Etherscan) -> openchain -> Samczsun -> raw.
+//! The directory fallbacks sit behind `SignatureDirectoryPort`
+//! (composed of openchain + Samczsun adapters by `infra`); the
+//! returned [`SignatureHit`] carries the provenance, which the UI
+//! surfaces via [`SignatureSource`].
 //!
-//! See `plan/4-tx-detail.md` sections 12.1 and 12.4.2.
+//! See `plan/4-tx-detail.md` sections 12.1 and 12.4.2 and
+//! `plan/15-backlog.md` section 3.2.
 
 use serde_json::Value;
 
@@ -12,8 +17,7 @@ use crate::{
     application::{
         DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
         ports::{
-            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort,
-            TxTracePort,
+            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{Chain, DomainError, LogEntry, TxHash},
@@ -78,11 +82,7 @@ where
 /// Resolve asset changes for a loaded [`TxView`]. Uses
 /// [`LoadStatus`] so the UI can distinguish between "not available
 /// on this chain" and a transient fetch failure.
-pub async fn load_asset_changes<S: TxSimulationPort>(
-    sim: &S,
-    view: &mut TxView,
-    chain: Chain,
-) {
+pub async fn load_asset_changes<S: TxSimulationPort>(sim: &S, view: &mut TxView, chain: Chain) {
     let status = match sim.simulate_asset_changes(&view.tx, chain).await {
         Ok(changes) => LoadStatus::Loaded(changes),
         Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
@@ -92,11 +92,7 @@ pub async fn load_asset_changes<S: TxSimulationPort>(
 }
 
 /// Resolve the state diff for a loaded [`TxView`].
-pub async fn load_state_diff<T: TxTracePort>(
-    tracer: &T,
-    view: &mut TxView,
-    chain: Chain,
-) {
+pub async fn load_state_diff<T: TxTracePort>(tracer: &T, view: &mut TxView, chain: Chain) {
     let status = match tracer.state_diff(view.tx.hash, chain).await {
         Ok(diff) => LoadStatus::Loaded(diff),
         Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
@@ -125,10 +121,10 @@ where
             source: SignatureSource::Abi,
         });
     }
-    if let Ok(Some(signature)) = signatures.lookup_selector(selector).await {
+    if let Ok(Some(hit)) = signatures.lookup_selector(selector).await {
         return Some(DecodedMethod {
-            signature,
-            source: SignatureSource::SignatureDirectory,
+            signature: hit.signature,
+            source: hit.source,
         });
     }
     None
@@ -153,10 +149,10 @@ where
             source: SignatureSource::Abi,
         });
     }
-    if let Ok(Some(signature)) = signatures.lookup_event_topic(topic0).await {
+    if let Ok(Some(hit)) = signatures.lookup_event_topic(topic0).await {
         return Some(DecodedSignature {
-            signature,
-            source: SignatureSource::SignatureDirectory,
+            signature: hit.signature,
+            source: hit.source,
         });
     }
     None

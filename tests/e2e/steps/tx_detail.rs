@@ -6,12 +6,15 @@
 use std::time::Duration;
 
 use blockexplorer_tui::{
-    adapters::ui::{ScreenStack, TxDetailScreen, TxTab, tx_feed},
-    application::{LoadStatus, TxView, use_cases::load_tx_overview},
+    adapters::{
+        signatures::CompositeSignatureDirectory,
+        ui::{ScreenStack, TxDetailScreen, TxTab, tx_feed},
+    },
+    application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
-        AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
-        BlockNumber, Chain, ContractAbi, DiffChange, LogEntry, StateDiff, Transaction,
-        TxHash, TxStatus, TxType, Wei,
+        Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
+        Chain, ContractAbi, DiffChange, LogEntry, StateDiff, Transaction, TxHash, TxStatus, TxType,
+        Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -39,9 +42,7 @@ fn sample_tx(hash_hex: &str, status: TxStatus) -> Transaction {
         ),
         tx_index: Some(0),
         from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
-        to: Some(
-            Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
-        ),
+        to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
         value: Wei::new(0),
         gas_price: Wei::new(14_000_000_000),
         gas_used: Some(52_341),
@@ -95,9 +96,7 @@ async fn reader_knows_success(world: &mut AppWorld, hash_hex: String) {
     world.tx_reader_stub.insert(tx);
 }
 
-#[given(
-    regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" failed with reason "([^"]+)"$"#
-)]
+#[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" failed with reason "([^"]+)"$"#)]
 async fn reader_knows_failure(world: &mut AppWorld, hash_hex: String, reason: String) {
     let tx = sample_tx(
         &hash_hex,
@@ -134,12 +133,11 @@ async fn contract_source_has_abi(world: &mut AppWorld, addr_hex: String) {
 #[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" emitted a Transfer event$"#)]
 async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
     let mut tx = sample_tx(&hash_hex, TxStatus::Success);
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     tx.logs.push(LogEntry {
         address: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
         topics: vec![topic],
@@ -151,12 +149,11 @@ async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
 
 #[given("the signature directory resolves the Transfer event topic")]
 async fn sigdb_has_transfer_event(world: &mut AppWorld) {
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     world
         .signatures_stub
         .set_event_topic(topic, "Transfer(address,address,uint256)");
@@ -351,9 +348,7 @@ async fn overview_status(world: &mut AppWorld, expected: String) {
     assert_eq!(actual_status_line, expected);
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the decoded method is "([^"]+)" from ABI$"#
-)]
+#[then(regex = r#"^once the transaction is loaded, the decoded method is "([^"]+)" from ABI$"#)]
 async fn overview_method_from_abi(world: &mut AppWorld, expected: String) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
@@ -373,9 +368,7 @@ async fn overview_method_from_abi(world: &mut AppWorld, expected: String) {
     );
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the Asset Changes tab lists (\d+) change$"#
-)]
+#[then(regex = r#"^once the transaction is loaded, the Asset Changes tab lists (\d+) change$"#)]
 async fn asset_changes_lists_n(world: &mut AppWorld, expected: u32) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
@@ -430,9 +423,140 @@ async fn state_changes_lists_n(world: &mut AppWorld, expected: u32) {
     }
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#
-)]
+// ---------------------------------------------------------------------------
+// Composite (openchain + Samczsun) fallback-chain scenarios
+// ---------------------------------------------------------------------------
+//
+// These steps back the `plan/15-backlog.md` section 3.2 scenarios:
+//   - "Unknown selector resolves via openchain"
+//   - "Openchain miss falls back to Samczsun"
+//
+// They prime two directory stubs (openchain_stub, samczsun_stub) and
+// compose them via `CompositeSignatureDirectory`, so the assertions
+// can pin the exact provenance the UI will surface.
+
+const TRANSFER_SELECTOR: [u8; 4] = [0xa9, 0x05, 0x9c, 0xbb];
+
+#[given("a tx whose target has no verified ABI")]
+async fn tx_without_verified_abi(world: &mut AppWorld) {
+    // The target contract simply has no entry in the contract-source
+    // stub; the stub returns `None` from `get_abi` by default. We
+    // still prime a successful tx so the decoding pipeline reaches
+    // the directory fallback.
+    let hash = "0xeeee016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ee";
+    let tx = sample_tx(hash, TxStatus::Success);
+    world.last_tx_hash = Some(tx.hash);
+    world.tx_reader_stub.insert(tx);
+}
+
+#[given(regex = r#"^openchain returns "([^"]+)" for the selector$"#)]
+async fn openchain_returns(world: &mut AppWorld, signature: String) {
+    world.openchain_stub.set_selector_with_source(
+        TRANSFER_SELECTOR,
+        &signature,
+        SignatureSource::Openchain,
+    );
+}
+
+#[given("openchain returns no match for the selector")]
+async fn openchain_returns_no_match(_world: &mut AppWorld) {
+    // No-op: the openchain stub is empty by default, which the
+    // composite reads as `Ok(None)` and then delegates to Samczsun.
+}
+
+#[given(regex = r#"^samczsun returns "([^"]+)" for the selector$"#)]
+async fn samczsun_returns(world: &mut AppWorld, signature: String) {
+    world.samczsun_stub.set_selector_with_source(
+        TRANSFER_SELECTOR,
+        &signature,
+        SignatureSource::Samczsun,
+    );
+}
+
+#[when("the user opens TxDetail")]
+async fn opens_tx_detail_via_composite(world: &mut AppWorld) {
+    build_stack(world);
+    let chain = world.active_chain.expect("chain");
+    let hash = last_tx_hash(world);
+    let reader = world.tx_reader_stub.clone();
+    let contract_source = world.contract_source_stub.clone();
+    let openchain = world.openchain_stub.clone();
+    let samczsun = world.samczsun_stub.clone();
+    let screen =
+        spawn_tx_detail_with_composite(chain, hash, reader, contract_source, openchain, samczsun);
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[then("the Overview tab shows that signature sourced from the directory")]
+async fn overview_signature_sourced_from_directory(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current_tx_detail(s)
+            .current()
+            .and_then(|v| v.decoded_method.as_ref())
+            .is_some()
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    let method = view.decoded_method.as_ref().expect("decoded");
+    assert_eq!(method.signature, "transfer(address,uint256)");
+    assert_eq!(method.source, SignatureSource::Openchain);
+}
+
+#[then("the Overview tab shows that signature with provenance samczsun")]
+async fn overview_signature_with_samczsun_provenance(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current_tx_detail(s)
+            .current()
+            .and_then(|v| v.decoded_method.as_ref())
+            .is_some()
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    let method = view.decoded_method.as_ref().expect("decoded");
+    assert_eq!(method.signature, "transfer(address,uint256)");
+    assert_eq!(method.source, SignatureSource::Samczsun);
+}
+
+fn spawn_tx_detail_with_composite(
+    chain: Chain,
+    hash: TxHash,
+    reader: crate::support::stubs::StubTxReaderPort,
+    contract_source: crate::support::stubs::StubContractSourcePort,
+    openchain: crate::support::stubs::StubSignatureDirectoryPort,
+    samczsun: crate::support::stubs::StubSignatureDirectoryPort,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = tx_feed();
+    let signatures = CompositeSignatureDirectory::new(openchain, samczsun);
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::TxFeedSender {
+            updates_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(h) = input_rx.recv().await {
+            let result = load_tx_overview::run_with_decoding(
+                &reader,
+                &contract_source,
+                &signatures,
+                h,
+                chain,
+            )
+            .await;
+            if let Ok(view) = result
+                && updates_tx.send(view).is_err()
+            {
+                break;
+            }
+        }
+    });
+    Box::new(TxDetailScreen::loading(chain, hash, feed))
+}
+
+#[then(regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#)]
 async fn logs_tab_decodes(world: &mut AppWorld, expected: String) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {

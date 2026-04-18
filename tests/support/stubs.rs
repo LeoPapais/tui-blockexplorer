@@ -12,13 +12,16 @@ use std::{
 };
 
 use blockexplorer_tui::{
-    application::ports::{
-        AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-        ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-        EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
-        PricesPort, ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort,
-        TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort,
-        TxTracePort,
+    application::{
+        SignatureSource,
+        ports::{
+            AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
+            ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
+            EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
+            PricesPort, ProxyDetectionPort, SignatureDirectoryPort, SignatureHit, StoragePort,
+            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
+            TxSimulationPort, TxTracePort,
+        },
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
@@ -29,8 +32,8 @@ use blockexplorer_tui::{
         TransferPage, TxHash, TxSummary, Wei,
     },
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use serde::Deserialize;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::fixture_loader;
 
@@ -141,7 +144,11 @@ impl NetworkStatusPort for StubNetworkStatusPort {
         if state.broken {
             return Err(DomainError::ProviderUnavailable);
         }
-        state.by_chain.get(&chain).cloned().ok_or(DomainError::NotFound)
+        state
+            .by_chain
+            .get(&chain)
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 
@@ -191,7 +198,11 @@ impl GasOraclePort for StubGasOraclePort {
         if state.broken {
             return Err(DomainError::ProviderUnavailable);
         }
-        state.by_chain.get(&chain).cloned().ok_or(DomainError::NotFound)
+        state
+            .by_chain
+            .get(&chain)
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 
@@ -274,11 +285,7 @@ impl StubTxLookupPort {
 }
 
 impl TxLookupPort for StubTxLookupPort {
-    async fn get(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<Option<TxSummary>, DomainError> {
+    async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<TxSummary>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
     }
@@ -357,11 +364,7 @@ impl StubAddressLookupPort {
 }
 
 impl AddressLookupPort for StubAddressLookupPort {
-    async fn classify(
-        &self,
-        address: Address,
-        _chain: Chain,
-    ) -> Result<AddressKind, DomainError> {
+    async fn classify(&self, address: Address, _chain: Chain) -> Result<AddressKind, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         // Default: unknown addresses are EOAs. Tests that care prime
         // the stub explicitly.
@@ -405,11 +408,7 @@ impl StubEnsResolverPort {
 }
 
 impl EnsResolverPort for StubEnsResolverPort {
-    async fn forward(
-        &self,
-        name: &str,
-        _chain: Chain,
-    ) -> Result<Option<Address>, DomainError> {
+    async fn forward(&self, name: &str, _chain: Chain) -> Result<Option<Address>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.forward.get(&name.to_lowercase()).copied())
     }
@@ -469,11 +468,7 @@ impl TokenSearchPort for StubTokenSearchPort {
             .unwrap_or_default())
     }
 
-    async fn by_name(
-        &self,
-        text: &str,
-        _chain: Chain,
-    ) -> Result<Vec<TokenMetadata>, DomainError> {
+    async fn by_name(&self, text: &str, _chain: Chain) -> Result<Vec<TokenMetadata>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state
             .by_name
@@ -549,11 +544,7 @@ impl StubTxReaderPort {
 }
 
 impl TxReaderPort for StubTxReaderPort {
-    async fn get(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<Option<Transaction>, DomainError> {
+    async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<Transaction>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
     }
@@ -783,8 +774,8 @@ impl ContractSourcePort for StubContractSourcePort {
 
 #[derive(Default)]
 struct SignatureState {
-    selectors: HashMap<[u8; 4], String>,
-    topics: HashMap<[u8; 32], String>,
+    selectors: HashMap<[u8; 4], SignatureHit>,
+    topics: HashMap<[u8; 32], SignatureHit>,
 }
 
 #[derive(Default, Clone)]
@@ -797,14 +788,48 @@ impl StubSignatureDirectoryPort {
         Self::default()
     }
 
+    /// Prime a selector hit. Defaults the provenance to
+    /// [`SignatureSource::Openchain`], matching the live fallback
+    /// chain's primary. Use [`Self::set_selector_with_source`] when
+    /// a test wants to pin Samczsun as the source.
     pub fn set_selector(&self, selector: [u8; 4], signature: &str) {
+        self.set_selector_with_source(selector, signature, SignatureSource::Openchain);
+    }
+
+    pub fn set_selector_with_source(
+        &self,
+        selector: [u8; 4],
+        signature: &str,
+        source: SignatureSource,
+    ) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.selectors.insert(selector, signature.to_string());
+        state.selectors.insert(
+            selector,
+            SignatureHit {
+                signature: signature.to_string(),
+                source,
+            },
+        );
     }
 
     pub fn set_event_topic(&self, topic: [u8; 32], signature: &str) {
+        self.set_event_topic_with_source(topic, signature, SignatureSource::Openchain);
+    }
+
+    pub fn set_event_topic_with_source(
+        &self,
+        topic: [u8; 32],
+        signature: &str,
+        source: SignatureSource,
+    ) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.topics.insert(topic, signature.to_string());
+        state.topics.insert(
+            topic,
+            SignatureHit {
+                signature: signature.to_string(),
+                source,
+            },
+        );
     }
 }
 
@@ -812,7 +837,7 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
     async fn lookup_selector(
         &self,
         selector: [u8; 4],
-    ) -> Result<Option<String>, DomainError> {
+    ) -> Result<Option<SignatureHit>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.selectors.get(&selector).cloned())
     }
@@ -820,7 +845,7 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
     async fn lookup_event_topic(
         &self,
         topic: [u8; 32],
-    ) -> Result<Option<String>, DomainError> {
+    ) -> Result<Option<SignatureHit>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.topics.get(&topic).cloned())
     }
@@ -903,11 +928,7 @@ impl StubTxTracePort {
 }
 
 impl TxTracePort for StubTxTracePort {
-    async fn state_diff(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<StateDiff, DomainError> {
+    async fn state_diff(&self, hash: TxHash, _chain: Chain) -> Result<StateDiff, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         if state.unsupported {
             return Err(DomainError::FeatureUnavailable);
@@ -1086,12 +1107,7 @@ impl StubContractReaderPort {
         Self::default()
     }
 
-    pub fn set_result(
-        &self,
-        address: Address,
-        signature: &str,
-        result: Vec<DecodedValue>,
-    ) {
+    pub fn set_result(&self, address: Address, signature: &str, result: Vec<DecodedValue>) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state
             .by_call

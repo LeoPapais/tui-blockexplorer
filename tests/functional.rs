@@ -79,8 +79,11 @@ mod alchemy_token_reader;
 #[path = "functional/etherscan_contract_source.rs"]
 mod etherscan_contract_source;
 
-#[path = "functional/sourcify_signatures.rs"]
-mod sourcify_signatures;
+#[path = "functional/openchain_signatures.rs"]
+mod openchain_signatures;
+
+#[path = "functional/composite_signature_directory.rs"]
+mod composite_signature_directory;
 
 #[path = "functional/alchemy_tx_simulation.rs"]
 mod alchemy_tx_simulation;
