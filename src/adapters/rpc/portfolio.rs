@@ -14,7 +14,7 @@ use serde_json::json;
 use super::client::{RpcClient, RpcError};
 use crate::{
     application::ports::PortfolioPort,
-    domain::{Address, Chain, DomainError, TokenHolding, TokenMetadata, Wei},
+    domain::{Address, Chain, DomainError, PriceLookup, TokenHolding, TokenMetadata, Wei},
 };
 
 /// Upper bound on the number of metadata calls issued per
@@ -104,10 +104,7 @@ impl PortfolioPort for AlchemyPortfolio {
                 let addr_hex = addr.to_hex();
                 tokio::spawn(async move {
                     client
-                        .call::<_, RawMetadata>(
-                            "alchemy_getTokenMetadata",
-                            json!([addr_hex]),
-                        )
+                        .call::<_, RawMetadata>("alchemy_getTokenMetadata", json!([addr_hex]))
                         .await
                 })
             })
@@ -136,6 +133,11 @@ impl PortfolioPort for AlchemyPortfolio {
                     decimals: raw_meta.decimals.unwrap_or(0),
                 },
                 balance: Wei::new(balance),
+                // Prices are fetched separately by
+                // `load_address_portfolio`; this adapter only
+                // produces raw balances. See
+                // `plan/15-backlog.md` §3.4.
+                price: PriceLookup::Pending,
             });
         }
         Ok(holdings)

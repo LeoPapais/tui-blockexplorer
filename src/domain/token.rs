@@ -1,9 +1,10 @@
 //! Fungible-token metadata and the overview used by the Token Detail
 //! screen.
 //!
-//! See `plan/8-token-detail.md` section 12.1.
+//! See `plan/8-token-detail.md` section 12.1 and `plan/15-backlog.md`
+//! §3.4 for the `PriceLookup` status used by the price field.
 
-use crate::domain::{Address, TokenPrice};
+use crate::domain::{Address, PriceLookup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenMetadata {
@@ -16,22 +17,24 @@ pub struct TokenMetadata {
 /// Overview shown on the Token Detail screen. Raw supply is stored
 /// without unit scaling so callers can choose how to render it.
 ///
-/// `price` is `None` when the Prices API returns no data or when
-/// it is not wired (demo mode, missing credentials).
+/// `price` tracks the three states surfaced by the Prices API
+/// adapter: a concrete spot price, an "unsupported" marker when
+/// the provider declined to answer, or a pending lookup still in
+/// flight. See `plan/15-backlog.md` §3.4.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenOverview {
     pub metadata: TokenMetadata,
     pub total_supply: u128,
-    pub price: Option<TokenPrice>,
+    pub price: PriceLookup,
 }
 
 impl TokenOverview {
     /// Market cap derived from `price × totalSupply / 10^decimals`.
-    /// Returns `None` when price is missing or `totalSupply` is zero
-    /// (no meaningful cap).
+    /// Returns `None` when the price is not `Available` or
+    /// `totalSupply` is zero (no meaningful cap).
     #[must_use]
     pub fn market_cap(&self) -> Option<f64> {
-        let price = self.price.as_ref()?;
+        let price = self.price.as_available()?;
         if self.total_supply == 0 {
             return None;
         }

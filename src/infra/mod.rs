@@ -29,24 +29,21 @@ use crate::{
         etherscan::{EtherscanClient, EtherscanContractSource},
         prices::{AlchemyPrices, PricesClient},
         rpc::{
-            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
-            AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog,
-            AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyPortfolio,
-            AlchemyProxyDetector, AlchemySimulation, AlchemyStorage, AlchemyTokenReader,
-            AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, RpcClient,
+            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
+            AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
+            AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector, AlchemySimulation,
+            AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
+            AlchemyTxTracer, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
             ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen, TxDetailScreen,
-            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed,
-            tx_feed,
+            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed, tx_feed,
         },
     },
-    application::{
-        ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort,
-    },
+    application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
     domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
 };
 use mempool_feed::EmptyPendingTxStream;
@@ -127,12 +124,7 @@ fn live_address_detail_screen(
     let rpc_for_tx = rpc.clone();
     let etherscan_for_tx = etherscan_key.clone();
     let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
-        live_tx_detail_screen(
-            chain,
-            hash,
-            rpc_for_tx.clone(),
-            etherscan_for_tx.clone(),
-        )
+        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
     });
 
     let rpc_for_token = rpc.clone();
@@ -235,15 +227,9 @@ fn live_token_detail_screen(
 
     let rpc_for_tx = rpc;
     let etherscan_for_tx = etherscan_key;
-    let open_tx: crate::adapters::ui::TokenOpenTxFactory =
-        Box::new(move |hash| {
-            live_tx_detail_screen(
-                chain,
-                hash,
-                rpc_for_tx.clone(),
-                etherscan_for_tx.clone(),
-            )
-        });
+    let open_tx: crate::adapters::ui::TokenOpenTxFactory = Box::new(move |hash| {
+        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
+    });
 
     Box::new(TokenDetailScreen::with_open_tx(
         chain,
@@ -267,10 +253,14 @@ impl crate::application::ports::PricesPort for TokenPrices {
         &self,
         address: crate::domain::Address,
         chain: Chain,
-    ) -> Result<Option<crate::domain::TokenPrice>, crate::domain::DomainError> {
+    ) -> Result<crate::domain::PriceLookup, crate::domain::DomainError> {
         match self {
             TokenPrices::Alchemy(inner) => inner.get_single(address, chain).await,
-            TokenPrices::Noop => Ok(None),
+            // plan/15-backlog.md §3.4: when the Prices API is not
+            // wired we surface `Unsupported` with a provider label
+            // distinct from `alchemy-prices` so the UI can still
+            // tell the user why the column is empty.
+            TokenPrices::Noop => Ok(crate::domain::PriceLookup::Unsupported { provider: "noop" }),
         }
     }
 
@@ -375,7 +365,7 @@ impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
     }
 }
 
-pub use config::{AppConfig, ApiCredentials, ConfigLoader};
+pub use config::{ApiCredentials, AppConfig, ConfigLoader};
 
 /// Hint printed when the binary is invoked without credentials and
 /// without `--demo`.
@@ -492,12 +482,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                                 open_tx,
                             ))
                         }
-                        ResolvedEntity::Tx { hash, .. } => live_tx_detail_screen(
-                            chain,
-                            hash,
-                            rpc.clone(),
-                            etherscan_key.clone(),
-                        ),
+                        ResolvedEntity::Tx { hash, .. } => {
+                            live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
+                        }
                         ResolvedEntity::Address { address, .. } => {
                             // Always route to AddressDetail: the screen
                             // itself detects bytecode and surfaces a
@@ -561,11 +548,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
             let open_tx = Box::new(move |hash| {
                 live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
             });
-            Box::new(MempoolScreen::new(
-                rx,
-                PendingTxFilter::default(),
-                open_tx,
-            ))
+            Box::new(MempoolScreen::new(rx, PendingTxFilter::default(), open_tx))
         })
     };
 
@@ -588,13 +571,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         let snapshot = AppConfigSnapshot {
             chain,
             alchemy_key_present: config.has_alchemy_key(),
-            config_path_hint: Some(
-                "~/.config/blockexplorer-tui/config.toml (via XDG)".to_string(),
-            ),
+            config_path_hint: Some("~/.config/blockexplorer-tui/config.toml (via XDG)".to_string()),
         };
-        Box::new(move || -> Box<dyn Screen> {
-            Box::new(SettingsScreen::new(snapshot.clone()))
-        })
+        Box::new(move || -> Box<dyn Screen> { Box::new(SettingsScreen::new(snapshot.clone())) })
     };
 
     let mut stack = ScreenStack::new();

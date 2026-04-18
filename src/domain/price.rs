@@ -20,6 +20,35 @@ pub struct TokenPrice {
     pub as_of: UnixTimestamp,
 }
 
+/// Result of a spot-price lookup.
+///
+/// A token either has a price with the provider (`Available`), is
+/// known not to be indexed by the provider (`Unsupported`, carrying
+/// the provider label so the UI can tell the user which source
+/// declined to answer), or the lookup is still in flight
+/// (`Pending`).
+///
+/// See `plan/15-backlog.md` §3.4.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PriceLookup {
+    Available(TokenPrice),
+    Unsupported { provider: &'static str },
+    Pending,
+}
+
+impl PriceLookup {
+    /// Accessor for the spot price when the lookup is `Available`.
+    /// Returns `None` for both `Unsupported` and `Pending` to match
+    /// the "no data" path at the UI layer.
+    #[must_use]
+    pub fn as_available(&self) -> Option<&TokenPrice> {
+        match self {
+            PriceLookup::Available(p) => Some(p),
+            _ => None,
+        }
+    }
+}
+
 /// Time range the historical chart can display. The variant order
 /// matches the UI binding (`1` → D1, `2` → M1, `3` → Y1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

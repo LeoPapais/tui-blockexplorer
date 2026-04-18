@@ -14,23 +14,22 @@ use std::{
 use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-        ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-        EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
-        PricesPort, ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort,
-        TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort,
-        TxTracePort,
+        ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort, EventLogPort,
+        GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort, PricesPort,
+        ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort, TokenSearchPort,
+        TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
         DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, PendingTx,
-        PendingTxEvent, PendingTxFilter, PriceSeries, PriceWindow, ProxyInfo, StateDiff,
-        TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction, TransferCursor,
-        TransferPage, TxHash, TxSummary, Wei,
+        PendingTxEvent, PendingTxFilter, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
+        StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
+        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use serde::Deserialize;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::fixture_loader;
 
@@ -141,7 +140,11 @@ impl NetworkStatusPort for StubNetworkStatusPort {
         if state.broken {
             return Err(DomainError::ProviderUnavailable);
         }
-        state.by_chain.get(&chain).cloned().ok_or(DomainError::NotFound)
+        state
+            .by_chain
+            .get(&chain)
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 
@@ -191,7 +194,11 @@ impl GasOraclePort for StubGasOraclePort {
         if state.broken {
             return Err(DomainError::ProviderUnavailable);
         }
-        state.by_chain.get(&chain).cloned().ok_or(DomainError::NotFound)
+        state
+            .by_chain
+            .get(&chain)
+            .cloned()
+            .ok_or(DomainError::NotFound)
     }
 }
 
@@ -274,11 +281,7 @@ impl StubTxLookupPort {
 }
 
 impl TxLookupPort for StubTxLookupPort {
-    async fn get(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<Option<TxSummary>, DomainError> {
+    async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<TxSummary>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
     }
@@ -357,11 +360,7 @@ impl StubAddressLookupPort {
 }
 
 impl AddressLookupPort for StubAddressLookupPort {
-    async fn classify(
-        &self,
-        address: Address,
-        _chain: Chain,
-    ) -> Result<AddressKind, DomainError> {
+    async fn classify(&self, address: Address, _chain: Chain) -> Result<AddressKind, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         // Default: unknown addresses are EOAs. Tests that care prime
         // the stub explicitly.
@@ -405,11 +404,7 @@ impl StubEnsResolverPort {
 }
 
 impl EnsResolverPort for StubEnsResolverPort {
-    async fn forward(
-        &self,
-        name: &str,
-        _chain: Chain,
-    ) -> Result<Option<Address>, DomainError> {
+    async fn forward(&self, name: &str, _chain: Chain) -> Result<Option<Address>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.forward.get(&name.to_lowercase()).copied())
     }
@@ -469,11 +464,7 @@ impl TokenSearchPort for StubTokenSearchPort {
             .unwrap_or_default())
     }
 
-    async fn by_name(
-        &self,
-        text: &str,
-        _chain: Chain,
-    ) -> Result<Vec<TokenMetadata>, DomainError> {
+    async fn by_name(&self, text: &str, _chain: Chain) -> Result<Vec<TokenMetadata>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state
             .by_name
@@ -549,11 +540,7 @@ impl StubTxReaderPort {
 }
 
 impl TxReaderPort for StubTxReaderPort {
-    async fn get(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<Option<Transaction>, DomainError> {
+    async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<Transaction>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
     }
@@ -809,18 +796,12 @@ impl StubSignatureDirectoryPort {
 }
 
 impl SignatureDirectoryPort for StubSignatureDirectoryPort {
-    async fn lookup_selector(
-        &self,
-        selector: [u8; 4],
-    ) -> Result<Option<String>, DomainError> {
+    async fn lookup_selector(&self, selector: [u8; 4]) -> Result<Option<String>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.selectors.get(&selector).cloned())
     }
 
-    async fn lookup_event_topic(
-        &self,
-        topic: [u8; 32],
-    ) -> Result<Option<String>, DomainError> {
+    async fn lookup_event_topic(&self, topic: [u8; 32]) -> Result<Option<String>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.topics.get(&topic).cloned())
     }
@@ -903,11 +884,7 @@ impl StubTxTracePort {
 }
 
 impl TxTracePort for StubTxTracePort {
-    async fn state_diff(
-        &self,
-        hash: TxHash,
-        _chain: Chain,
-    ) -> Result<StateDiff, DomainError> {
+    async fn state_diff(&self, hash: TxHash, _chain: Chain) -> Result<StateDiff, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         if state.unsupported {
             return Err(DomainError::FeatureUnavailable);
@@ -979,7 +956,7 @@ impl TransfersPort for StubTransfersPort {
 
 #[derive(Default)]
 struct PricesState {
-    by_address: HashMap<Address, TokenPrice>,
+    by_address: HashMap<Address, PriceLookup>,
     history: HashMap<(Address, PriceWindow), PriceSeries>,
 }
 
@@ -993,9 +970,22 @@ impl StubPricesPort {
         Self::default()
     }
 
+    /// Prime an `Available` price for this contract.
     pub fn set_single(&self, address: Address, price: TokenPrice) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.by_address.insert(address, price);
+        state
+            .by_address
+            .insert(address, PriceLookup::Available(price));
+    }
+
+    /// Prime an `Unsupported` lookup for this contract. Mirrors the
+    /// Alchemy Prices 404 path covered by
+    /// `plan/15-backlog.md` §3.4.
+    pub fn set_unsupported(&self, address: Address, provider: &'static str) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state
+            .by_address
+            .insert(address, PriceLookup::Unsupported { provider });
     }
 
     pub fn set_history(&self, address: Address, series: PriceSeries) {
@@ -1009,9 +999,15 @@ impl PricesPort for StubPricesPort {
         &self,
         address: Address,
         _chain: Chain,
-    ) -> Result<Option<TokenPrice>, DomainError> {
+    ) -> Result<PriceLookup, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
-        Ok(state.by_address.get(&address).cloned())
+        Ok(state
+            .by_address
+            .get(&address)
+            .cloned()
+            .unwrap_or(PriceLookup::Unsupported {
+                provider: "alchemy-prices",
+            }))
     }
 
     async fn get_history(
@@ -1086,12 +1082,7 @@ impl StubContractReaderPort {
         Self::default()
     }
 
-    pub fn set_result(
-        &self,
-        address: Address,
-        signature: &str,
-        result: Vec<DecodedValue>,
-    ) {
+    pub fn set_result(&self, address: Address, signature: &str, result: Vec<DecodedValue>) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state
             .by_call

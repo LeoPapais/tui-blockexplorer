@@ -32,6 +32,13 @@ Feature: Token detail
     Then the active window is "1m"
     And once the feeds complete, the chart holds 30 points for window "1m"
 
+  Scenario: Token with no price shows unsupported badge
+    Given the token reader knows "0xe6a537a407488807f0bbeb0038b79004f19dddfb" as "BRLA" / "BRLA Token" decimals 18 supply 1000000000000000000000
+    And the Prices API returns 404 for "0xe6a537a407488807f0bbeb0038b79004f19dddfb"
+    When the user opens TokenDetail with full feeds for "0xe6a537a407488807f0bbeb0038b79004f19dddfb"
+    Then a "Token" screen is on top
+    And once the feeds complete, the Overview row for price renders "(not indexed by alchemy-prices)"
+
   Scenario: Transfers tab opens TxDetail on Enter
     Given the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
     And the transfers stub returns 1 transfer for token "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with hash "0xcafe016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a7139cac"

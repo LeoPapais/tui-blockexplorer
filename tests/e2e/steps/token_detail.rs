@@ -8,18 +8,16 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{Command, Screen, ScreenStack, TokenDetailScreen, TokenTab},
     domain::{
-        Address, BlockNumber, Chain, PricePoint, PriceSeries, PriceWindow, TokenMetadata,
-        TokenOverview, TokenPrice, Transaction, TransferAsset, TransferCategory,
+        Address, BlockNumber, Chain, PriceLookup, PricePoint, PriceSeries, PriceWindow,
+        TokenMetadata, TokenOverview, TokenPrice, Transaction, TransferAsset, TransferCategory,
         TransferEvent, TransferPage, TxHash, TxStatus, TxType, UnixTimestamp, Wei,
     },
 };
-use cucumber::{given, then, when};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use cucumber::{given, then, when};
 
 use crate::{
-    steps::search::{
-        build_stack, spawn_token_detail, spawn_token_detail_with_full_feeds,
-    },
+    steps::search::{build_stack, spawn_token_detail, spawn_token_detail_with_full_feeds},
     world::AppWorld,
 };
 
@@ -101,7 +99,7 @@ async fn reader_knows_token(
             decimals,
         },
         total_supply: supply,
-        price: None,
+        price: PriceLookup::Pending,
     });
 }
 
@@ -116,6 +114,12 @@ async fn prices_stub_has_spot(world: &mut AppWorld, value: f64, addr_hex: String
             as_of: UnixTimestamp::from_seconds(1_700_000_000),
         },
     );
+}
+
+#[given(regex = r#"^the Prices API returns 404 for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn prices_api_returns_404(world: &mut AppWorld, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    world.prices_stub.set_unsupported(addr, "alchemy-prices");
 }
 
 #[given(
@@ -240,11 +244,7 @@ async fn opens_token_detail_with_full_feeds(world: &mut AppWorld, addr_hex: Stri
 }
 
 #[when(regex = r#"^the user presses "([123])" to select window "([^"]+)"$"#)]
-async fn presses_digit_to_select_window(
-    world: &mut AppWorld,
-    digit: char,
-    _window: String,
-) {
+async fn presses_digit_to_select_window(world: &mut AppWorld, digit: char, _window: String) {
     let stack = world.stack.as_mut().expect("stack");
     let screen = current_mut(stack);
     let cmd = screen.handle_key(make_key(KeyCode::Char(digit)));
@@ -329,15 +329,28 @@ async fn overview_price_renders(world: &mut AppWorld, expected: f64) {
     );
 }
 
+#[then(
+    regex = r#"^once the feeds complete, the Overview row for price renders "\(not indexed by ([^)]+)\)"$"#
+)]
+async fn overview_price_renders_unsupported(world: &mut AppWorld, provider: String) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(current(s).price_lookup(), PriceLookup::Unsupported { .. },)
+    })
+    .await;
+    match current(stack).price_lookup() {
+        PriceLookup::Unsupported { provider: got } => assert_eq!(*got, provider),
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+}
+
 #[then(regex = r#"^the active window is "([^"]+)"$"#)]
 async fn active_window_is(world: &mut AppWorld, label: String) {
     let stack = world.stack.as_ref().expect("stack");
     assert_eq!(current(stack).active_window(), parse_window(&label));
 }
 
-#[then(
-    regex = r#"^once the feeds complete, the chart holds (\d+) points for window "([^"]+)"$"#
-)]
+#[then(regex = r#"^once the feeds complete, the chart holds (\d+) points for window "([^"]+)"$"#)]
 async fn chart_holds_points(world: &mut AppWorld, n: usize, label: String) {
     let expected_window = parse_window(&label);
     let stack = world.stack.as_mut().expect("stack");
