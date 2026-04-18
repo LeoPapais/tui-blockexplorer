@@ -139,8 +139,7 @@ impl AlchemyBlockReader {
 
 fn raw_withdrawal_to_domain(raw: RawWithdrawal) -> Result<Withdrawal, DomainError> {
     let index = parse_hex_u64(&raw.index).map_err(|e| e.into_domain())?;
-    let validator_index =
-        parse_hex_u64(&raw.validator_index).map_err(|e| e.into_domain())?;
+    let validator_index = parse_hex_u64(&raw.validator_index).map_err(|e| e.into_domain())?;
     let address = Address::from_hex(&raw.address)?;
     let amount_gwei = parse_hex_u64(&raw.amount).map_err(|e| e.into_domain())?;
     Ok(Withdrawal {

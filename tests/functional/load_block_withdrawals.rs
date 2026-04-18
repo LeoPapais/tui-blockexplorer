@@ -4,9 +4,7 @@
 
 use blockexplorer_tui::{
     application::use_cases::load_block_withdrawals,
-    domain::{
-        Address, Block, BlockHash, BlockNumber, Chain, UnixTimestamp, Wei, Withdrawal,
-    },
+    domain::{Address, Block, BlockHash, BlockNumber, Chain, UnixTimestamp, Wei, Withdrawal},
 };
 use pretty_assertions::assert_eq;
 

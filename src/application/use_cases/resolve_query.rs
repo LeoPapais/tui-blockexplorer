@@ -259,10 +259,7 @@ fn unwrap_explorer_url(input: &str) -> Option<&str> {
         .or_else(|| input.strip_prefix("http://"))?;
 
     let (host, path) = rest.split_once('/')?;
-    if !EXPLORER_HOSTS
-        .iter()
-        .any(|h| h.eq_ignore_ascii_case(host))
-    {
+    if !EXPLORER_HOSTS.iter().any(|h| h.eq_ignore_ascii_case(host)) {
         return None;
     }
 

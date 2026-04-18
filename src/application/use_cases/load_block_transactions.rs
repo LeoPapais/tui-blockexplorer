@@ -54,8 +54,16 @@ pub fn paginate(rows: Vec<crate::domain::BlockTxReceipt>, cursor: BlockTxCursor)
         };
     }
     let end = cursor.offset.saturating_add(cursor.page_size).min(total);
-    let page: Vec<_> = rows.into_iter().skip(cursor.offset).take(end - cursor.offset).collect();
-    let next = if end < total { Some(cursor.next()) } else { None };
+    let page: Vec<_> = rows
+        .into_iter()
+        .skip(cursor.offset)
+        .take(end - cursor.offset)
+        .collect();
+    let next = if end < total {
+        Some(cursor.next())
+    } else {
+        None
+    };
     BlockTxPage {
         rows: page,
         next,

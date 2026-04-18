@@ -72,16 +72,8 @@ where
     })
 }
 
-async fn soft_label<L: LabelPort>(
-    labels: &L,
-    address: Address,
-    chain: Chain,
-) -> Option<Label> {
+async fn soft_label<L: LabelPort>(labels: &L, address: Address, chain: Chain) -> Option<Label> {
     // Treat provider errors as "no label" so a broken Etherscan
     // key never breaks the Overview tab.
-    labels
-        .label_for(address, chain)
-        .await
-        .ok()
-        .flatten()
+    labels.label_for(address, chain).await.ok().flatten()
 }

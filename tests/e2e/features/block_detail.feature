@@ -41,3 +41,15 @@ Feature: Block detail
     Given a Polygon block whose miner is the zero address
     When the user opens BlockDetail
     Then the Overview tab shows a signer row recovered from extraData
+
+  # Covers plan/3-block-detail.md §12.5. The use case that returns the
+  # withdrawals list is tested under tests/functional/load_block_withdrawals.rs;
+  # this scenario drives the UI contract that the Blobs / Withdrawals
+  # tab renders both the parsed withdrawals and the deferred-Beacon
+  # placeholder.
+  Scenario: Blobs / Withdrawals tab renders the withdrawal list
+    Given a post-Shanghai block with two withdrawals
+    When the user opens BlockDetail
+    And the user switches to the Blobs and Withdrawals tab
+    Then the tab lists the withdrawal count and the first validator index
+    And the tab includes the Beacon blob-sidecars placeholder

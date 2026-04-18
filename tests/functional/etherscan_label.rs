@@ -68,10 +68,7 @@ async fn unverified_contract_returns_none() {
     let adapter = adapter_for(&server.uri());
     let addr = Address::from_hex("0xdeadbeef00000000000000000000000000000000").unwrap();
 
-    let label = adapter
-        .label_for(addr, Chain::Ethereum)
-        .await
-        .expect("ok");
+    let label = adapter.label_for(addr, Chain::Ethereum).await.expect("ok");
 
     assert_eq!(label, None);
 }

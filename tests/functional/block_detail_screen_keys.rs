@@ -7,10 +7,11 @@
 
 use blockexplorer_tui::adapters::ui::{BlockDetailScreen, BlockTab, Screen, block_feed};
 use blockexplorer_tui::domain::{
-    Address, Block, BlockHash, BlockNumber, Chain, TxHash, UnixTimestamp, Wei,
+    Address, Block, BlockHash, BlockNumber, Chain, TxHash, UnixTimestamp, Wei, Withdrawal,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -111,6 +112,81 @@ fn uppercase_y_still_works_from_the_transactions_tab() {
 
     screen.handle_key(shift(KeyCode::Char('Y')));
     assert_eq!(screen.last_copied_value(), Some(expected_number.as_str()));
+}
+
+fn render_to_buffer(screen: &BlockDetailScreen) -> Buffer {
+    let backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| screen.render(frame, frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
+    let mut row = String::new();
+    for y in 0..buffer.area.height {
+        row.clear();
+        for x in 0..buffer.area.width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if row.contains(needle) {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn blobs_and_withdrawals_tab_renders_withdrawal_rows() {
+    let mut block = sample_block();
+    block.withdrawals = vec![
+        Withdrawal {
+            index: 42,
+            validator_index: 1337,
+            address: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            amount_gwei: 987_654_321,
+        },
+        Withdrawal {
+            index: 43,
+            validator_index: 1338,
+            address: Address::from_hex("0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919").unwrap(),
+            amount_gwei: 1_000,
+        },
+    ];
+    let mut screen = build_screen(block);
+
+    // Two `Tab` presses: Overview -> Transactions -> Blobs / Withdrawals.
+    screen.handle_key(key(KeyCode::Tab));
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.active_tab(), BlockTab::BlobsAndWithdrawals);
+
+    let buffer = render_to_buffer(&screen);
+    assert!(
+        buffer_contains(&buffer, "Withdrawals (2)"),
+        "buffer should include the withdrawal count header"
+    );
+    assert!(
+        buffer_contains(&buffer, "validator 1337"),
+        "buffer should list the first validator index"
+    );
+    assert!(
+        buffer_contains(&buffer, "Beacon blob_sidecars not wired yet"),
+        "buffer should carry the deferred-blobs placeholder"
+    );
+}
+
+#[test]
+fn blobs_and_withdrawals_tab_renders_empty_state_when_no_withdrawals() {
+    let block = sample_block();
+    let mut screen = build_screen(block);
+    screen.handle_key(key(KeyCode::Tab));
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.active_tab(), BlockTab::BlobsAndWithdrawals);
+
+    let buffer = render_to_buffer(&screen);
+    assert!(buffer_contains(&buffer, "Withdrawals (0)"));
+    assert!(buffer_contains(&buffer, "(none on this block)"));
 }
 
 #[test]

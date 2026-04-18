@@ -56,26 +56,34 @@ pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + 'static>
 pub enum BlockTab {
     Overview,
     Transactions,
+    /// Post-Shanghai withdrawals plus a placeholder for the Beacon
+    /// blob sidecars (still deferred, see
+    /// `plan/3-block-detail.md` §13).
+    BlobsAndWithdrawals,
 }
 
 impl BlockTab {
     fn next(self) -> Self {
         match self {
             BlockTab::Overview => BlockTab::Transactions,
-            BlockTab::Transactions => BlockTab::Overview,
+            BlockTab::Transactions => BlockTab::BlobsAndWithdrawals,
+            BlockTab::BlobsAndWithdrawals => BlockTab::Overview,
         }
     }
 
     fn previous(self) -> Self {
-        // Only two tabs so next == previous; kept as a distinct
-        // method so callers read cleanly.
-        self.next()
+        match self {
+            BlockTab::Overview => BlockTab::BlobsAndWithdrawals,
+            BlockTab::Transactions => BlockTab::Overview,
+            BlockTab::BlobsAndWithdrawals => BlockTab::Transactions,
+        }
     }
 
     fn label(self) -> &'static str {
         match self {
             BlockTab::Overview => "Overview",
             BlockTab::Transactions => "Transactions",
+            BlockTab::BlobsAndWithdrawals => "Blobs / Withdrawals",
         }
     }
 }
@@ -159,7 +167,7 @@ impl BlockDetailScreen {
             return;
         };
         let value = match self.active_tab {
-            BlockTab::Overview => block.hash.to_hex(),
+            BlockTab::Overview | BlockTab::BlobsAndWithdrawals => block.hash.to_hex(),
             BlockTab::Transactions => match block.tx_hashes.get(self.tx_selected) {
                 Some(hash) => hash.to_hex(),
                 None => return,
@@ -226,9 +234,10 @@ impl Screen for BlockDetailScreen {
 
         // Tab bar
         let tabs = format!(
-            "[ {overview} ]  [ {transactions} ]",
+            "[ {overview} ]  [ {transactions} ]  [ {blobs} ]",
             overview = marker(self.active_tab, BlockTab::Overview),
             transactions = marker(self.active_tab, BlockTab::Transactions),
+            blobs = marker(self.active_tab, BlockTab::BlobsAndWithdrawals),
         );
         frame.render_widget(
             Paragraph::new(tabs).block(RatBlock::default().borders(Borders::ALL).title("Tabs")),
@@ -278,6 +287,17 @@ impl Screen for BlockDetailScreen {
                         RatBlock::default()
                             .borders(Borders::ALL)
                             .title(format!("Transactions ({})", block.tx_hashes.len())),
+                    ),
+                    chunks[2],
+                );
+            }
+            (Some(block), BlockTab::BlobsAndWithdrawals) => {
+                let body = blobs_and_withdrawals_body(block);
+                frame.render_widget(
+                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .title("Blobs / Withdrawals"),
                     ),
                     chunks[2],
                 );
@@ -430,6 +450,29 @@ Extra      0x{}",
         b.tx_hashes.len(),
         hex::encode(&b.extra_data),
     )
+}
+
+fn blobs_and_withdrawals_body(b: &Block) -> String {
+    let mut out = String::new();
+    out.push_str("Withdrawals (");
+    out.push_str(&b.withdrawals.len().to_string());
+    out.push_str(")\n");
+    if b.withdrawals.is_empty() {
+        out.push_str("  (none on this block)\n");
+    } else {
+        for w in &b.withdrawals {
+            out.push_str(&format!(
+                "  #{idx:>3}  validator {val:<7}  {addr}  {amount} gwei\n",
+                idx = w.index,
+                val = w.validator_index,
+                addr = short_hex(&w.address.to_hex()),
+                amount = format_u64(w.amount_gwei),
+            ));
+        }
+    }
+    out.push_str("\nBlobs\n");
+    out.push_str("  Beacon blob_sidecars not wired yet — see plan/3-block-detail.md §13.\n");
+    out
 }
 
 fn short_hex(s: &str) -> String {

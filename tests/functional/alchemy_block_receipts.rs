@@ -128,9 +128,9 @@ async fn missing_block_maps_to_not_found() {
 
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockReceipts"})))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"jsonrpc":"2.0","id":1,"result":null}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(r#"{"jsonrpc":"2.0","id":1,"result":null}"#),
+        )
         .mount(&server)
         .await;
 

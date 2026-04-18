@@ -15,8 +15,7 @@ use crate::support::stubs::StubLabelPort;
 #[tokio::test]
 async fn well_known_returns_the_static_entry() {
     let mut table = WellKnownLabels::empty();
-    let addr =
-        Address::from_hex("0x00856730088a5c3191bd26eb482e45229555ce57").expect("hex");
+    let addr = Address::from_hex("0x00856730088a5c3191bd26eb482e45229555ce57").expect("hex");
     table.insert(Chain::Polygon, addr, "Polygon: Validator 1");
 
     let hit = table.label_for(addr, Chain::Polygon).await.unwrap();

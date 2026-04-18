@@ -13,9 +13,7 @@ use serde::Deserialize;
 use super::client::{RpcClient, parse_hex_u64};
 use crate::{
     application::ports::BlockReceiptsPort,
-    domain::{
-        Address, BlockId, BlockTxReceipt, Chain, DomainError, TxHash, TxStatus, Wei,
-    },
+    domain::{Address, BlockId, BlockTxReceipt, Chain, DomainError, TxHash, TxStatus, Wei},
 };
 
 #[derive(Debug, Deserialize)]
@@ -148,7 +146,8 @@ fn parse_hex_u128(s: &str) -> Result<u128, DomainError> {
     if stripped.is_empty() {
         return Ok(0);
     }
-    u128::from_str_radix(stripped, 16).map_err(|e| DomainError::Internal(format!("invalid hex: {e}")))
+    u128::from_str_radix(stripped, 16)
+        .map_err(|e| DomainError::Internal(format!("invalid hex: {e}")))
 }
 
 fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, DomainError> {
@@ -175,18 +174,17 @@ impl BlockReceiptsPort for AlchemyBlockReceipts {
         id: BlockId,
         _chain: Chain,
     ) -> Result<Vec<BlockTxReceipt>, DomainError> {
-        let (full_res, receipts_res) = tokio::join!(
-            self.client
-                .call::<_, Option<RawFullBlock>>(
+        let (full_res, receipts_res) =
+            tokio::join!(
+                self.client.call::<_, Option<RawFullBlock>>(
                     Self::full_block_method(id),
                     Self::full_block_params(id),
                 ),
-            self.client
-                .call::<_, Option<Vec<RawReceipt>>>(
+                self.client.call::<_, Option<Vec<RawReceipt>>>(
                     "eth_getBlockReceipts",
                     Self::id_to_params(id),
                 ),
-        );
+            );
 
         let full = full_res.map_err(|e| e.into_domain())?;
         let receipts = receipts_res.map_err(|e| e.into_domain())?;
