@@ -82,6 +82,12 @@ mod load_contract_overview;
 #[path = "functional/load_contract_events_page.rs"]
 mod load_contract_events_page;
 
+#[path = "functional/highlight_solidity.rs"]
+mod highlight_solidity;
+
+#[path = "functional/contract_detail_source_highlight.rs"]
+mod contract_detail_source_highlight;
+
 #[path = "functional/alchemy_proxy_detector.rs"]
 mod alchemy_proxy_detector;
 

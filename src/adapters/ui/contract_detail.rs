@@ -16,6 +16,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
     },
@@ -986,15 +987,13 @@ Contract may be unverified or expose only events / constructors.",
             }
             // `N` (Shift+n) pages back towards the head. Floored at
             // 0 so the key is a no-op on the newest window.
-            KeyCode::Char('N') => {
-                if self.events_offset > 0 {
-                    self.events_offset -= 1;
-                    self.events = None;
-                    let _ = self.feed.events_tx.send(EventsRequest {
-                        head_hint: self.events_head,
-                        offset: self.events_offset,
-                    });
-                }
+            KeyCode::Char('N') if self.events_offset > 0 => {
+                self.events_offset -= 1;
+                self.events = None;
+                let _ = self.feed.events_tx.send(EventsRequest {
+                    head_hint: self.events_head,
+                    offset: self.events_offset,
+                });
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.with_scroll(|s| {
@@ -1191,10 +1190,22 @@ once a decompiler integration lands (see plan/7 section 13).",
         let title = file
             .map(|f| f.path.clone())
             .unwrap_or_else(|| "Source".to_string());
-        let content = file.map(|f| f.content.clone()).unwrap_or_default();
-        let offset = self.bound_scroll_for(&content, columns[1]);
+        let content = file.map(|f| f.content.as_str()).unwrap_or("");
+        // For scroll-clamping we only need the line count, which
+        // matches the highlighted output line-for-line. We pass the
+        // raw string to `bound_scroll_for` so the existing helper
+        // stays ignorant of the highlighter.
+        let offset = self.bound_scroll_for(content, columns[1]);
+        let is_solidity = file
+            .map(|f| f.path.to_ascii_lowercase().ends_with(".sol"))
+            .unwrap_or(false);
+        let paragraph = if is_solidity && !content.is_empty() {
+            Paragraph::new(highlight_solidity(content))
+        } else {
+            Paragraph::new(content.to_string())
+        };
         frame.render_widget(
-            Paragraph::new(content)
+            paragraph
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
                 .block(Block::default().borders(Borders::ALL).title(title)),
