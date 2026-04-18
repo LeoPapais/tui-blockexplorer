@@ -47,10 +47,7 @@ impl TokenReaderPort for AlchemyTokenReader {
     ) -> Result<Option<TokenOverview>, DomainError> {
         let hex = address.to_hex();
 
-        let (metadata_res, supply_res): (
-            Result<RawMetadata, RpcError>,
-            Result<String, RpcError>,
-        ) = tokio::join!(
+        let (metadata_res, supply_res): (Result<RawMetadata, RpcError>, Result<String, RpcError>) = tokio::join!(
             self.client
                 .call("alchemy_getTokenMetadata", serde_json::json!([hex])),
             self.client.call(
@@ -85,8 +82,11 @@ impl TokenReaderPort for AlchemyTokenReader {
             // The TokenReaderPort intentionally does not know about
             // prices: the price column is fetched independently by
             // the UI via PricesPort so a slow / broken Prices API
-            // does not hold back the Overview tab.
-            price: None,
+            // does not hold back the Overview tab. The field
+            // defaults to `Pending` and is overwritten downstream
+            // once the Prices port answers. See
+            // `plan/15-backlog.md` §3.4.
+            price: crate::domain::PriceLookup::Pending,
         }))
     }
 }
