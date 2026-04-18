@@ -1,0 +1,21 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "{}",
+      "ABI": "[]",
+      "ContractName": "Coinbase 10",
+      "CompilerVersion": "v0.8.17+commit.8df45f5f",
+      "OptimizationUsed": "1",
+      "Runs": "200",
+      "ConstructorArguments": "",
+      "EVMVersion": "Default",
+      "Library": "",
+      "LicenseType": "MIT",
+      "Proxy": "0",
+      "Implementation": "",
+      "SwarmSource": ""
+    }
+  ]
+}

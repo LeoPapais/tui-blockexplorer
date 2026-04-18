@@ -8,6 +8,7 @@ pub mod clock;
 pub mod config;
 pub mod ens;
 pub mod etherscan;
+pub mod labels;
 pub mod prices;
 pub mod rpc;
 pub mod signatures;

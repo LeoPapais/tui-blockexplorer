@@ -14,6 +14,7 @@ pub mod contract_read;
 pub mod contract_source;
 pub mod errors;
 pub mod gas;
+pub mod label;
 pub mod mempool;
 pub mod network_status;
 pub mod portfolio;
@@ -39,6 +40,7 @@ pub use contract_read::{
 pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, SourceFile};
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};
+pub use label::{Label, LabelSource};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use network_status::{GasSnapshot, NetworkStatus, NewHead};
 pub use portfolio::TokenHolding;

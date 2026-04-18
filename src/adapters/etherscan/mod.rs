@@ -7,9 +7,11 @@
 
 pub mod client;
 pub mod contract_source;
+pub mod label;
 pub mod tickers;
 pub mod token_search;
 
 pub use client::{EtherscanClient, EtherscanError};
 pub use contract_source::EtherscanContractSource;
+pub use label::EtherscanLabel;
 pub use token_search::EtherscanTokenSearch;

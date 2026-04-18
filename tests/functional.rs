@@ -168,3 +168,9 @@ mod load_block_transactions;
 
 #[path = "functional/alchemy_block_receipts.rs"]
 mod alchemy_block_receipts;
+
+#[path = "functional/label_composite.rs"]
+mod label_composite;
+
+#[path = "functional/etherscan_label.rs"]
+mod etherscan_label;
