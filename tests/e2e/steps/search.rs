@@ -557,6 +557,10 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     use blockexplorer_tui::adapters::ui::{OpenTokenFactory, address_detail::OpenTxFactory};
     let (feed, sender) = address_feed();
+    // The ERC-20 probe scenarios do not assert on reverse ENS; reuse
+    // an empty resolver stub so the production feed still composes
+    // `load_address_overview::run`.
+    let ens = crate::support::stubs::StubEnsResolverPort::new();
     std::mem::drop(blockexplorer_tui::infra::address_feed::spawn(
         chain,
         reader,
@@ -564,6 +568,7 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
         portfolio,
         token_reader.clone(),
         prices,
+        ens,
         sender,
     ));
 

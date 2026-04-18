@@ -120,6 +120,9 @@ fn live_address_detail_screen(
         Ok(client) => TokenPrices::Alchemy(AlchemyPrices::new(client)),
         Err(_) => TokenPrices::Noop,
     };
+    // plan/6-address-detail.md §11 "Shipped": wrap the base resolver
+    // in the 5-minute TTL decorator (`.cursor/rules/external-apis.mdc`).
+    let ens = crate::adapters::ens::CachedEnsResolver::new(AlchemyEnsResolver::new(rpc.clone()));
     let (feed, sender) = address_feed();
     std::mem::drop(address_feed::spawn(
         chain,
@@ -128,6 +131,7 @@ fn live_address_detail_screen(
         portfolio,
         token_reader,
         prices,
+        ens,
         sender,
     ));
 

@@ -136,6 +136,11 @@ async fn main() -> anyhow::Result<()> {
     section(&format!("EOA {}", eoa_addr.to_hex()));
     let addr_reader = AlchemyAddressReader::new(rpc.clone());
     let addr_lookup = AlchemyAddressLookup::new(rpc.clone());
+    // plan/6 §11 "Shipped": load_address_overview now threads a
+    // reverse-ENS resolver too. The probe rig just instantiates a
+    // fresh resolver per call to avoid coupling main's control flow
+    // to the resolver's lifetime.
+    let ens_for_overview = AlchemyEnsResolver::new(rpc.clone());
     match addr_lookup.classify(eoa_addr, chain).await {
         Ok(AddressKind::Eoa {
             delegated_to: Some(delegate),
@@ -191,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
             }
         );
     }
-    match load_address_overview::run(&addr_reader, eoa_addr, chain).await {
+    match load_address_overview::run(&addr_reader, &ens_for_overview, eoa_addr, chain).await {
         Ok(a) => {
             println!("balance    : {}", fmt_wei_matic(a.balance));
             println!("nonce      : {}", a.nonce);
