@@ -126,6 +126,62 @@ impl Block {
     }
 }
 
+/// High-level category rendered next to each row on the Block Detail
+/// Transactions tab. See `plan/3-block-detail.md` §12.2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TxCategory {
+    /// Plain value transfer: `to` is set, `input` is empty and the
+    /// transaction carries a non-zero value.
+    Transfer,
+    /// Contract deployment: `to` is `None` (the EVM creates the new
+    /// contract address from the sender + nonce).
+    Deploy,
+    /// Everything else: method calls, zero-value calls, approvals,
+    /// system calls on L2s, ...
+    Interaction,
+}
+
+impl TxCategory {
+    /// Classify a transaction from the three fields every receipt
+    /// and block-full-tx response carries.
+    ///
+    /// The order mirrors the plan:
+    ///
+    /// - `to == None`                         -> [`Self::Deploy`].
+    /// - empty `input` && non-zero `value`    -> [`Self::Transfer`].
+    /// - anything else                        -> [`Self::Interaction`].
+    #[must_use]
+    pub fn classify(to: Option<Address>, input: &[u8], value: Wei) -> Self {
+        if to.is_none() {
+            return Self::Deploy;
+        }
+        if input.is_empty() && value.value() > 0 {
+            return Self::Transfer;
+        }
+        Self::Interaction
+    }
+
+    /// Short, terminal-friendly badge shown on the Transactions tab.
+    #[must_use]
+    pub const fn badge(self) -> &'static str {
+        match self {
+            Self::Transfer => "T",
+            Self::Deploy => "D",
+            Self::Interaction => "I",
+        }
+    }
+
+    /// Human label used by tests, logs and future tooltips.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Transfer => "transfer",
+            Self::Deploy => "deploy",
+            Self::Interaction => "interaction",
+        }
+    }
+}
+
 /// Recover the Polygon PoS validator that sealed a block.
 ///
 /// On Bor-based Polygon PoS the `miner` field is the zero address and
@@ -176,4 +232,73 @@ fn address_from_verifying_key(vk: &VerifyingKey) -> Address {
     let mut addr = [0u8; 20];
     addr.copy_from_slice(&out[12..]);
     Address::from_bytes(addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_to() -> Address {
+        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()
+    }
+
+    #[test]
+    fn classifies_contract_creation_as_deploy() {
+        assert_eq!(
+            TxCategory::classify(None, &[0x60, 0x80], Wei::new(0)),
+            TxCategory::Deploy,
+        );
+    }
+
+    #[test]
+    fn classifies_empty_calldata_with_value_as_transfer() {
+        assert_eq!(
+            TxCategory::classify(Some(sample_to()), &[], Wei::new(1_000)),
+            TxCategory::Transfer,
+        );
+    }
+
+    #[test]
+    fn classifies_zero_value_empty_calldata_as_interaction() {
+        // Zero-value no-input calls still count as an interaction
+        // (self-sends, system calls on some L2s) because they do not
+        // carry user-visible value.
+        assert_eq!(
+            TxCategory::classify(Some(sample_to()), &[], Wei::new(0)),
+            TxCategory::Interaction,
+        );
+    }
+
+    #[test]
+    fn classifies_calldata_as_interaction() {
+        assert_eq!(
+            TxCategory::classify(Some(sample_to()), &[0xa9, 0x05, 0x9c, 0xbb], Wei::new(0)),
+            TxCategory::Interaction,
+        );
+    }
+
+    #[test]
+    fn classifies_calldata_with_value_as_interaction() {
+        // Even if value > 0, the presence of calldata means the
+        // receiver contract decided what to do with the funds; this
+        // is not a plain transfer.
+        assert_eq!(
+            TxCategory::classify(
+                Some(sample_to()),
+                &[0xa9, 0x05, 0x9c, 0xbb],
+                Wei::new(1_000)
+            ),
+            TxCategory::Interaction,
+        );
+    }
+
+    #[test]
+    fn badge_and_label_are_stable() {
+        assert_eq!(TxCategory::Transfer.badge(), "T");
+        assert_eq!(TxCategory::Interaction.badge(), "I");
+        assert_eq!(TxCategory::Deploy.badge(), "D");
+        assert_eq!(TxCategory::Transfer.label(), "transfer");
+        assert_eq!(TxCategory::Interaction.label(), "interaction");
+        assert_eq!(TxCategory::Deploy.label(), "deploy");
+    }
 }
