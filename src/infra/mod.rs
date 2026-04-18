@@ -66,7 +66,8 @@ fn live_tx_detail_screen(
     let (feed, sender) = tx_feed();
 
     let sim = AlchemySimulation::new(rpc.clone());
-    let trace = AlchemyTxTracer::new(rpc);
+    let trace = AlchemyTxTracer::new(rpc.clone());
+    let proxy_detector = AlchemyProxyDetector::new(rpc);
 
     let contract_source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -81,6 +82,7 @@ fn live_tx_detail_screen(
         reader,
         contract_source,
         signatures,
+        proxy_detector,
         sim,
         trace,
         sender,
@@ -386,7 +388,6 @@ fn build_signature_directory() -> TxSignatureDir {
         (None, _) => TxSignatureDir::Noop,
     }
 }
-
 
 pub use config::{ApiCredentials, AppConfig, ConfigLoader};
 

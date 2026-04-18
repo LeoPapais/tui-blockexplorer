@@ -25,6 +25,28 @@ pub struct ContractAbi {
     pub is_verified: bool,
 }
 
+/// Provenance of an ABI resolved through the proxy-following adapter.
+/// See `plan/15-backlog.md` section 3.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbiSource {
+    /// ABI came straight from the requested address.
+    Direct,
+    /// ABI came from the implementation a proxy points at.
+    ProxyImplementation {
+        proxy: Address,
+        implementation: Address,
+    },
+}
+
+/// ABI plus the information the caller needs to tell a direct hit from
+/// a proxy-forwarded hit. Produced by
+/// [`crate::application::ports::ContractSourcePort::get_abi_following_proxy`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedAbi {
+    pub source_kind: AbiSource,
+    pub abi: String,
+}
+
 /// Single file making up a verified contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {

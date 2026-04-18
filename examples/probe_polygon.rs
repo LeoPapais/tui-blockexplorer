@@ -298,11 +298,27 @@ async fn main() -> anyhow::Result<()> {
     // ---------------------------------------------------------------
     section(&format!("Tx {}", tx_hash.to_hex()));
     let tx_reader = AlchemyTxReader::new(rpc.clone());
+    let tx_proxy_detector = AlchemyProxyDetector::new(rpc.clone());
     let view = if let Some(es) = etherscan.as_ref() {
-        load_tx_overview::run_with_decoding(&tx_reader, es, &sigs, tx_hash, chain).await
+        load_tx_overview::run_with_decoding(
+            &tx_reader,
+            es,
+            &sigs,
+            &tx_proxy_detector,
+            tx_hash,
+            chain,
+        )
+        .await
     } else {
-        load_tx_overview::run_with_decoding(&tx_reader, &NoopContractSource, &sigs, tx_hash, chain)
-            .await
+        load_tx_overview::run_with_decoding(
+            &tx_reader,
+            &NoopContractSource,
+            &sigs,
+            &tx_proxy_detector,
+            tx_hash,
+            chain,
+        )
+        .await
     };
     match view {
         Ok(v) => {

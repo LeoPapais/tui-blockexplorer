@@ -85,6 +85,9 @@ mod openchain_signatures;
 #[path = "functional/composite_signature_directory.rs"]
 mod composite_signature_directory;
 
+#[path = "functional/contract_source_proxy_following.rs"]
+mod contract_source_proxy_following;
+
 #[path = "functional/alchemy_tx_simulation.rs"]
 mod alchemy_tx_simulation;
 

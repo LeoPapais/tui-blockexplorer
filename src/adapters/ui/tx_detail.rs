@@ -40,7 +40,7 @@ use crate::{
         screen::{Command, Screen},
         scroll::ScrollState,
     },
-    application::{DecodedLog, DecodedMethod, LoadStatus, TxView},
+    application::{DecodedLog, DecodedMethod, LoadStatus, SignatureSource, TxView},
     domain::{
         AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, StateDiff,
         TxHash, TxStatus, Wei,
@@ -816,15 +816,30 @@ fn overview_line(row: &OverviewRow, selected: bool) -> Line<'static> {
 
 fn method_line(view: &TxView) -> String {
     match view.decoded_method.as_ref() {
-        Some(DecodedMethod { signature, source }) => {
-            format!("{signature} ({tag})", tag = source.tag())
-        }
+        Some(DecodedMethod { signature, source }) => match source {
+            SignatureSource::ProxyAbi { implementation, .. } => format!(
+                "{signature} (decoded via implementation {})",
+                short_address(implementation)
+            ),
+            other => format!("{signature} ({tag})", tag = other.tag()),
+        },
         None => match view.tx.selector() {
             Some(sel) => format!("0x{} (unknown)", hex::encode(sel)),
             None if view.tx.input.is_empty() => "(empty)".to_string(),
             None => format!("0x{} (unknown)", hex::encode(&view.tx.input)),
         },
     }
+}
+
+/// Short-hand form used next to ProxyAbi decoding: keep the leading
+/// `0x` + 4 bytes and the last 2 bytes so the user can correlate the
+/// line with the real address without eating the whole row.
+fn short_address(addr: &crate::domain::Address) -> String {
+    let hex = addr.to_hex();
+    if hex.len() <= 12 {
+        return hex;
+    }
+    format!("{}…{}", &hex[..8], &hex[hex.len() - 4..])
 }
 
 fn log_summary(idx: usize, log: &DecodedLog) -> String {

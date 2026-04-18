@@ -6,7 +6,7 @@
 //!
 //! See `plan/4-tx-detail.md` section 12.4.2.
 
-use crate::domain::{AssetChange, LogEntry, StateDiff, Transaction};
+use crate::domain::{Address, AssetChange, LogEntry, StateDiff, Transaction};
 
 /// Where a decoded signature came from. Surfaced to the UI so users
 /// can tell an ABI-backed decoding from a best-effort directory
@@ -19,6 +19,13 @@ use crate::domain::{AssetChange, LogEntry, StateDiff, Transaction};
 pub enum SignatureSource {
     /// Signature extracted from the contract's verified ABI.
     Abi,
+    /// Signature extracted from the verified ABI of a proxy's
+    /// implementation, reached by following the EIP-1967 slot on
+    /// `proxy`. See `plan/15-backlog.md` section 3.3.
+    ProxyAbi {
+        proxy: Address,
+        implementation: Address,
+    },
     /// Signature pulled from `api.openchain.xyz`.
     Openchain,
     /// Signature pulled from the Samczsun signature DB mirror.
@@ -30,6 +37,7 @@ impl SignatureSource {
     pub const fn tag(self) -> &'static str {
         match self {
             SignatureSource::Abi => "from ABI",
+            SignatureSource::ProxyAbi { .. } => "from proxy→implementation",
             SignatureSource::Openchain => "from openchain",
             SignatureSource::Samczsun => "from samczsun",
         }
