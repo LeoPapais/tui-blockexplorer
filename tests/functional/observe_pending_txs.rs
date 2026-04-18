@@ -98,3 +98,58 @@ async fn filter_matches_rejects_different_sender() {
     assert_eq!(rx.recv().await, Some(PendingTxEvent::Added(matching)));
     assert_eq!(rx.recv().await, Some(PendingTxEvent::Added(dropped)));
 }
+
+/// `plan/5-mempool.md` §11.3.2: `update_filter` is a best-effort
+/// passthrough to the port. The stub records every call in insertion
+/// order so the BDD + UI layers can trust ordering semantics.
+#[tokio::test]
+async fn update_filter_is_recorded_in_order() {
+    let port = StubPendingTxStreamPort::new();
+    let a = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+    let b = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+
+    observe_pending_txs::update_filter(&port, Chain::Ethereum, PendingTxFilter::default())
+        .await
+        .unwrap();
+    observe_pending_txs::update_filter(
+        &port,
+        Chain::Ethereum,
+        PendingTxFilter { from: Some(a) },
+    )
+    .await
+    .unwrap();
+    observe_pending_txs::update_filter(
+        &port,
+        Chain::Polygon,
+        PendingTxFilter { from: Some(b) },
+    )
+    .await
+    .unwrap();
+
+    let history = port.filter_history();
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[0], (Chain::Ethereum, PendingTxFilter::default()));
+    assert_eq!(
+        history[1],
+        (Chain::Ethereum, PendingTxFilter { from: Some(a) }),
+    );
+    assert_eq!(
+        history[2],
+        (Chain::Polygon, PendingTxFilter { from: Some(b) }),
+    );
+}
+
+/// `plan/5-mempool.md` §11.3.3: `push_removed` + `disconnect_all` are
+/// the two drop paths BDD scenarios rely on. Closing the sender
+/// handles without an explicit status frame is what lets the screen
+/// auto-flip to Disconnected.
+#[tokio::test]
+async fn disconnect_all_closes_every_live_subscriber() {
+    let port = StubPendingTxStreamPort::new();
+    let mut rx = observe_pending_txs::run(&port, Chain::Ethereum, PendingTxFilter::default())
+        .await
+        .expect("subscribe ok");
+    port.disconnect_all();
+    // Channel should be closed: recv returns None.
+    assert_eq!(rx.recv().await, None);
+}

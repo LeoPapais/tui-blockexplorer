@@ -27,4 +27,14 @@ impl PendingTxStreamPort for EmptyPendingTxStream {
         let (_, rx) = unbounded_channel();
         Ok(rx)
     }
+
+    async fn update_filter(
+        &self,
+        _chain: Chain,
+        _filter: PendingTxFilter,
+    ) -> Result<(), DomainError> {
+        // The empty stream never receives events so filter updates
+        // are meaningless; treat the call as a successful no-op.
+        Ok(())
+    }
 }

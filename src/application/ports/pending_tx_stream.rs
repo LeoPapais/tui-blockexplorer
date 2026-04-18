@@ -1,6 +1,7 @@
 //! Outbound port that feeds the Mempool screen with pending-tx deltas.
 //!
-//! See `plan/5-mempool.md` section 11.1.
+//! See `plan/5-mempool.md` section 11.1 (subscribe) and §11.3.2
+//! (update_filter).
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -15,4 +16,18 @@ pub trait PendingTxStreamPort: Send + Sync {
         chain: Chain,
         filter: PendingTxFilter,
     ) -> impl std::future::Future<Output = Result<UnboundedReceiver<PendingTxEvent>, DomainError>> + Send;
+
+    /// Forward a filter change to the upstream provider. Providers
+    /// that support server-side filtering (Alchemy
+    /// `alchemy_pendingTransactions`) re-negotiate the subscription;
+    /// providers that do not can record the filter for diagnostics
+    /// and return `Ok(())`. The UI still applies the filter
+    /// client-side, so this call is best-effort.
+    ///
+    /// See `plan/5-mempool.md` §11.3.2.
+    fn update_filter(
+        &self,
+        chain: Chain,
+        filter: PendingTxFilter,
+    ) -> impl std::future::Future<Output = Result<(), DomainError>> + Send;
 }
