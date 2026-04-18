@@ -1,0 +1,20 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract FiatTokenV2_2 {}\n",
+      "ABI": "[{\"type\":\"function\",\"name\":\"transfer\",\"inputs\":[{\"type\":\"address\"},{\"type\":\"uint256\"}],\"outputs\":[{\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\"}]",
+      "ContractName": "FiatTokenV2_2",
+      "CompilerVersion": "v0.6.12+commit.27d51765",
+      "OptimizationUsed": "1",
+      "Runs": "10000",
+      "EVMVersion": "istanbul",
+      "LicenseType": "MIT License (MIT)",
+      "Library": "",
+      "Proxy": "1",
+      "Implementation": "0x43506849d7c04f9138d1a2050bbf3a0c054402dd",
+      "SwarmSource": ""
+    }
+  ]
+}
