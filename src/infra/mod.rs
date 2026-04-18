@@ -29,10 +29,10 @@ use crate::{
         etherscan::{EtherscanClient, EtherscanContractSource},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
-            AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector,
-            AlchemySimulation, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup,
-            AlchemyTxReader, AlchemyTxTracer, RpcClient,
+            AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver,
+            AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyPortfolio,
+            AlchemyProxyDetector, AlchemySimulation, AlchemyTokenReader, AlchemyTransfers,
+            AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
@@ -156,7 +156,8 @@ fn live_contract_detail_screen(
     etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
-    let detector = AlchemyProxyDetector::new(rpc);
+    let detector = AlchemyProxyDetector::new(rpc.clone());
+    let contract_reader = AlchemyContractReader::new(rpc);
 
     let source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -166,7 +167,12 @@ fn live_contract_detail_screen(
 
     let (feed, sender) = contract_feed();
     std::mem::drop(contract_feed::spawn(
-        chain, reader, detector, source, sender,
+        chain,
+        reader,
+        detector,
+        source,
+        contract_reader,
+        sender,
     ));
     Box::new(ContractDetailScreen::loading(chain, address, feed))
 }

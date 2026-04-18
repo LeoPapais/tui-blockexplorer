@@ -37,6 +37,13 @@ impl Address {
         &self.0
     }
 
+    /// Build an `Address` straight from the raw 20 bytes. Used by
+    /// ABI decoders that already hold the canonical representation.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+
     /// Lowercase `0x`-prefixed hex. 42 characters total.
     #[must_use]
     pub fn to_hex(&self) -> String {

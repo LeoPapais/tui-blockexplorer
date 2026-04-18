@@ -15,8 +15,8 @@ use cucumber::World;
 
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
-    StubChainRegistry, StubContractSourcePort, StubEnsResolverPort, StubGasOraclePort,
-    StubNetworkStatusPort, StubPendingTxStreamPort, StubPortfolioPort,
+    StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
+    StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort, StubPortfolioPort,
     StubProxyDetectionPort, StubSignatureDirectoryPort, StubTokenReaderPort,
     StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
     StubTxSimulationPort, StubTxTracePort,
@@ -84,6 +84,9 @@ pub struct AppWorld {
 
     /// Contract-detail proxy stub.
     pub proxy_detector_stub: StubProxyDetectionPort,
+
+    /// Contract-reader stub used by the Read tab scenarios.
+    pub contract_reader_stub: StubContractReaderPort,
 
     /// Token-detail stub.
     pub token_reader_stub: StubTokenReaderPort,

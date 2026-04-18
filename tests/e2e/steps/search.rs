@@ -213,6 +213,8 @@ pub(crate) fn spawn_contract_detail<
         let blockexplorer_tui::adapters::ui::ContractFeedSender {
             updates_tx,
             source_tx: _,
+            read_rx: _,
+            read_tx: _,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {

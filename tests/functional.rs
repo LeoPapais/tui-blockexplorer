@@ -99,3 +99,12 @@ mod load_address_portfolio;
 
 #[path = "functional/alchemy_portfolio.rs"]
 mod alchemy_portfolio;
+
+#[path = "functional/parse_abi_functions.rs"]
+mod parse_abi_functions;
+
+#[path = "functional/invoke_read_function.rs"]
+mod invoke_read_function;
+
+#[path = "functional/alchemy_contract_reader.rs"]
+mod alchemy_contract_reader;

@@ -34,3 +34,21 @@ Feature: Contract detail
     When the user opens ContractDetail with source for "0xdead000000000000000000000000000000000001"
     Then a "Contract" screen is on top
     And once the contract is loaded, the source is unavailable
+
+  Scenario: Read tab executes a view function and decodes the result
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the contract reader stub returns uint 1000000 for "value()" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with Read wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Read tab
+    And the user selects the first function and executes it
+    Then once executed, the Read tab shows the uint result 1000000
+
+  Scenario: Read tab surfaces revert reason
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the contract reader stub reverts with "InsufficientBalance()" for "value()" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with Read wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Read tab
+    And the user selects the first function and executes it
+    Then once executed, the Read tab reports a revert with "InsufficientBalance()"

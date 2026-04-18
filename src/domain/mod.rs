@@ -10,6 +10,7 @@ pub mod address;
 pub mod block;
 pub mod chain;
 pub mod contract;
+pub mod contract_read;
 pub mod contract_source;
 pub mod errors;
 pub mod gas;
@@ -28,6 +29,9 @@ pub use address::{Address, AddressOverview};
 pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary};
 pub use chain::Chain;
 pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
+pub use contract_read::{
+    AbiFunction, AbiParam, AbiParamType, AbiValue, DecodedValue, parse_abi_functions,
+};
 pub use contract_source::{ContractAbi, ContractSource, SourceFile};
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};

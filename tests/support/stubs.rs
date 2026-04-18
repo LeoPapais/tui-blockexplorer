@@ -14,17 +14,17 @@ use std::{
 use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
-        ChainRegistryPort, ContractSourcePort, EnsResolverPort, GasOraclePort,
-        NetworkStatusPort, PendingTxStreamPort, PortfolioPort, ProxyDetectionPort,
-        SignatureDirectoryPort, TokenReaderPort, TokenSearchPort, TransfersPort,
-        TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
+        ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
+        GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
+        ProxyDetectionPort, SignatureDirectoryPort, TokenReaderPort, TokenSearchPort,
+        TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
     },
     domain::{
-        Address, AddressKind, AddressOverview, AssetChange, Block, BlockHash, BlockId,
-        BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource, DomainError,
-        GasSnapshot, Gwei, NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter,
-        ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview, Transaction,
-        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
+        AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
+        BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
+        DecodedValue, DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx,
+        PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff, TokenHolding, TokenMetadata,
+        TokenOverview, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -972,5 +972,71 @@ impl PortfolioPort for StubPortfolioPort {
     ) -> Result<Vec<TokenHolding>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_address.get(&address).cloned().unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: ContractReaderPort
+// ---------------------------------------------------------------------------
+
+type ContractCallKey = (Address, String);
+
+#[derive(Default)]
+struct ContractReaderState {
+    by_call: HashMap<ContractCallKey, Result<Vec<DecodedValue>, DomainError>>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubContractReaderPort {
+    inner: Arc<Mutex<ContractReaderState>>,
+}
+
+impl StubContractReaderPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_result(
+        &self,
+        address: Address,
+        signature: &str,
+        result: Vec<DecodedValue>,
+    ) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state
+            .by_call
+            .insert((address, signature.to_string()), Ok(result));
+    }
+
+    pub fn set_revert(&self, address: Address, signature: &str, reason: &str) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_call.insert(
+            (address, signature.to_string()),
+            Err(DomainError::ExecutionReverted {
+                reason: reason.to_string(),
+            }),
+        );
+    }
+}
+
+impl ContractReaderPort for StubContractReaderPort {
+    async fn call(
+        &self,
+        address: Address,
+        _chain: Chain,
+        function: &AbiFunction,
+        _args: Vec<AbiValue>,
+    ) -> Result<Vec<DecodedValue>, DomainError> {
+        let key = (address, function.signature());
+        let state = self.inner.lock().expect("stub lock poisoned");
+        match state.by_call.get(&key) {
+            Some(Ok(v)) => Ok(v.clone()),
+            Some(Err(DomainError::ExecutionReverted { reason })) => {
+                Err(DomainError::ExecutionReverted {
+                    reason: reason.clone(),
+                })
+            }
+            Some(Err(_)) | None => Err(DomainError::NotFound),
+        }
     }
 }

@@ -16,18 +16,38 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
-    domain::{Address, Chain, ContractOverview, ContractSource, SourceFile},
+    domain::{
+        AbiFunction, AbiParamType, AbiValue, Address, Chain, ContractOverview,
+        ContractSource, DecodedValue, DomainError, SourceFile, parse_abi_functions,
+    },
 };
+
+/// Single-request envelope for the Read tab: the screen sends a
+/// `ReadRequest`, the background task sends the response back on
+/// `read_rx`.
+#[derive(Debug, Clone)]
+pub struct ReadRequest {
+    pub function: AbiFunction,
+    pub args: Vec<AbiValue>,
+}
+
+/// Result of a single read invocation. `Err` carries the user-facing
+/// reason so the UI can render it on the result pane.
+pub type ReadResult = Result<Vec<DecodedValue>, DomainError>;
 
 pub struct ContractFeed {
     pub input_tx: UnboundedSender<Address>,
     pub updates_rx: UnboundedReceiver<ContractOverview>,
     pub source_rx: UnboundedReceiver<ContractSource>,
+    pub read_tx: UnboundedSender<ReadRequest>,
+    pub read_rx: UnboundedReceiver<ReadResult>,
 }
 
 pub struct ContractFeedSender {
     pub updates_tx: UnboundedSender<ContractOverview>,
     pub source_tx: UnboundedSender<ContractSource>,
+    pub read_rx: UnboundedReceiver<ReadRequest>,
+    pub read_tx: UnboundedSender<ReadResult>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -36,15 +56,21 @@ pub fn contract_feed() -> (ContractFeed, ContractFeedSender) {
     let (input_tx, input_rx) = unbounded_channel();
     let (updates_tx, updates_rx) = unbounded_channel();
     let (source_tx, source_rx) = unbounded_channel();
+    let (read_req_tx, read_req_rx) = unbounded_channel();
+    let (read_res_tx, read_res_rx) = unbounded_channel();
     (
         ContractFeed {
             input_tx,
             updates_rx,
             source_rx,
+            read_tx: read_req_tx,
+            read_rx: read_res_rx,
         },
         ContractFeedSender {
             updates_tx,
             source_tx,
+            read_rx: read_req_rx,
+            read_tx: read_res_tx,
             input_rx,
         },
     )
@@ -55,10 +81,16 @@ pub enum ContractTab {
     Overview,
     Source,
     Abi,
+    Read,
 }
 
 impl ContractTab {
-    const ALL: [ContractTab; 3] = [ContractTab::Overview, ContractTab::Source, ContractTab::Abi];
+    const ALL: [ContractTab; 4] = [
+        ContractTab::Overview,
+        ContractTab::Source,
+        ContractTab::Abi,
+        ContractTab::Read,
+    ];
 
     fn next(self) -> Self {
         let idx = self.index();
@@ -70,6 +102,7 @@ impl ContractTab {
             ContractTab::Overview => 0,
             ContractTab::Source => 1,
             ContractTab::Abi => 2,
+            ContractTab::Read => 3,
         }
     }
 
@@ -78,8 +111,17 @@ impl ContractTab {
             ContractTab::Overview => "Overview",
             ContractTab::Source => "Source",
             ContractTab::Abi => "ABI",
+            ContractTab::Read => "Read",
         }
     }
+}
+
+/// Focus within the Read tab: the function picker on the left, or
+/// the argument editor on the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadFocus {
+    FunctionList,
+    Args,
 }
 
 pub struct ContractDetailScreen {
@@ -92,6 +134,17 @@ pub struct ContractDetailScreen {
     active_tab: ContractTab,
     scroll: u16,
     file_list_state: ListState,
+    /// Read tab state.
+    functions: Vec<AbiFunction>,
+    function_list_state: ListState,
+    read_focus: ReadFocus,
+    /// One scratch buffer per input of the currently-selected
+    /// function. Rebuilt when the selection changes.
+    arg_buffers: Vec<String>,
+    arg_cursor: usize,
+    /// Rendered last result (or error) for the selected function.
+    last_result: Option<Result<Vec<DecodedValue>, String>>,
+    last_result_for: Option<String>,
 }
 
 impl ContractDetailScreen {
@@ -102,6 +155,8 @@ impl ContractDetailScreen {
         let _ = feed.input_tx.send(address);
         let mut file_list_state = ListState::default();
         file_list_state.select(Some(0));
+        let mut function_list_state = ListState::default();
+        function_list_state.select(Some(0));
         Self {
             chain,
             address,
@@ -111,6 +166,13 @@ impl ContractDetailScreen {
             active_tab: ContractTab::Overview,
             scroll: 0,
             file_list_state,
+            functions: Vec::new(),
+            function_list_state,
+            read_focus: ReadFocus::FunctionList,
+            arg_buffers: Vec::new(),
+            arg_cursor: 0,
+            last_result: None,
+            last_result_for: None,
         }
     }
 
@@ -129,6 +191,25 @@ impl ContractDetailScreen {
         self.active_tab
     }
 
+    /// Test helper: does the last Read-tab result hold a single
+    /// uint with the given value?
+    #[must_use]
+    pub fn last_result_matches_uint(&self, expected: u128) -> bool {
+        match self.last_result.as_ref() {
+            Some(Ok(values)) if values.len() == 1 => {
+                matches!(values[0], DecodedValue::Uint(v) if v == expected)
+            }
+            _ => false,
+        }
+    }
+
+    /// Test helper: is the last Read-tab result an error whose
+    /// message contains `needle`?
+    #[must_use]
+    pub fn last_result_is_error_containing(&self, needle: &str) -> bool {
+        matches!(self.last_result.as_ref(), Some(Err(msg)) if msg.contains(needle))
+    }
+
     fn selected_file(&self) -> Option<&SourceFile> {
         let files = self.source.as_ref().map(|s| &s.files)?;
         let idx = self.file_list_state.selected().unwrap_or(0);
@@ -140,9 +221,99 @@ impl ContractDetailScreen {
             self.current = Some(update);
         }
         while let Ok(source) = self.feed.source_rx.try_recv() {
+            self.functions = parse_abi_functions(&source.abi);
+            self.functions.sort_by(|a, b| a.name.cmp(&b.name));
             self.source = Some(source);
             self.clamp_file_selection();
+            self.reset_args_for_current_fn();
         }
+        while let Ok(result) = self.feed.read_rx.try_recv() {
+            self.last_result = Some(
+                result.map_err(|e| domain_error_message(&e)),
+            );
+            self.last_result_for = self
+                .selected_function()
+                .map(|f| f.signature());
+        }
+    }
+
+    fn selected_function(&self) -> Option<&AbiFunction> {
+        let idx = self.function_list_state.selected().unwrap_or(0);
+        self.functions.get(idx)
+    }
+
+    fn reset_args_for_current_fn(&mut self) {
+        let arg_count = self
+            .selected_function()
+            .map(|f| f.inputs.len())
+            .unwrap_or(0);
+        self.arg_buffers = vec![String::new(); arg_count];
+        self.arg_cursor = 0;
+        self.last_result = None;
+        self.last_result_for = None;
+    }
+
+    fn select_function_delta(&mut self, delta: i32) {
+        if self.functions.is_empty() {
+            return;
+        }
+        let current = self.function_list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, self.functions.len() as i32 - 1);
+        self.function_list_state.select(Some(next as usize));
+        self.reset_args_for_current_fn();
+    }
+
+    /// Try to turn the user-supplied strings into [`AbiValue`]s for
+    /// the currently-selected function. Returns `Err(msg)` with a
+    /// user-visible explanation on the first failure.
+    fn build_args(&self) -> Result<Vec<AbiValue>, String> {
+        let function = self
+            .selected_function()
+            .ok_or_else(|| "no function selected".to_string())?;
+        if function.inputs.len() != self.arg_buffers.len() {
+            return Err(format!(
+                "arg buffer mismatch ({} vs {})",
+                function.inputs.len(),
+                self.arg_buffers.len()
+            ));
+        }
+        let mut values = Vec::with_capacity(function.inputs.len());
+        for (param, raw) in function.inputs.iter().zip(self.arg_buffers.iter()) {
+            let raw = raw.trim();
+            let value = match &param.kind {
+                AbiParamType::Address => Address::from_hex(raw)
+                    .map(AbiValue::Address)
+                    .map_err(|e| format!("{}: {e}", param.name))?,
+                AbiParamType::Uint { .. } => {
+                    let n = if let Some(hex) = raw.strip_prefix("0x") {
+                        u128::from_str_radix(hex, 16)
+                    } else {
+                        raw.parse::<u128>()
+                    }
+                    .map_err(|e| format!("{}: invalid uint: {e}", param.name))?;
+                    AbiValue::Uint(n)
+                }
+                AbiParamType::Bool => match raw.to_ascii_lowercase().as_str() {
+                    "true" | "1" => AbiValue::Bool(true),
+                    "false" | "0" => AbiValue::Bool(false),
+                    other => {
+                        return Err(format!(
+                            "{}: expected true/false, got {other}",
+                            param.name
+                        ));
+                    }
+                },
+                AbiParamType::String => AbiValue::String(raw.to_string()),
+                other => {
+                    return Err(format!(
+                        "{}: unsupported input type {other:?}",
+                        param.name
+                    ));
+                }
+            };
+            values.push(value);
+        }
+        Ok(values)
     }
 
     fn clamp_file_selection(&mut self) {
@@ -251,79 +422,42 @@ impl Screen for ContractDetailScreen {
                     chunks[2],
                 );
             }
+            ContractTab::Read => self.render_read_tab(frame, chunks[2]),
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
-        match (self.active_tab, key.code) {
-            (_, KeyCode::Char('q')) => Command::Quit,
-            (_, KeyCode::Esc) => Command::Pop,
-            (_, KeyCode::Tab | KeyCode::BackTab) => {
+        // Global keys first.
+        match key.code {
+            KeyCode::Char('q') => return Command::Quit,
+            KeyCode::Esc => return Command::Pop,
+            KeyCode::Tab | KeyCode::BackTab => {
                 self.active_tab = self.active_tab.next();
                 self.scroll = 0;
-                Command::None
+                return Command::None;
             }
+            _ => {}
+        }
 
-            // Source tab: Up/Down switch file, PageUp/PageDown scroll.
-            (ContractTab::Source, KeyCode::Up) => {
-                self.file_delta(-1);
+        match self.active_tab {
+            ContractTab::Source => self.handle_source_key(key),
+            ContractTab::Read => self.handle_read_key(key),
+            ContractTab::Overview | ContractTab::Abi => {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.scroll = self.scroll.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.scroll = self.scroll.saturating_add(1);
+                    }
+                    KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
+                    KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+                    KeyCode::Home => self.scroll = 0,
+                    KeyCode::End => self.scroll = u16::MAX,
+                    _ => {}
+                }
                 Command::None
             }
-            (ContractTab::Source, KeyCode::Down) => {
-                self.file_delta(1);
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::Char('k')) => {
-                self.scroll = self.scroll.saturating_sub(1);
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::Char('j')) => {
-                self.scroll = self.scroll.saturating_add(1);
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::PageUp) => {
-                self.scroll = self.scroll.saturating_sub(10);
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::PageDown) => {
-                self.scroll = self.scroll.saturating_add(10);
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::Home) => {
-                self.scroll = 0;
-                Command::None
-            }
-            (ContractTab::Source, KeyCode::End) => {
-                self.scroll = u16::MAX;
-                Command::None
-            }
-
-            // Overview + ABI: body scroll
-            (_, KeyCode::Up | KeyCode::Char('k')) => {
-                self.scroll = self.scroll.saturating_sub(1);
-                Command::None
-            }
-            (_, KeyCode::Down | KeyCode::Char('j')) => {
-                self.scroll = self.scroll.saturating_add(1);
-                Command::None
-            }
-            (_, KeyCode::PageUp) => {
-                self.scroll = self.scroll.saturating_sub(10);
-                Command::None
-            }
-            (_, KeyCode::PageDown) => {
-                self.scroll = self.scroll.saturating_add(10);
-                Command::None
-            }
-            (_, KeyCode::Home) => {
-                self.scroll = 0;
-                Command::None
-            }
-            (_, KeyCode::End) => {
-                self.scroll = u16::MAX;
-                Command::None
-            }
-            _ => Command::None,
         }
     }
 
@@ -342,6 +476,286 @@ impl Screen for ContractDetailScreen {
 }
 
 impl ContractDetailScreen {
+    fn handle_source_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up => {
+                self.file_delta(-1);
+            }
+            KeyCode::Down => {
+                self.file_delta(1);
+            }
+            KeyCode::Char('k') => self.scroll = self.scroll.saturating_sub(1),
+            KeyCode::Char('j') => self.scroll = self.scroll.saturating_add(1),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::Home => self.scroll = 0,
+            KeyCode::End => self.scroll = u16::MAX,
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_read_key(&mut self, key: KeyEvent) -> Command {
+        match self.read_focus {
+            ReadFocus::FunctionList => self.handle_read_list_key(key),
+            ReadFocus::Args => self.handle_read_args_key(key),
+        }
+    }
+
+    fn handle_read_list_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.select_function_delta(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.select_function_delta(1),
+            KeyCode::PageUp => self.select_function_delta(-10),
+            KeyCode::PageDown => self.select_function_delta(10),
+            KeyCode::Home if !self.functions.is_empty() => {
+                self.function_list_state.select(Some(0));
+                self.reset_args_for_current_fn();
+            }
+            KeyCode::End if !self.functions.is_empty() => {
+                let last = self.functions.len() - 1;
+                self.function_list_state.select(Some(last));
+                self.reset_args_for_current_fn();
+            }
+            KeyCode::Enter | KeyCode::Right => {
+                // Focus the args editor. If the function has no
+                // inputs, fire immediately.
+                if let Some(f) = self.selected_function() {
+                    if f.inputs.is_empty() {
+                        self.execute_current();
+                    } else {
+                        self.read_focus = ReadFocus::Args;
+                        self.arg_cursor = 0;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_read_args_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up if self.arg_cursor > 0 => {
+                self.arg_cursor -= 1;
+            }
+            KeyCode::Down if self.arg_cursor + 1 < self.arg_buffers.len() => {
+                self.arg_cursor += 1;
+            }
+            KeyCode::Left => {
+                self.read_focus = ReadFocus::FunctionList;
+            }
+            KeyCode::Backspace => {
+                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                    buf.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                    buf.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                self.execute_current();
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn execute_current(&mut self) {
+        let Some(function) = self.selected_function().cloned() else {
+            return;
+        };
+        if !function.is_executable() {
+            self.last_result = Some(Err(
+                "function has unsupported ABI input types".to_string(),
+            ));
+            self.last_result_for = Some(function.signature());
+            return;
+        }
+        match self.build_args() {
+            Ok(args) => {
+                let _ = self
+                    .feed
+                    .read_tx
+                    .send(ReadRequest { function, args });
+            }
+            Err(msg) => {
+                self.last_result = Some(Err(msg));
+                self.last_result_for = Some(function.signature());
+            }
+        }
+    }
+
+    fn render_read_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        if self.source.is_none() {
+            frame.render_widget(
+                Paragraph::new("Loading ABI...").block(
+                    Block::default().borders(Borders::ALL).title("Read"),
+                ),
+                area,
+            );
+            return;
+        }
+        if self.functions.is_empty() {
+            frame.render_widget(
+                Paragraph::new(
+                    "No callable functions in this ABI.\n\
+Contract may be unverified or expose only events / constructors.",
+                )
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Read")),
+                area,
+            );
+            return;
+        }
+
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(area);
+
+        // Function list
+        let items: Vec<ListItem> = self
+            .functions
+            .iter()
+            .map(|f| {
+                let marker = if f.is_read_only { " " } else { "!" };
+                ListItem::new(format!("{marker} {}", f.signature()))
+            })
+            .collect();
+        let mut state = self.function_list_state;
+        let list_title = match self.read_focus {
+            ReadFocus::FunctionList => "Functions (focused)",
+            ReadFocus::Args => "Functions",
+        };
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(list_title))
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238)),
+                )
+                .highlight_symbol("> "),
+            columns[0],
+            &mut state,
+        );
+
+        // Detail pane: split into metadata + args + result.
+        let detail_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(5),
+                Constraint::Min(5),
+            ])
+            .split(columns[1]);
+
+        let function = self.selected_function();
+        let meta_text = match function {
+            Some(f) => {
+                let mutability = if f.is_read_only {
+                    "view/pure"
+                } else {
+                    "!! state-changing (not executable)"
+                };
+                let outputs = if f.outputs.is_empty() {
+                    "()".to_string()
+                } else {
+                    f.outputs
+                        .iter()
+                        .map(|o| o.kind.canonical())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!(
+                    "{sig}\n-> ({outputs})\n{mutability}",
+                    sig = f.signature(),
+                )
+            }
+            None => "(no function selected)".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(meta_text).block(
+                Block::default().borders(Borders::ALL).title("Signature"),
+            ),
+            detail_chunks[0],
+        );
+
+        // Arguments editor
+        let args_title = match self.read_focus {
+            ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
+            ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
+        };
+        let args_body = match function {
+            Some(f) if f.inputs.is_empty() => "(no arguments)".to_string(),
+            Some(f) => {
+                let mut lines = Vec::with_capacity(f.inputs.len());
+                for (idx, (param, buf)) in
+                    f.inputs.iter().zip(self.arg_buffers.iter()).enumerate()
+                {
+                    let cursor = if matches!(self.read_focus, ReadFocus::Args)
+                        && idx == self.arg_cursor
+                    {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    lines.push(format!(
+                        "{cursor} {name} ({ty}) = {buf}",
+                        name = if param.name.is_empty() {
+                            format!("arg{idx}")
+                        } else {
+                            param.name.clone()
+                        },
+                        ty = param.kind.canonical(),
+                        buf = buf,
+                    ));
+                }
+                lines.join("\n")
+            }
+            None => String::new(),
+        };
+        frame.render_widget(
+            Paragraph::new(args_body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title(args_title)),
+            detail_chunks[1],
+        );
+
+        // Result pane
+        let result_body = match (
+            self.last_result.as_ref(),
+            self.last_result_for.as_deref(),
+            function.map(|f| f.signature()),
+        ) {
+            (Some(Ok(values)), Some(sig), Some(current)) if sig == current => {
+                if values.is_empty() {
+                    "(no return values)".to_string()
+                } else {
+                    values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| format!("[{i}] {v}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+            (Some(Err(msg)), Some(sig), Some(current)) if sig == current => {
+                format!("ERROR: {msg}")
+            }
+            _ => "(press Enter on the arguments pane to execute)".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(result_body).wrap(Wrap { trim: false }).block(
+                Block::default().borders(Borders::ALL).title("Result"),
+            ),
+            detail_chunks[2],
+        );
+    }
+
     fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(source) = self.source.as_ref() else {
             frame.render_widget(
@@ -470,6 +884,13 @@ Nonce       {nonce}\n\
         balance = ov.account.balance.value(),
         nonce = ov.account.nonce,
     )
+}
+
+fn domain_error_message(err: &DomainError) -> String {
+    match err {
+        DomainError::ExecutionReverted { reason } => format!("revert: {reason}"),
+        other => other.to_string(),
+    }
 }
 
 fn abi_body(source: Option<&ContractSource>) -> (String, String) {
