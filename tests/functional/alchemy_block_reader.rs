@@ -93,6 +93,35 @@ async fn happy_path_by_hash_returns_full_block() {
 }
 
 #[tokio::test]
+async fn parses_withdrawals_from_shanghai_block() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({"method":"eth_getBlockByNumber"})))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByNumber__with_withdrawals.json"),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let reader = reader_for(&server.uri());
+    let block = reader
+        .get(
+            BlockId::Number(BlockNumber::new(0x1455b4f)),
+            Chain::Ethereum,
+        )
+        .await
+        .expect("ok")
+        .expect("found");
+
+    assert_eq!(block.withdrawals.len(), 2);
+    assert_eq!(block.withdrawals[0].index, 0x1e8480);
+    assert_eq!(block.withdrawals[0].validator_index, 0xbeef);
+    assert_eq!(block.withdrawals[0].amount_gwei, 0x3b9aca00);
+    assert_eq!(block.withdrawals[1].validator_index, 0xf00d);
+}
+
+#[tokio::test]
 async fn null_result_returns_none() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

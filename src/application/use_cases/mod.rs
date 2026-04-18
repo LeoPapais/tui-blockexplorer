@@ -9,6 +9,7 @@ pub mod load_address_portfolio;
 pub mod load_address_transfers;
 pub mod load_block_overview;
 pub mod load_block_transactions;
+pub mod load_block_withdrawals;
 pub mod load_contract_overview;
 pub mod load_token_overview;
 pub mod load_token_price;

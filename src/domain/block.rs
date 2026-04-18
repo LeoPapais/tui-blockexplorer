@@ -108,6 +108,27 @@ pub struct Block {
     ///
     /// See `plan/15-backlog.md` section 3.5.
     pub extra_signer: Option<Address>,
+    /// Post-Shanghai withdrawals attached to the block. Empty on
+    /// pre-Shanghai Ethereum, chains that do not implement
+    /// EIP-4895, or when the adapter pointedly left the array
+    /// untouched. See `plan/3-block-detail.md` §12.5.
+    pub withdrawals: Vec<Withdrawal>,
+}
+
+/// One EIP-4895 withdrawal carried by a post-Shanghai Ethereum
+/// block. Produced by the block reader and consumed by
+/// `load_block_withdrawals`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Withdrawal {
+    /// Monotonic index assigned by the consensus layer.
+    pub index: u64,
+    /// Validator that earned the withdrawal.
+    pub validator_index: u64,
+    /// Recipient address.
+    pub address: Address,
+    /// Amount withdrawn, in gwei (EIP-4895 uses gwei directly, not
+    /// wei).
+    pub amount_gwei: u64,
 }
 
 impl Block {

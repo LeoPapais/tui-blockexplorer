@@ -46,6 +46,7 @@ fn sample_block(number: u64, hash_hex: &str, parent_hex: &str, tx_count: usize) 
         extra_data: vec![0x42, 0x42],
         tx_hashes,
         extra_signer: None,
+        withdrawals: Vec::new(),
     }
 }
 
@@ -275,6 +276,7 @@ fn polygon_block_with_signer() -> Block {
         extra_data: vec![0u8; 32 + 65],
         tx_hashes: vec![],
         extra_signer: Some(Address::from_hex(POLYGON_SIGNER_HEX).unwrap()),
+        withdrawals: Vec::new(),
     }
 }
 

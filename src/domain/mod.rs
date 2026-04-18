@@ -30,7 +30,7 @@ pub mod tx_trace;
 pub use address::{Address, AddressOverview};
 pub use block::{
     Block, BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxCursor, BlockTxPage,
-    BlockTxReceipt, TxCategory,
+    BlockTxReceipt, TxCategory, Withdrawal,
 };
 pub use chain::Chain;
 pub use contract::{ContractOverview, ProxyInfo, ProxyKind};

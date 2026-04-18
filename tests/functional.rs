@@ -174,3 +174,6 @@ mod label_composite;
 
 #[path = "functional/etherscan_label.rs"]
 mod etherscan_label;
+
+#[path = "functional/load_block_withdrawals.rs"]
+mod load_block_withdrawals;

@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "number": "0x1455b4f",
+    "hash": "0xaaaa000000000000000000000000000000000000000000000000000000000000",
+    "parentHash": "0xbbbb000000000000000000000000000000000000000000000000000000000000",
+    "miner": "0x1111111111111111111111111111111111111111",
+    "timestamp": "0x65f00001",
+    "gasUsed": "0xb71b00",
+    "gasLimit": "0x1c9c380",
+    "baseFeePerGas": "0x2a77e3200",
+    "size": "0x19000",
+    "extraData": "0x4242",
+    "transactions": [],
+    "withdrawals": [
+      {
+        "index": "0x1e8480",
+        "validatorIndex": "0xbeef",
+        "address": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "amount": "0x3b9aca00"
+      },
+      {
+        "index": "0x1e8481",
+        "validatorIndex": "0xf00d",
+        "address": "0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919",
+        "amount": "0x1dcd6500"
+      }
+    ]
+  }
+}

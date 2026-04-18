@@ -46,6 +46,7 @@ fn sample_block() -> Block {
                 .unwrap(),
         ],
         extra_signer: None,
+        withdrawals: Vec::new(),
     }
 }
 
