@@ -286,7 +286,9 @@ pub(crate) fn spawn_tx_detail<R: TxReaderPort + Clone + 'static>(
         } = sender;
         while let Some(h) = input_rx.recv().await {
             if let Ok(Some(tx)) = reader_for_task.get(h, chain).await
-                && updates_tx.send(tx).is_err()
+                && updates_tx
+                    .send(blockexplorer_tui::application::TxView::bare(tx))
+                    .is_err()
             {
                 break;
             }

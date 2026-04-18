@@ -15,9 +15,10 @@ use cucumber::World;
 
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
-    StubChainRegistry, StubEnsResolverPort, StubGasOraclePort, StubNetworkStatusPort,
-    StubPendingTxStreamPort, StubProxyDetectionPort, StubTokenReaderPort, StubTokenSearchPort,
-    StubTxLookupPort, StubTxReaderPort,
+    StubChainRegistry, StubContractSourcePort, StubEnsResolverPort, StubGasOraclePort,
+    StubNetworkStatusPort, StubPendingTxStreamPort, StubProxyDetectionPort,
+    StubSignatureDirectoryPort, StubTokenReaderPort, StubTokenSearchPort, StubTxLookupPort,
+    StubTxReaderPort,
 };
 
 pub type AppHomeSession =
@@ -42,6 +43,14 @@ pub struct AppWorld {
 
     /// Tx-detail stub.
     pub tx_reader_stub: StubTxReaderPort,
+
+    /// Contract-source (Etherscan ABI) stub used by the tx-detail
+    /// decoding scenarios.
+    pub contract_source_stub: StubContractSourcePort,
+
+    /// Signature-directory (Sourcify 4byte) stub used by the
+    /// tx-detail decoding scenarios.
+    pub signatures_stub: StubSignatureDirectoryPort,
 
     /// Mempool stub.
     pub pending_stub: StubPendingTxStreamPort,

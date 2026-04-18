@@ -1,20 +1,186 @@
 //! Use case: load the full Transaction entity shown on the Overview
-//! tab of the TxDetail screen.
+//! tab of the TxDetail screen, enriched with decoded method and logs.
 //!
-//! See `plan/4-tx-detail.md` section 12.1.
+//! Signature decoding falls through:
+//!   ABI (Etherscan) -> signature directory (Sourcify 4byte) -> raw.
+//!
+//! See `plan/4-tx-detail.md` sections 12.1 and 12.4.2.
+
+use serde_json::Value;
 
 use crate::{
-    application::ports::TxReaderPort,
-    domain::{Chain, DomainError, Transaction, TxHash},
+    application::{
+        DecodedLog, DecodedMethod, DecodedSignature, SignatureSource, TxView,
+        ports::{ContractSourcePort, SignatureDirectoryPort, TxReaderPort},
+    },
+    domain::{Chain, DomainError, LogEntry, TxHash},
 };
 
-pub async fn run<P: TxReaderPort>(
-    reader: &P,
+pub async fn run<R: TxReaderPort>(
+    reader: &R,
     hash: TxHash,
     chain: Chain,
-) -> Result<Transaction, DomainError> {
+) -> Result<TxView, DomainError> {
     match reader.get(hash, chain).await? {
-        Some(tx) => Ok(tx),
+        Some(tx) => Ok(TxView::bare(tx)),
         None => Err(DomainError::NotFound),
     }
+}
+
+/// Enriched variant that additionally resolves method / event
+/// signatures. Missing adapters / lookups degrade to best-effort
+/// rather than failing the call.
+pub async fn run_with_decoding<R, C, S>(
+    reader: &R,
+    contract_source: &C,
+    signatures: &S,
+    hash: TxHash,
+    chain: Chain,
+) -> Result<TxView, DomainError>
+where
+    R: TxReaderPort,
+    C: ContractSourcePort,
+    S: SignatureDirectoryPort,
+{
+    let tx = match reader.get(hash, chain).await? {
+        Some(tx) => tx,
+        None => return Err(DomainError::NotFound),
+    };
+
+    // --- Method signature decoding --------------------------------
+    let decoded_method = match tx.selector() {
+        Some(selector) => decode_method(contract_source, signatures, &tx, selector, chain).await,
+        None => None,
+    };
+
+    // --- Receipt-log decoding -------------------------------------
+    let mut decoded_logs = Vec::with_capacity(tx.logs.len());
+    for raw in tx.logs.iter() {
+        let sig = decode_log(contract_source, signatures, raw, chain).await;
+        decoded_logs.push(DecodedLog {
+            raw: raw.clone(),
+            signature: sig,
+        });
+    }
+
+    Ok(TxView {
+        tx,
+        decoded_method,
+        decoded_logs,
+    })
+}
+
+async fn decode_method<C, S>(
+    contract_source: &C,
+    signatures: &S,
+    tx: &crate::domain::Transaction,
+    selector: [u8; 4],
+    chain: Chain,
+) -> Option<DecodedMethod>
+where
+    C: ContractSourcePort,
+    S: SignatureDirectoryPort,
+{
+    if let Some(to) = tx.to
+        && let Ok(Some(abi)) = contract_source.get_abi(to, chain).await
+        && let Some(signature) = match_selector_in_abi(&abi.abi, selector)
+    {
+        return Some(DecodedMethod {
+            signature,
+            source: SignatureSource::Abi,
+        });
+    }
+    if let Ok(Some(signature)) = signatures.lookup_selector(selector).await {
+        return Some(DecodedMethod {
+            signature,
+            source: SignatureSource::SignatureDirectory,
+        });
+    }
+    None
+}
+
+async fn decode_log<C, S>(
+    contract_source: &C,
+    signatures: &S,
+    log: &LogEntry,
+    chain: Chain,
+) -> Option<DecodedSignature>
+where
+    C: ContractSourcePort,
+    S: SignatureDirectoryPort,
+{
+    let topic0 = log.topics.first().copied()?;
+    if let Ok(Some(abi)) = contract_source.get_abi(log.address, chain).await
+        && let Some(signature) = match_event_topic_in_abi(&abi.abi, topic0)
+    {
+        return Some(DecodedSignature {
+            signature,
+            source: SignatureSource::Abi,
+        });
+    }
+    if let Ok(Some(signature)) = signatures.lookup_event_topic(topic0).await {
+        return Some(DecodedSignature {
+            signature,
+            source: SignatureSource::SignatureDirectory,
+        });
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Minimal ABI matchers
+// ---------------------------------------------------------------------------
+//
+// The full ABI decoder lives elsewhere. We only need to map a 4-byte
+// selector / event topic hash to the canonical signature string; the
+// adapter could pull in a heavy-duty crate to parse the ABI JSON, but
+// for the MVP we do a lightweight traversal that does not introduce
+// a new dependency. When actual argument decoding lands we will
+// revisit this and likely reach for `alloy-json-abi`.
+
+fn match_selector_in_abi(abi_json: &str, selector: [u8; 4]) -> Option<String> {
+    let abi: Value = serde_json::from_str(abi_json).ok()?;
+    let entries = abi.as_array()?;
+    for entry in entries {
+        if entry.get("type").and_then(Value::as_str) != Some("function") {
+            continue;
+        }
+        let Some(signature) = build_signature(entry) else {
+            continue;
+        };
+        let computed = crate::domain::contract_source::selector_for(&signature);
+        if computed == selector {
+            return Some(signature);
+        }
+    }
+    None
+}
+
+fn match_event_topic_in_abi(abi_json: &str, topic: [u8; 32]) -> Option<String> {
+    let abi: Value = serde_json::from_str(abi_json).ok()?;
+    let entries = abi.as_array()?;
+    for entry in entries {
+        if entry.get("type").and_then(Value::as_str) != Some("event") {
+            continue;
+        }
+        let Some(signature) = build_signature(entry) else {
+            continue;
+        };
+        let computed = crate::domain::contract_source::event_topic_for(&signature);
+        if computed == topic {
+            return Some(signature);
+        }
+    }
+    None
+}
+
+fn build_signature(entry: &Value) -> Option<String> {
+    let name = entry.get("name").and_then(Value::as_str)?;
+    let inputs = entry.get("inputs").and_then(Value::as_array)?;
+    let mut parts = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let ty = input.get("type").and_then(Value::as_str)?;
+        parts.push(ty.to_string());
+    }
+    Some(format!("{name}({})", parts.join(",")))
 }

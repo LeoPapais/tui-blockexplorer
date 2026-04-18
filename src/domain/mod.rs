@@ -32,4 +32,4 @@ pub use network_status::{GasSnapshot, NetworkStatus};
 pub use search::{AddressKind, ResolvedEntity};
 pub use timestamp::UnixTimestamp;
 pub use token::{TokenMetadata, TokenOverview};
-pub use tx::{Transaction, TxHash, TxStatus, TxSummary, TxType};
+pub use tx::{LogEntry, Transaction, TxHash, TxStatus, TxSummary, TxType};

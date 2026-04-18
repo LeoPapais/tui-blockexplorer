@@ -1,8 +1,8 @@
 # blockexplorer-tui
 
 A terminal block explorer in the spirit of Etherscan. Built in Rust with
-`ratatui`, fed by Alchemy, Etherscan V2, openchain.xyz and the Samczsun
-signature database. No in-house indexer.
+`ratatui`, fed by Alchemy, Etherscan V2 and the Sourcify 4byte signature
+service. No in-house indexer.
 
 The project is planning-first: every feature is specified under
 [`plan/`](plan/README.md) before any code is written. Tests (BDD for user
@@ -16,6 +16,10 @@ cargo run -- --demo
 
 # Live view against Alchemy:
 ALCHEMY_API_KEY=<your key> cargo run
+
+# Add ABI-based method + event decoding on TxDetail (optional but
+# recommended):
+ALCHEMY_API_KEY=<key> ETHERSCAN_API_KEY=<etherscan-v2-key> cargo run
 
 # Pick a different chain (defaults to Ethereum mainnet):
 ALCHEMY_API_KEY=<key> BLOCKEXPLORER_TUI_CHAIN=base cargo run
@@ -52,6 +56,7 @@ full keymap.
 ```toml
 [credentials]
 alchemy = "your-key"
+etherscan = "your-etherscan-v2-key"  # optional: enables ABI + event decoding
 
 [defaults]
 chain = "ethereum"  # ethereum | ethereum-sepolia | base | polygon | optimism | arbitrum

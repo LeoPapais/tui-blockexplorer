@@ -61,9 +61,9 @@ async fn happy_path_returns_successful_tx() {
         .expect("found");
 
     assert_eq!(tx.status, TxStatus::Success);
-    assert_eq!(tx.block_number.value(), 0x1406f40);
-    assert_eq!(tx.tx_index, 3);
-    assert_eq!(tx.gas_used, 0xcc75);
+    assert_eq!(tx.block_number.unwrap().value(), 0x1406f40);
+    assert_eq!(tx.tx_index, Some(3));
+    assert_eq!(tx.gas_used, Some(0xcc75));
     assert_eq!(tx.gas_limit, 0x13880);
     assert_eq!(tx.nonce, 42);
     assert_eq!(tx.tx_type, TxType::DynamicFee);
@@ -111,7 +111,7 @@ async fn reverted_tx_exposes_reason() {
         TxStatus::Failed { reason } => {
             assert_eq!(reason.as_deref(), Some("InsufficientBalance()"));
         }
-        TxStatus::Success => panic!("expected Failed"),
+        other => panic!("expected Failed, got {other:?}"),
     }
 }
 

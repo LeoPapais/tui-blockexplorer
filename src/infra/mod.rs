@@ -26,12 +26,14 @@ use url::Url;
 use crate::{
     adapters::{
         config::InMemoryChainRegistry,
+        etherscan::{EtherscanClient, EtherscanContractSource},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
             AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemyTokenReader,
             AlchemyTxLookup, AlchemyTxReader, RpcClient,
         },
+        signatures::SourcifySignatureDirectory,
         ui::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
@@ -48,14 +50,33 @@ use crate::{
 use mempool_feed::EmptyPendingTxStream;
 
 /// Build a live `TxDetailScreen` backed by a dedicated Alchemy
-/// tx-reader task.
+/// tx-reader task, plus ABI + signature-directory decoding when the
+/// corresponding keys are available.
 fn live_tx_detail_screen(
     chain: Chain,
     hash: crate::domain::TxHash,
     rpc: RpcClient,
+    etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyTxReader::new(rpc);
     let (feed, sender) = tx_feed();
+
+    let signatures = SourcifySignatureDirectory::with_default_http().ok();
+
+    if let (Some(key), Some(signatures)) = (etherscan_key, signatures)
+        && let Ok(client) = EtherscanClient::with_default_http(key)
+    {
+        let contract_source = EtherscanContractSource::new(client);
+        std::mem::drop(tx_feed::spawn_with_decoding(
+            chain,
+            reader,
+            contract_source,
+            signatures,
+            sender,
+        ));
+        return Box::new(TxDetailScreen::loading(chain, hash, feed));
+    }
+
     std::mem::drop(tx_feed::spawn(chain, reader, sender));
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
@@ -177,6 +198,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         .alchemy
         .as_deref()
         .expect("caller ensured the key is present");
+    let etherscan_key = config.credentials.etherscan.clone();
 
     let url = alchemy_url(chain, key);
     let http = Client::new();
@@ -191,6 +213,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
 
     let search_factory = {
         let rpc = rpc.clone();
+        let etherscan_key = etherscan_key.clone();
         Box::new(move || -> Box<dyn Screen> {
             let block = AlchemyBlockLookup::new(rpc.clone());
             let tx = AlchemyTxLookup::new(rpc.clone());
@@ -198,27 +221,28 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
             let ens = AlchemyEnsResolver::new(rpc.clone());
             let token = NoopTokenSearch;
             let (search_feed_rx, sender) = search_feed();
-            // JoinHandle intentionally dropped: the task lives for as
-            // long as the receiver end is alive, which matches the
-            // lifetime of the SearchScreen we return.
             std::mem::drop(search_feed::spawn(
                 chain, block, tx, addr, ens, token, sender,
             ));
 
             let detail_factory = {
                 let rpc = rpc.clone();
+                let etherscan_key = etherscan_key.clone();
                 Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
                     match entity {
                         ResolvedEntity::Block { number, .. } => {
                             let reader = AlchemyBlockReader::new(rpc.clone());
                             let (feed, sender) = block_feed();
                             std::mem::drop(block_feed::spawn(chain, reader, sender));
-                            // When the user drills into a tx from the
-                            // block, wire a fresh TxDetail screen backed
-                            // by its own tx-reader task.
                             let rpc_for_tx = rpc.clone();
+                            let etherscan_for_tx = etherscan_key.clone();
                             let open_tx = Box::new(move |hash| {
-                                live_tx_detail_screen(chain, hash, rpc_for_tx.clone())
+                                live_tx_detail_screen(
+                                    chain,
+                                    hash,
+                                    rpc_for_tx.clone(),
+                                    etherscan_for_tx.clone(),
+                                )
                             });
                             Box::new(BlockDetailScreen::loading(
                                 chain,
@@ -227,9 +251,12 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                                 open_tx,
                             ))
                         }
-                        ResolvedEntity::Tx { hash, .. } => {
-                            live_tx_detail_screen(chain, hash, rpc.clone())
-                        }
+                        ResolvedEntity::Tx { hash, .. } => live_tx_detail_screen(
+                            chain,
+                            hash,
+                            rpc.clone(),
+                            etherscan_key.clone(),
+                        ),
                         ResolvedEntity::Address { address, kind, .. } => match kind {
                             AddressKind::Contract => {
                                 live_contract_detail_screen(chain, address, rpc.clone())
@@ -255,6 +282,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     // renders the "waiting..." empty state.
     let mempool_factory = {
         let rpc_for_tx = rpc.clone();
+        let etherscan_for_tx = etherscan_key.clone();
         Box::new(move || -> Box<dyn Screen> {
             let stream = EmptyPendingTxStream;
             let rx = futures_block_on(async {
@@ -264,7 +292,10 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                     .expect("EmptyPendingTxStream cannot fail")
             });
             let rpc = rpc_for_tx.clone();
-            let open_tx = Box::new(move |hash| live_tx_detail_screen(chain, hash, rpc.clone()));
+            let etherscan_key = etherscan_for_tx.clone();
+            let open_tx = Box::new(move |hash| {
+                live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
+            });
             Box::new(MempoolScreen::new(
                 rx,
                 PendingTxFilter::default(),

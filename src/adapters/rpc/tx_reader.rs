@@ -6,7 +6,9 @@
 //! pretty-printed tx JSON body so users can inspect the exact
 //! response shape.
 //!
-//! See `plan/4-tx-detail.md` section 12.2.
+//! Pending transactions (null receipt / null blockNumber) are
+//! supported: block-level fields stay `None` and the status becomes
+//! [`TxStatus::Pending`]. See `plan/4-tx-detail.md` section 12.4.2.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -15,20 +17,20 @@ use super::client::{RpcClient, RpcError, parse_hex_u128, parse_hex_u64};
 use crate::{
     application::ports::TxReaderPort,
     domain::{
-        Address, BlockHash, BlockNumber, Chain, DomainError, Transaction, TxHash, TxStatus,
-        TxType, Wei,
+        Address, BlockHash, BlockNumber, Chain, DomainError, LogEntry, Transaction, TxHash,
+        TxStatus, TxType, Wei,
     },
 };
 
 #[derive(Debug, Deserialize)]
 struct RawTx {
     hash: String,
-    #[serde(rename = "blockNumber")]
-    block_number: String,
-    #[serde(rename = "blockHash")]
-    block_hash: String,
-    #[serde(rename = "transactionIndex")]
-    tx_index: String,
+    #[serde(rename = "blockNumber", default)]
+    block_number: Option<String>,
+    #[serde(rename = "blockHash", default)]
+    block_hash: Option<String>,
+    #[serde(rename = "transactionIndex", default)]
+    tx_index: Option<String>,
     from: String,
     #[serde(default)]
     to: Option<String>,
@@ -50,6 +52,17 @@ struct RawReceipt {
     status: String,
     #[serde(default, rename = "revertReason")]
     revert_reason: Option<String>,
+    #[serde(default)]
+    logs: Vec<RawLog>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLog {
+    address: String,
+    #[serde(default)]
+    topics: Vec<String>,
+    #[serde(default)]
+    data: String,
 }
 
 #[derive(Debug, Clone)]
@@ -72,9 +85,6 @@ impl TxReaderPort for AlchemyTxReader {
     ) -> Result<Option<Transaction>, DomainError> {
         let hash_hex = hash.to_hex();
 
-        // Fetch tx + receipt concurrently. The tx call returns a
-        // Value (instead of RawTx) so the Raw tab can keep the
-        // original JSON without a second serialization round.
         let (tx_res, receipt_res): (
             Result<Option<Value>, RpcError>,
             Result<Option<RawReceipt>, RpcError>,
@@ -90,7 +100,7 @@ impl TxReaderPort for AlchemyTxReader {
         let tx_value = tx_res.map_err(|e| e.into_domain())?;
         let receipt = receipt_res.map_err(|e| e.into_domain())?;
 
-        let (Some(tx_value), Some(receipt)) = (tx_value, receipt) else {
+        let Some(tx_value) = tx_value else {
             return Ok(None);
         };
 
@@ -100,11 +110,9 @@ impl TxReaderPort for AlchemyTxReader {
             .map_err(|e| DomainError::Internal(format!("tx decode: {e}")))?;
 
         let tx_hash = TxHash::from_hex(&raw_tx.hash)?;
-        let block_number = BlockNumber::new(
-            parse_hex_u64(&raw_tx.block_number).map_err(|e| e.into_domain())?,
-        );
-        let block_hash = BlockHash::from_hex(&raw_tx.block_hash)?;
-        let tx_index = parse_hex_u64(&raw_tx.tx_index).map_err(|e| e.into_domain())?;
+        let block_number = opt_block_number(raw_tx.block_number.as_deref())?;
+        let block_hash = opt_block_hash(raw_tx.block_hash.as_deref())?;
+        let tx_index = opt_hex_u64(raw_tx.tx_index.as_deref())?;
         let from = Address::from_hex(&raw_tx.from)?;
         let to = match raw_tx.to.as_deref() {
             Some(hex) if !hex.is_empty() && hex != "0x" => Some(Address::from_hex(hex)?),
@@ -122,13 +130,24 @@ impl TxReaderPort for AlchemyTxReader {
             .unwrap_or(TxType::Legacy);
         let input = parse_hex_bytes(&raw_tx.input)?;
 
-        let gas_used = parse_hex_u64(&receipt.gas_used).map_err(|e| e.into_domain())?;
-        let status = if parse_hex_u64(&receipt.status).unwrap_or(0) == 1 {
-            TxStatus::Success
-        } else {
-            TxStatus::Failed {
-                reason: receipt.revert_reason,
+        let (status, gas_used, logs) = match receipt {
+            Some(receipt) => {
+                let gas_used = parse_hex_u64(&receipt.gas_used).map_err(|e| e.into_domain())?;
+                let status = if parse_hex_u64(&receipt.status).unwrap_or(0) == 1 {
+                    TxStatus::Success
+                } else {
+                    TxStatus::Failed {
+                        reason: receipt.revert_reason,
+                    }
+                };
+                let logs = receipt
+                    .logs
+                    .into_iter()
+                    .map(raw_log_to_entry)
+                    .collect::<Result<Vec<_>, _>>()?;
+                (status, Some(gas_used), logs)
             }
+            None => (TxStatus::Pending, None, Vec::new()),
         };
 
         Ok(Some(Transaction {
@@ -147,8 +166,67 @@ impl TxReaderPort for AlchemyTxReader {
             nonce,
             tx_type,
             input,
+            logs,
             raw_json,
         }))
+    }
+}
+
+fn raw_log_to_entry(raw: RawLog) -> Result<LogEntry, DomainError> {
+    let address = Address::from_hex(&raw.address)?;
+    let topics = raw
+        .topics
+        .iter()
+        .map(|t| parse_topic(t))
+        .collect::<Result<Vec<_>, _>>()?;
+    let data = parse_hex_bytes(&raw.data)?;
+    Ok(LogEntry {
+        address,
+        topics,
+        data,
+    })
+}
+
+fn parse_topic(s: &str) -> Result<[u8; 32], DomainError> {
+    let stripped = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .ok_or_else(|| DomainError::InvalidInput(format!("topic must start with 0x: {s}")))?;
+    if stripped.len() != 64 {
+        return Err(DomainError::InvalidInput(format!(
+            "topic must be 32 bytes / 64 hex chars, got {}",
+            stripped.len()
+        )));
+    }
+    let mut bytes = [0u8; 32];
+    hex::decode_to_slice(stripped, &mut bytes)
+        .map_err(|e| DomainError::InvalidInput(format!("invalid hex: {e}")))?;
+    Ok(bytes)
+}
+
+fn opt_block_number(s: Option<&str>) -> Result<Option<BlockNumber>, DomainError> {
+    match s {
+        Some(hex) if !hex.is_empty() => {
+            let n = parse_hex_u64(hex).map_err(|e| e.into_domain())?;
+            Ok(Some(BlockNumber::new(n)))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn opt_block_hash(s: Option<&str>) -> Result<Option<BlockHash>, DomainError> {
+    match s {
+        Some(hex) if !hex.is_empty() && hex != "0x" => Ok(Some(BlockHash::from_hex(hex)?)),
+        _ => Ok(None),
+    }
+}
+
+fn opt_hex_u64(s: Option<&str>) -> Result<Option<u64>, DomainError> {
+    match s {
+        Some(hex) if !hex.is_empty() => {
+            Ok(Some(parse_hex_u64(hex).map_err(|e| e.into_domain())?))
+        }
+        _ => Ok(None),
     }
 }
 

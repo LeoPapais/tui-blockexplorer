@@ -1,10 +1,13 @@
-//! Contract-source metadata surfaced by Etherscan verifications.
+//! Contract-source metadata surfaced by Etherscan verifications plus
+//! minimal signature hashing helpers used for ABI matching.
 //!
 //! Only the subset we need for plan 4 decoding lands here. Full Source
 //! tab content (multiple files, proxy hints, compiler metadata) arrives
 //! with plan 7 when the Contract Detail tabs are expanded.
 //!
 //! See `plan/4-tx-detail.md` section 12.4.1.
+
+use tiny_keccak::{Hasher, Keccak};
 
 /// ABI + minimal metadata returned by Etherscan's `getabi`/`getsourcecode`.
 /// `abi` is the raw JSON the adapter stores verbatim so future use cases
@@ -16,4 +19,52 @@ pub struct ContractAbi {
     /// useful once the Source tab lands, but in MVP we only look at
     /// the ABI field.
     pub is_verified: bool,
+}
+
+/// 4-byte function selector for a canonical signature like
+/// `transfer(address,uint256)`.
+#[must_use]
+pub fn selector_for(signature: &str) -> [u8; 4] {
+    let hash = keccak256(signature.as_bytes());
+    let mut out = [0u8; 4];
+    out.copy_from_slice(&hash[..4]);
+    out
+}
+
+/// 32-byte event topic0 for a canonical event signature like
+/// `Transfer(address,address,uint256)`.
+#[must_use]
+pub fn event_topic_for(signature: &str) -> [u8; 32] {
+    keccak256(signature.as_bytes())
+}
+
+fn keccak256(input: &[u8]) -> [u8; 32] {
+    let mut hasher = Keccak::v256();
+    hasher.update(input);
+    let mut out = [0u8; 32];
+    hasher.finalize(&mut out);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_selector_matches_known_value() {
+        assert_eq!(
+            selector_for("transfer(address,uint256)"),
+            [0xa9, 0x05, 0x9c, 0xbb],
+        );
+    }
+
+    #[test]
+    fn transfer_event_topic_matches_known_value() {
+        let topic = event_topic_for("Transfer(address,address,uint256)");
+        let expected = hex::decode(
+            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        )
+        .unwrap();
+        assert_eq!(&topic[..], &expected[..]);
+    }
 }

@@ -37,13 +37,14 @@ pub struct TxSummary {
     pub block: Option<BlockNumber>,
 }
 
-/// Execution status of a mined transaction. Pending txs are not
-/// modelled in this phase; when pending support lands a third variant
-/// will be added.
+/// Execution status of a transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TxStatus {
     Success,
     Failed { reason: Option<String> },
+    /// Observed in the mempool; not yet mined. Set when the receipt
+    /// is null at fetch time.
+    Pending,
 }
 
 /// Transaction envelope kind, mirroring the EIP chain.
@@ -87,40 +88,75 @@ impl TxType {
     }
 }
 
+/// Raw log entry pulled from the receipt. Decoding happens at the
+/// application layer through the signature directory / contract ABI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    pub address: Address,
+    pub topics: Vec<[u8; 32]>,
+    pub data: Vec<u8>,
+}
+
 /// Full transaction detail required by the TxDetail screen.
-/// See `plan/4-tx-detail.md` section 12.1.
+///
+/// Every block-level field (block number, block hash, tx index,
+/// gas used) is optional so pending txs fit the same entity without
+/// sentinel values. See `plan/4-tx-detail.md` section 12.4.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
     pub chain: Chain,
     pub hash: TxHash,
     pub status: TxStatus,
-    pub block_number: BlockNumber,
-    pub block_hash: BlockHash,
-    pub tx_index: u64,
+    /// `None` while the tx is still pending.
+    pub block_number: Option<BlockNumber>,
+    pub block_hash: Option<BlockHash>,
+    pub tx_index: Option<u64>,
     pub from: Address,
     /// `None` indicates a contract-creation tx.
     pub to: Option<Address>,
     pub value: Wei,
     pub gas_price: Wei,
-    pub gas_used: u64,
+    /// `None` until the receipt is available (i.e. pending txs).
+    pub gas_used: Option<u64>,
     pub gas_limit: u64,
     pub nonce: u64,
     pub tx_type: TxType,
     pub input: Vec<u8>,
+    /// Receipt logs captured verbatim so the Logs tab can decode
+    /// them against ABI / signature directory.
+    pub logs: Vec<LogEntry>,
     /// Raw adapter response serialized back to pretty-printed JSON.
     /// Backs the Raw tab on the TxDetail screen.
     pub raw_json: String,
 }
 
 impl Transaction {
-    /// Effective fee paid in wei (`gas_used * gas_price`).
+    /// Effective fee paid in wei (`gas_used * gas_price`). Returns
+    /// `None` when the tx is still pending.
     #[must_use]
-    pub fn fee_paid(&self) -> Wei {
-        Wei::new(
-            self.gas_price
-                .value()
-                .saturating_mul(u128::from(self.gas_used)),
-        )
+    pub fn fee_paid(&self) -> Option<Wei> {
+        let gas_used = self.gas_used?;
+        Some(Wei::new(
+            self.gas_price.value().saturating_mul(u128::from(gas_used)),
+        ))
+    }
+
+    /// True when the transaction is in the mempool.
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        matches!(self.status, TxStatus::Pending)
+    }
+
+    /// First 4 bytes of the input calldata, if present. Used for
+    /// method decoding on the Overview tab.
+    #[must_use]
+    pub fn selector(&self) -> Option<[u8; 4]> {
+        if self.input.len() < 4 {
+            return None;
+        }
+        let mut out = [0u8; 4];
+        out.copy_from_slice(&self.input[..4]);
+        Some(out)
     }
 }
 
