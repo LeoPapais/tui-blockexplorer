@@ -181,6 +181,9 @@ mod alchemy_ens_reverse;
 #[path = "functional/ens_reverse_cache.rs"]
 mod ens_reverse_cache;
 
+#[path = "functional/portfolio_summary.rs"]
+mod portfolio_summary;
+
 #[path = "functional/load_block_transactions.rs"]
 mod load_block_transactions;
 

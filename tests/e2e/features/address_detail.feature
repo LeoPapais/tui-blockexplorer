@@ -98,3 +98,12 @@ Feature: Address detail
     Then once loaded, the Tokens tab lists 2 holdings
     When the user presses e on the Tokens tab
     Then the clipboard sink holds a Tokens CSV with 2 data rows
+
+  Scenario: Tokens tab shows USD totals and a distribution chart
+    # plan/6-address-detail.md §11 "Shipped", plan/15-backlog.md §8.7.
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
+    And the portfolio feed knows priced holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Tokens tab
+    Then once loaded, the Tokens tab shows a USD total of "$2.00" and 1 token not priced
+    And the Tokens tab renders at least 2 distribution chart rows

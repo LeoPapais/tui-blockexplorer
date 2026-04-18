@@ -23,7 +23,7 @@ use crate::{
             AddressReaderPort, EnsResolverPort, PortfolioPort, PricesPort, TokenReaderPort,
             TransfersPort,
         },
-        use_cases::load_address_overview,
+        use_cases::{load_address_overview, load_address_portfolio},
     },
     domain::{AddressKind, Chain, PriceWindow},
 };
@@ -70,11 +70,16 @@ where
             let reader = reader.clone();
             let transfers = transfers.clone();
             let portfolio = portfolio.clone();
+            let prices_for_portfolio = prices.clone();
             let ens = ens.clone();
+            // `load_address_portfolio::run` fans out one spot-price
+            // lookup per holding so the Tokens tab can render real
+            // USD values (plan/15-backlog.md §3.4 + plan/6 §11
+            // "Shipped" — Portfolio USD totals).
             let (ov_res, tr_res, pf_res) = tokio::join!(
                 load_address_overview::run(&reader, &ens, addr, chain),
                 transfers.get_for_address(addr, chain, None),
-                portfolio.get_token_balances(addr, chain),
+                load_address_portfolio::run(&portfolio, &prices_for_portfolio, addr, chain),
             );
 
             // Forward the three "always" results first.
