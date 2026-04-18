@@ -33,7 +33,7 @@ pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
 pub use contract_read::{
     AbiFunction, AbiParam, AbiParamType, AbiValue, DecodedValue, parse_abi_functions,
 };
-pub use contract_source::{ContractAbi, ContractSource, SourceFile};
+pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, SourceFile};
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
