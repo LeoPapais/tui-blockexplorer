@@ -26,20 +26,20 @@ fn reader_for(url: &str) -> AlchemyAddressReader {
 async fn mount_common_eoa_responses(server: &MockServer) {
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBalance"})))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("rpc__eth_getBalance__0xd8da.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBalance__0xd8da.json"),
+            "application/json",
+        ))
         .mount(server)
         .await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"eth_getTransactionCount"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getTransactionCount__0xd8da.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"eth_getTransactionCount"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getTransactionCount__0xd8da.json"),
+            "application/json",
+        ))
         .mount(server)
         .await;
 }
@@ -70,8 +70,41 @@ async fn eoa_returns_balance_nonce_and_kind() {
     // 0x1c5c05e5abf6b480000 = 523_140_000_000_000_000_000 wei (~523.14 ETH)
     assert_eq!(ov.balance.value(), 523_140_000_000_000_000_000u128);
     assert_eq!(ov.nonce, 0x4db);
-    assert_eq!(ov.kind, AddressKind::Eoa);
+    assert_eq!(ov.kind, AddressKind::Eoa { delegated_to: None });
+    assert!(ov.delegated_to.is_none());
     assert!(ov.ens_name.is_none());
+}
+
+#[tokio::test]
+async fn delegated_eoa_returns_delegated_kind_and_address() {
+    let server = MockServer::start().await;
+    mount_common_eoa_responses(&server).await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({"method":"eth_getCode"})))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getCode__delegated_eoa.json"),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let reader = reader_for(&server.uri());
+    let addr = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+
+    let ov = reader
+        .get(addr, Chain::Ethereum)
+        .await
+        .expect("ok")
+        .expect("found");
+
+    let delegate = Address::from_hex("0xc0ffee000000000000000000000000000000babe").unwrap();
+    assert_eq!(
+        ov.kind,
+        AddressKind::Eoa {
+            delegated_to: Some(delegate),
+        },
+    );
+    assert_eq!(ov.delegated_to, Some(delegate));
 }
 
 #[tokio::test]
@@ -80,12 +113,10 @@ async fn contract_returns_kind_contract() {
     mount_common_eoa_responses(&server).await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getCode"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getCode__contract.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getCode__contract.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

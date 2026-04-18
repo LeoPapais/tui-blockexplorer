@@ -26,7 +26,9 @@ fn prime_fixtures_for(world: &AppWorld, chain: Chain) {
     world
         .network_stub
         .set_snapshot(NetworkStatusFixture::load(net_fixture));
-    world.gas_stub.set_snapshot(GasSnapshotFixture::load(gas_fixture));
+    world
+        .gas_stub
+        .set_snapshot(GasSnapshotFixture::load(gas_fixture));
 }
 
 fn fixtures_for(chain: Chain) -> (&'static str, &'static str) {
@@ -38,6 +40,10 @@ fn fixtures_for(chain: Chain) -> (&'static str, &'static str) {
         Chain::Base => (
             "home__network_status__base.json",
             "home__gas_snapshot__base.json",
+        ),
+        Chain::Polygon => (
+            "home__network_status__polygon.json",
+            "home__gas_snapshot__polygon.json",
         ),
         other => panic!("no fixture primed for chain {}", other.slug()),
     }
@@ -57,7 +63,10 @@ fn start_home(world: &mut AppWorld, chain: Chain) {
     // for later steps. Cucumber steps are async, but we can block on the
     // futures because the stubs never suspend.
     futures_lite_block_on(async {
-        session.refresh().await.expect("initial refresh must succeed");
+        session
+            .refresh()
+            .await
+            .expect("initial refresh must succeed");
     });
     world.home = Some(session);
 }
@@ -75,9 +84,9 @@ fn futures_lite_block_on<F: std::future::Future>(fut: F) -> F::Output {
     let mut cx = Context::from_waker(waker);
     match fut.as_mut().poll(&mut cx) {
         Poll::Ready(value) => value,
-        Poll::Pending => panic!(
-            "stub future returned Pending; the stubs are expected to resolve immediately"
-        ),
+        Poll::Pending => {
+            panic!("stub future returned Pending; the stubs are expected to resolve immediately")
+        }
     }
 }
 
@@ -102,7 +111,9 @@ async fn active_chain_is(world: &mut AppWorld, chain: String) {
 
 #[given("the Home screen is rendered")]
 async fn given_home_is_rendered(world: &mut AppWorld) {
-    let chain = world.active_chain.expect("active chain must be set in Background");
+    let chain = world
+        .active_chain
+        .expect("active chain must be set in Background");
     start_home(world, chain);
 }
 
@@ -118,7 +129,9 @@ async fn home_is_rendered_with(world: &mut AppWorld, chain: String) {
 
 #[when("the Home screen is rendered")]
 async fn when_home_is_rendered(world: &mut AppWorld) {
-    let chain = world.active_chain.expect("active chain must be set in Background");
+    let chain = world
+        .active_chain
+        .expect("active chain must be set in Background");
     start_home(world, chain);
 }
 
@@ -134,7 +147,10 @@ async fn newheads_pushed(world: &mut AppWorld) {
     ));
     let session = world.home.as_mut().expect("session must exist");
     futures_lite_block_on(async {
-        session.on_new_head().await.expect("new head refresh must succeed");
+        session
+            .on_new_head()
+            .await
+            .expect("new head refresh must succeed");
     });
 }
 
@@ -196,7 +212,10 @@ async fn gas_card_shows_values(world: &mut AppWorld) {
 #[then("the Network card updates the latest block number")]
 async fn network_card_updates(world: &mut AppWorld) {
     let view = world.home.as_ref().expect("session").view();
-    assert_eq!(view.network.as_ref().unwrap().latest_block.value(), 21_345_679);
+    assert_eq!(
+        view.network.as_ref().unwrap().latest_block.value(),
+        21_345_679
+    );
 }
 
 #[then("the Gas Tracker card recomputes its values")]
@@ -227,14 +246,19 @@ async fn network_card_reflects_chain(world: &mut AppWorld, chain: String) {
 #[then(regex = r#"^the header shows a "disconnected" badge$"#)]
 async fn header_shows_disconnected(world: &mut AppWorld) {
     let view = world.home.as_ref().expect("session").view();
-    assert!(matches!(view.connection, ConnectionStatus::Disconnected { .. }));
+    assert!(matches!(
+        view.connection,
+        ConnectionStatus::Disconnected { .. }
+    ));
 }
 
 #[then("the app schedules a reconnect")]
 async fn app_schedules_reconnect(world: &mut AppWorld) {
     let view = world.home.as_ref().expect("session").view();
     match view.connection {
-        ConnectionStatus::Disconnected { reconnect_scheduled } => {
+        ConnectionStatus::Disconnected {
+            reconnect_scheduled,
+        } => {
             assert!(reconnect_scheduled, "reconnect must be scheduled");
         }
         ConnectionStatus::Connected => panic!("expected disconnected state"),

@@ -90,7 +90,9 @@ where
             // Gate: only probe ERC-20 metadata when we are sure the
             // address is a contract. EOAs fall out here with zero
             // extra RPC calls.
-            let Some(overview) = overview_clone else { continue };
+            let Some(overview) = overview_clone else {
+                continue;
+            };
             if !matches!(overview.kind, AddressKind::Contract) {
                 continue;
             }

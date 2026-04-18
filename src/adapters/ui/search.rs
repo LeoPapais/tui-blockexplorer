@@ -26,8 +26,7 @@ use crate::{
 /// candidate into a navigable detail screen. Lives on the screen so
 /// the dispatcher does not need to know about any specific entity
 /// kind.
-pub type DetailFactory =
-    Box<dyn Fn(ResolvedEntity) -> Box<dyn Screen> + Send + 'static>;
+pub type DetailFactory = Box<dyn Fn(ResolvedEntity) -> Box<dyn Screen> + Send + 'static>;
 
 /// Message sent from the resolver task to the screen.
 #[derive(Debug, Clone)]
@@ -164,10 +163,8 @@ impl Screen for SearchScreen {
             .constraints([Constraint::Length(3), Constraint::Min(3)])
             .split(area);
 
-        let header =
-            Paragraph::new(format!("> {}_", self.input)).block(
-                Block::default().borders(Borders::ALL).title("Search"),
-            );
+        let header = Paragraph::new(format!("> {}_", self.input))
+            .block(Block::default().borders(Borders::ALL).title("Search"));
         frame.render_widget(header, chunks[0]);
 
         let items: Vec<ListItem<'_>> = self
@@ -254,6 +251,14 @@ fn render_entity(entity: &ResolvedEntity) -> String {
         ResolvedEntity::Contract { address } => {
             format!("{} (open as contract)", short_hex(&address.to_hex()))
         }
+        ResolvedEntity::DelegatedEoa {
+            address,
+            delegated_to,
+        } => format!(
+            "{} (delegated to {})",
+            short_hex(&address.to_hex()),
+            short_hex(&delegated_to.to_hex()),
+        ),
         ResolvedEntity::Token(m) => format!("{} - {}", m.symbol, m.name),
         ResolvedEntity::NotFound { reason } => reason.clone(),
     }

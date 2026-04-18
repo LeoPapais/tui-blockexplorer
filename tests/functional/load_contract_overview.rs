@@ -5,8 +5,7 @@
 use blockexplorer_tui::{
     application::use_cases::load_contract_overview,
     domain::{
-        Address, AddressKind, AddressOverview, Chain, DomainError, ProxyInfo, ProxyKind,
-        Wei,
+        Address, AddressKind, AddressOverview, Chain, DomainError, ProxyInfo, ProxyKind, Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -20,6 +19,7 @@ fn sample_contract(hex: &str) -> AddressOverview {
         balance: Wei::new(0),
         nonce: 1,
         kind: AddressKind::Contract,
+        delegated_to: None,
         ens_name: None,
     }
 }

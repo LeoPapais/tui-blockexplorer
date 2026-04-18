@@ -63,6 +63,11 @@ pub struct AddressOverview {
     pub balance: Wei,
     pub nonce: u64,
     pub kind: AddressKind,
+    /// Mirror of `AddressKind::Eoa { delegated_to }` for consumers
+    /// that only need the delegate address without pattern-matching
+    /// on [`AddressKind`]. `None` for contracts and for non-delegated
+    /// EOAs. See `plan/15-backlog.md` section 3.1.
+    pub delegated_to: Option<Address>,
     /// Populated when a reverse-ENS lookup succeeds. Stays `None`
     /// until the reverse-resolver adapter lands.
     pub ens_name: Option<String>,
@@ -75,19 +80,13 @@ mod tests {
     #[test]
     fn parses_a_lowercase_hex_address() {
         let a = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
-        assert_eq!(
-            a.to_hex(),
-            "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-        );
+        assert_eq!(a.to_hex(), "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     }
 
     #[test]
     fn parses_an_uppercase_hex_address() {
         let a = Address::from_hex("0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045").unwrap();
-        assert_eq!(
-            a.to_hex(),
-            "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-        );
+        assert_eq!(a.to_hex(), "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     }
 
     #[test]

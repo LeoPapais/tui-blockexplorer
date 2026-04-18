@@ -135,3 +135,6 @@ mod search_feed_token_probe;
 
 #[path = "functional/tx_detail_screen_keys.rs"]
 mod tx_detail_screen_keys;
+
+#[path = "functional/classify_address.rs"]
+mod classify_address;

@@ -52,9 +52,8 @@ pub fn run(code: &str) -> Result<AddressKind, DomainError> {
     if body.starts_with(DELEGATION_DESIGNATOR) && body.len() == DELEGATION_HEX_LEN {
         let delegate_hex = &body[DELEGATION_DESIGNATOR.len()..];
         let mut bytes = [0u8; 20];
-        hex::decode_to_slice(delegate_hex, &mut bytes).map_err(|e| {
-            DomainError::Internal(format!("delegation delegate is not hex: {e}"))
-        })?;
+        hex::decode_to_slice(delegate_hex, &mut bytes)
+            .map_err(|e| DomainError::Internal(format!("delegation delegate is not hex: {e}")))?;
         return Ok(AddressKind::Eoa {
             delegated_to: Some(Address::from_bytes(bytes)),
         });

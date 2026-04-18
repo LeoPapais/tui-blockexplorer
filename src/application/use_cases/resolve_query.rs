@@ -8,9 +8,50 @@ use crate::{
         AddressLookupPort, BlockLookupPort, EnsResolverPort, TokenSearchPort, TxLookupPort,
     },
     domain::{
-        Address, BlockHash, BlockNumber, Chain, DomainError, ResolvedEntity, TxHash,
+        Address, AddressKind, BlockHash, BlockNumber, Chain, DomainError, ResolvedEntity, TxHash,
     },
 };
+
+/// Emit the Search rows for an address once its `AddressKind` is
+/// known. Preserves the legacy "Address + optional Contract shortcut"
+/// behaviour for contracts and plain EOAs, and emits a single
+/// `DelegatedEoa` row when the address carries an EIP-7702 delegation
+/// designator. See `plan/15-backlog.md` section 3.1.
+fn push_address_candidates(
+    candidates: &mut Vec<ResolvedEntity>,
+    addr: Address,
+    kind: AddressKind,
+    ens_name: Option<String>,
+) {
+    match kind {
+        AddressKind::Eoa {
+            delegated_to: Some(delegate),
+        } => {
+            candidates.push(ResolvedEntity::DelegatedEoa {
+                address: addr,
+                delegated_to: delegate,
+            });
+        }
+        AddressKind::Eoa { delegated_to: None } => {
+            candidates.push(ResolvedEntity::Address {
+                address: addr,
+                kind,
+                ens_name,
+            });
+        }
+        AddressKind::Contract => {
+            candidates.push(ResolvedEntity::Address {
+                address: addr,
+                kind,
+                ens_name,
+            });
+            // Cosmetic shortcut: a second row that lands straight on
+            // ContractDetail. No extra RPC: `classify` already did the
+            // `eth_getCode`.
+            candidates.push(ResolvedEntity::Contract { address: addr });
+        }
+    }
+}
 
 /// Five-port coordinator that produces a ranked list of candidates for
 /// the search input.
@@ -40,11 +81,7 @@ where
     /// Execute the resolver. Returns at least one entry: a
     /// [`ResolvedEntity::NotFound`] when every plausible lookup came
     /// back empty.
-    pub async fn run(
-        &self,
-        input: &str,
-        chain: Chain,
-    ) -> Result<Vec<ResolvedEntity>, DomainError> {
+    pub async fn run(&self, input: &str, chain: Chain) -> Result<Vec<ResolvedEntity>, DomainError> {
         let normalized = input.trim();
         if normalized.is_empty() {
             return Err(DomainError::InvalidInput("empty search input".into()));
@@ -82,19 +119,7 @@ where
                 );
                 let kind = kind_r?;
                 let ens_name = rev_r.ok().flatten();
-                candidates.push(ResolvedEntity::Address {
-                    address: addr,
-                    kind,
-                    ens_name,
-                });
-                // Cosmetic shortcut: expose a second row that lands
-                // straight on ContractDetail when the address has
-                // bytecode. No extra RPC: `classify` already did the
-                // `eth_getCode`. The Address row stays first so the
-                // default behaviour is unchanged.
-                if let crate::domain::AddressKind::Contract = kind {
-                    candidates.push(ResolvedEntity::Contract { address: addr });
-                }
+                push_address_candidates(&mut candidates, addr, kind, ens_name);
             }
             Classification::BlockNumber(n) => {
                 if let Some(b) = self.block.get_by_number(n, chain).await? {
@@ -111,15 +136,8 @@ where
                         .address
                         .classify(addr, chain)
                         .await
-                        .unwrap_or(crate::domain::AddressKind::Eoa);
-                    candidates.push(ResolvedEntity::Address {
-                        address: addr,
-                        kind,
-                        ens_name: Some(name),
-                    });
-                    if let crate::domain::AddressKind::Contract = kind {
-                        candidates.push(ResolvedEntity::Contract { address: addr });
-                    }
+                        .unwrap_or(crate::domain::AddressKind::Eoa { delegated_to: None });
+                    push_address_candidates(&mut candidates, addr, kind, Some(name));
                 }
             }
             Classification::TokenTicker(symbol) => {

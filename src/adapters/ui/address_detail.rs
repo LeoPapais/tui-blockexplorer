@@ -281,19 +281,13 @@ impl AddressDetailScreen {
 
     fn next_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + tabs.len() - 1) % tabs.len()]
     }
 
@@ -414,11 +408,7 @@ impl AddressDetailScreen {
     }
 
     fn clamp_tx_selection(&mut self) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             self.tx_list_state.select(None);
             return;
@@ -468,22 +458,28 @@ impl Screen for AddressDetailScreen {
             ])
             .split(area);
 
-        // Header
+        // Header. When the account is a 7702-delegated EOA, surface a
+        // compact "delegated to 0x…" badge next to the address so the
+        // user sees the delegation without opening a Contract tab.
         let header = match self.current.as_ref() {
-            Some(ov) => format!(
-                "Address {addr}{ens}",
-                addr = ov.address.to_hex(),
-                ens = match ov.ens_name.as_deref() {
+            Some(ov) => {
+                let ens = match ov.ens_name.as_deref() {
                     Some(n) => format!(" ({n})"),
                     None => String::new(),
-                },
-            ),
+                };
+                let delegation = match ov.delegated_to {
+                    Some(delegate) => format!("  delegated to {}", delegate.to_hex()),
+                    None => String::new(),
+                };
+                format!(
+                    "Address {addr}{ens}{delegation}",
+                    addr = ov.address.to_hex(),
+                )
+            }
             None => "Address (loading...)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(header).block(
-                Block::default().borders(Borders::ALL).title("Address"),
-            ),
+            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Address")),
             chunks[0],
         );
 
@@ -577,22 +573,19 @@ implementation resolution, source on Etherscan once wired).",
                     addr = self.address.to_hex(),
                 );
                 frame.render_widget(
-                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
-                        Block::default().borders(Borders::ALL).title("Contract"),
-                    ),
+                    Paragraph::new(body)
+                        .wrap(Wrap { trim: false })
+                        .block(Block::default().borders(Borders::ALL).title("Contract")),
                     chunks[2],
                 );
             }
             AddressTab::Tokens => {
                 let block = Block::default().borders(Borders::ALL).title("Tokens");
                 match self.holdings.as_ref() {
-                    None => frame.render_widget(
-                        Paragraph::new("Loading tokens...").block(block),
-                        chunks[2],
-                    ),
+                    None => frame
+                        .render_widget(Paragraph::new("Loading tokens...").block(block), chunks[2]),
                     Some(holdings) if holdings.is_empty() => frame.render_widget(
-                        Paragraph::new("No ERC-20 holdings found for this address.")
-                            .block(block),
+                        Paragraph::new("No ERC-20 holdings found for this address.").block(block),
                         chunks[2],
                     ),
                     Some(holdings) => {
@@ -661,8 +654,7 @@ implementation resolution, source on Etherscan once wired).",
 impl AddressDetailScreen {
     fn dispatch_key(&mut self, key: KeyEvent) -> Command {
         let is_back_tab = key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab
-                && key.modifiers.contains(KeyModifiers::SHIFT));
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
@@ -714,10 +706,7 @@ impl AddressDetailScreen {
                 self.select_delta(-1);
                 Command::None
             }
-            (
-                AddressTab::Transactions | AddressTab::Tokens,
-                KeyCode::Down | KeyCode::Char('j'),
-            ) => {
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Down | KeyCode::Char('j')) => {
                 self.select_delta(1);
                 Command::None
             }
@@ -794,7 +783,10 @@ fn overview_body(
         None => "Loading...".to_string(),
         Some(ov) => {
             let kind = match ov.kind {
-                AddressKind::Eoa => "EOA",
+                AddressKind::Eoa {
+                    delegated_to: Some(_),
+                } => "EOA (7702 delegated)",
+                AddressKind::Eoa { delegated_to: None } => "EOA",
                 AddressKind::Contract => "Contract",
             };
             let tx_count = transfers

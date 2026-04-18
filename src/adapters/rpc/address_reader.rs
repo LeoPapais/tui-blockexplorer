@@ -7,9 +7,9 @@
 //!
 //! See `plan/6-address-detail.md` section 12.2.
 
-use super::client::{RpcClient, RpcError, parse_hex_u128, parse_hex_u64};
+use super::client::{RpcClient, RpcError, parse_hex_u64, parse_hex_u128};
 use crate::{
-    application::ports::AddressReaderPort,
+    application::{ports::AddressReaderPort, use_cases::classify_address},
     domain::{Address, AddressKind, AddressOverview, Chain, DomainError, Wei},
 };
 
@@ -38,10 +38,14 @@ impl AddressReaderPort for AlchemyAddressReader {
             Result<String, RpcError>,
             Result<String, RpcError>,
         ) = tokio::join!(
-            self.client.call("eth_getBalance", serde_json::json!([hex, "latest"])),
             self.client
-                .call("eth_getTransactionCount", serde_json::json!([hex, "latest"])),
-            self.client.call("eth_getCode", serde_json::json!([hex, "latest"])),
+                .call("eth_getBalance", serde_json::json!([hex, "latest"])),
+            self.client.call(
+                "eth_getTransactionCount",
+                serde_json::json!([hex, "latest"])
+            ),
+            self.client
+                .call("eth_getCode", serde_json::json!([hex, "latest"])),
         );
 
         let balance_hex = balance_res.map_err(|e| e.into_domain())?;
@@ -50,7 +54,11 @@ impl AddressReaderPort for AlchemyAddressReader {
 
         let balance = Wei::new(parse_hex_u128(&balance_hex).map_err(|e| e.into_domain())?);
         let nonce = parse_hex_u64(&nonce_hex).map_err(|e| e.into_domain())?;
-        let kind = classify_code(&code_hex);
+        let kind = classify_address::run(&code_hex)?;
+        let delegated_to = match kind {
+            AddressKind::Eoa { delegated_to } => delegated_to,
+            AddressKind::Contract => None,
+        };
 
         Ok(Some(AddressOverview {
             chain,
@@ -58,16 +66,8 @@ impl AddressReaderPort for AlchemyAddressReader {
             balance,
             nonce,
             kind,
+            delegated_to,
             ens_name: None,
         }))
-    }
-}
-
-fn classify_code(code: &str) -> AddressKind {
-    let trimmed = code.strip_prefix("0x").unwrap_or(code);
-    if trimmed.is_empty() || trimmed.chars().all(|c| c == '0') {
-        AddressKind::Eoa
-    } else {
-        AddressKind::Contract
     }
 }
