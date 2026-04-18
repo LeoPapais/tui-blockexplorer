@@ -7,10 +7,11 @@
 //!
 //! See `plan/8-token-detail.md` section 12.4.
 
+use assert_matches::assert_matches;
 use blockexplorer_tui::{
     adapters::prices::{AlchemyPrices, PricesClient},
     application::ports::PricesPort,
-    domain::{Address, Chain, PriceWindow},
+    domain::{Address, Chain, PriceLookup, PriceWindow},
 };
 use url::Url;
 use wiremock::{
@@ -44,20 +45,21 @@ async fn spot_price_returns_some_when_provider_has_data() {
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let price = adapter
+    let lookup = adapter
         .get_single(usdc(), Chain::Ethereum)
         .await
-        .expect("ok")
-        .expect("some");
+        .expect("ok");
 
-    assert_eq!(price.currency, "usd");
-    assert!((price.value - 1.0001).abs() < 1e-9);
-    // 2024-04-05T12:00:00Z = 1712318400
-    assert_eq!(price.as_of.seconds(), 1_712_318_400);
+    assert_matches!(lookup, PriceLookup::Available(p) => {
+        assert_eq!(p.currency, "usd");
+        assert!((p.value - 1.0001).abs() < 1e-9);
+        // 2024-04-05T12:00:00Z = 1712318400
+        assert_eq!(p.as_of.seconds(), 1_712_318_400);
+    });
 }
 
 #[tokio::test]
-async fn spot_price_returns_none_when_provider_has_no_prices() {
+async fn spot_price_returns_unsupported_when_provider_has_no_prices() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/by-address"))
@@ -71,7 +73,7 @@ async fn spot_price_returns_none_when_provider_has_no_prices() {
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let price = adapter
+    let lookup = adapter
         .get_single(
             Address::from_hex("0x0000000000000000000000000000000000000099").unwrap(),
             Chain::Ethereum,
@@ -79,7 +81,43 @@ async fn spot_price_returns_none_when_provider_has_no_prices() {
         .await
         .expect("ok");
 
-    assert!(price.is_none());
+    assert_matches!(
+        lookup,
+        PriceLookup::Unsupported { provider } if provider == "alchemy-prices",
+    );
+}
+
+#[tokio::test]
+async fn spot_price_returns_unsupported_when_provider_returns_404() {
+    // plan/15-backlog.md §3.4: BRLA is indexed nowhere on Alchemy
+    // Prices, so the REST endpoint answers 404. The adapter must map
+    // that into a PriceLookup::Unsupported{ provider: "alchemy-prices" }
+    // instead of crashing the deserializer.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokens/by-address"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_raw(
+                load_text("prices__single__brla_not_indexed.json"),
+                "application/json",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server.uri());
+    let lookup = adapter
+        .get_single(
+            Address::from_hex("0xe6a537a407488807f0bbeb0038b79004f19dddfb").unwrap(),
+            Chain::Ethereum,
+        )
+        .await
+        .expect("ok");
+
+    assert_matches!(
+        lookup,
+        PriceLookup::Unsupported { provider } if provider == "alchemy-prices",
+    );
 }
 
 #[tokio::test]

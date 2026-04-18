@@ -118,6 +118,14 @@ async fn prices_stub_has_spot(world: &mut AppWorld, value: f64, addr_hex: String
     );
 }
 
+#[given(regex = r#"^the Prices API returns 404 for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn prices_api_returns_404(world: &mut AppWorld, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    world
+        .prices_stub
+        .set_unsupported(addr, "alchemy-prices");
+}
+
 #[given(
     regex = r#"^the prices stub returns (\d+) points for window "([^"]+)" on "(0x[0-9a-fA-F]{40})"$"#
 )]
@@ -327,6 +335,25 @@ async fn overview_price_renders(world: &mut AppWorld, expected: f64) {
         price.value,
         expected,
     );
+}
+
+#[then(
+    regex = r#"^once the feeds complete, the Overview row for price renders "\(not indexed by ([^)]+)\)"$"#
+)]
+async fn overview_price_renders_unsupported(world: &mut AppWorld, provider: String) {
+    use blockexplorer_tui::domain::PriceLookup;
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current(s).price_lookup(),
+            PriceLookup::Unsupported { .. },
+        )
+    })
+    .await;
+    match current(stack).price_lookup() {
+        PriceLookup::Unsupported { provider: got } => assert_eq!(*got, provider),
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
 }
 
 #[then(regex = r#"^the active window is "([^"]+)"$"#)]
