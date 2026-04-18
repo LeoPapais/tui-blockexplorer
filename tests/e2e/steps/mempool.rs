@@ -39,10 +39,7 @@ fn apply_command(stack: &mut ScreenStack, cmd: Command) {
 }
 
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
-    let cmd = stack
-        .top_mut()
-        .expect("stack non-empty")
-        .handle_key(key);
+    let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
     apply_command(stack, cmd);
 }
 
@@ -107,9 +104,7 @@ fn sample_pending(hash_hex: &str, from_hex: &str) -> PendingTx {
     PendingTx {
         hash: TxHash::from_hex(hash_hex).unwrap(),
         from: Address::from_hex(from_hex).unwrap(),
-        to: Some(
-            Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
-        ),
+        to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
         value: Wei::new(1_000),
     }
 }
@@ -141,9 +136,7 @@ async fn stub_emits_three_different_senders(world: &mut AppWorld) {
     tick_until(stack, |s| current_mempool(s).items().len() == 3).await;
 }
 
-#[given(
-    regex = r#"^the stub emits one pending tx with hash "(0x[0-9a-fA-F]{64})"$"#
-)]
+#[given(regex = r#"^the stub emits one pending tx with hash "(0x[0-9a-fA-F]{64})"$"#)]
 async fn stub_emits_pending_with_hash(world: &mut AppWorld, hash_hex: String) {
     world.pending_stub.push_added(sample_pending(
         &hash_hex,
@@ -198,9 +191,7 @@ async fn press_letter(world: &mut AppWorld, letter: String) {
     press(stack, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
 }
 
-#[when(
-    regex = r#"^the stub emits a removed event for "(0x[0-9a-fA-F]{64})"$"#
-)]
+#[when(regex = r#"^the stub emits a removed event for "(0x[0-9a-fA-F]{64})"$"#)]
 async fn stub_emits_removed(world: &mut AppWorld, hash_hex: String) {
     let hash = TxHash::from_hex(&hash_hex).unwrap();
     world.pending_stub.push_removed(hash);

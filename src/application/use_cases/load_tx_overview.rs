@@ -12,8 +12,7 @@ use crate::{
     application::{
         DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
         ports::{
-            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort,
-            TxTracePort,
+            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{Chain, DomainError, LogEntry, TxHash},
@@ -78,11 +77,7 @@ where
 /// Resolve asset changes for a loaded [`TxView`]. Uses
 /// [`LoadStatus`] so the UI can distinguish between "not available
 /// on this chain" and a transient fetch failure.
-pub async fn load_asset_changes<S: TxSimulationPort>(
-    sim: &S,
-    view: &mut TxView,
-    chain: Chain,
-) {
+pub async fn load_asset_changes<S: TxSimulationPort>(sim: &S, view: &mut TxView, chain: Chain) {
     let status = match sim.simulate_asset_changes(&view.tx, chain).await {
         Ok(changes) => LoadStatus::Loaded(changes),
         Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
@@ -92,11 +87,7 @@ pub async fn load_asset_changes<S: TxSimulationPort>(
 }
 
 /// Resolve the state diff for a loaded [`TxView`].
-pub async fn load_state_diff<T: TxTracePort>(
-    tracer: &T,
-    view: &mut TxView,
-    chain: Chain,
-) {
+pub async fn load_state_diff<T: TxTracePort>(tracer: &T, view: &mut TxView, chain: Chain) {
     let status = match tracer.state_diff(view.tx.hash, chain).await {
         Ok(diff) => LoadStatus::Loaded(diff),
         Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,

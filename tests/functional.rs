@@ -138,3 +138,6 @@ mod tx_detail_screen_keys;
 
 #[path = "functional/domain_block.rs"]
 mod domain_block;
+
+#[path = "functional/classify_address.rs"]
+mod classify_address;

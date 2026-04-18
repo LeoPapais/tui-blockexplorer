@@ -18,7 +18,9 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{Block, Borders, Paragraph},
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel};
+use tokio::sync::mpsc::{
+    UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel,
+};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
@@ -40,7 +42,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
 fn render_header(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
     let badge = match view.connection {
         ConnectionStatus::Connected => String::new(),
-        ConnectionStatus::Disconnected { reconnect_scheduled } => {
+        ConnectionStatus::Disconnected {
+            reconnect_scheduled,
+        } => {
             if reconnect_scheduled {
                 "  [disconnected, reconnecting]".to_string()
             } else {
@@ -58,7 +62,11 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
 
 fn render_cards(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
     let cards = Layout::default()
-        .direction(if area.width >= 120 { Direction::Horizontal } else { Direction::Vertical })
+        .direction(if area.width >= 120 {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        })
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
@@ -153,21 +161,17 @@ pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
 ///
 /// `None` means the `/` key is inert (used by demo mode, where there
 /// is no resolver task to back the search screen).
-pub type SearchFactory =
-    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+pub type SearchFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
 /// Factory for the Mempool screen. Same rationale as
 /// [`SearchFactory`]: keeps the home screen free of adapter details.
-pub type MempoolFactory =
-    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+pub type MempoolFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
 /// Factory for the Gas Tracker screen.
-pub type GasTrackerFactory =
-    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+pub type GasTrackerFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
 /// Factory for the Settings screen.
-pub type SettingsFactory =
-    Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
+pub type SettingsFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
 /// Screen-level wrapper around [`render`].
 ///

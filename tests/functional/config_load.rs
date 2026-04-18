@@ -26,8 +26,8 @@ fn scratch_path(label: &str) -> PathBuf {
 
 #[test]
 fn env_alone_produces_config() {
-    let loader = ConfigLoader::with_env(env_map(vec![(ENV_ALCHEMY_KEY, "env-key")]))
-        .with_config_path(None);
+    let loader =
+        ConfigLoader::with_env(env_map(vec![(ENV_ALCHEMY_KEY, "env-key")])).with_config_path(None);
     let cfg = loader.load().expect("ok");
 
     assert_eq!(cfg.credentials.alchemy.as_deref(), Some("env-key"));
@@ -43,8 +43,7 @@ fn file_alone_produces_config() {
     )
     .unwrap();
 
-    let loader =
-        ConfigLoader::with_env(env_map(vec![])).with_config_path(Some(path.clone()));
+    let loader = ConfigLoader::with_env(env_map(vec![])).with_config_path(Some(path.clone()));
     let cfg = loader.load().expect("ok");
 
     assert_eq!(cfg.credentials.alchemy.as_deref(), Some("file-key"));
@@ -90,8 +89,7 @@ fn malformed_file_is_rejected() {
     let path = scratch_path("malformed");
     fs::write(&path, "this is not TOML }}} [broken").unwrap();
 
-    let loader =
-        ConfigLoader::with_env(env_map(vec![])).with_config_path(Some(path.clone()));
+    let loader = ConfigLoader::with_env(env_map(vec![])).with_config_path(Some(path.clone()));
     let err = loader.load().expect_err("malformed TOML must error");
 
     assert!(matches!(err, DomainError::Config(_)));

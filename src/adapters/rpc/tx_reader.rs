@@ -13,7 +13,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::client::{RpcClient, RpcError, parse_hex_u128, parse_hex_u64};
+use super::client::{RpcClient, RpcError, parse_hex_u64, parse_hex_u128};
 use crate::{
     application::ports::TxReaderPort,
     domain::{
@@ -78,21 +78,15 @@ impl AlchemyTxReader {
 }
 
 impl TxReaderPort for AlchemyTxReader {
-    async fn get(
-        &self,
-        hash: TxHash,
-        chain: Chain,
-    ) -> Result<Option<Transaction>, DomainError> {
+    async fn get(&self, hash: TxHash, chain: Chain) -> Result<Option<Transaction>, DomainError> {
         let hash_hex = hash.to_hex();
 
         let (tx_res, receipt_res): (
             Result<Option<Value>, RpcError>,
             Result<Option<RawReceipt>, RpcError>,
         ) = tokio::join!(
-            self.client.call(
-                "eth_getTransactionByHash",
-                serde_json::json!([hash_hex]),
-            ),
+            self.client
+                .call("eth_getTransactionByHash", serde_json::json!([hash_hex]),),
             self.client
                 .call("eth_getTransactionReceipt", serde_json::json!([hash_hex])),
         );
@@ -104,8 +98,8 @@ impl TxReaderPort for AlchemyTxReader {
             return Ok(None);
         };
 
-        let raw_json = serde_json::to_string_pretty(&tx_value)
-            .unwrap_or_else(|_| tx_value.to_string());
+        let raw_json =
+            serde_json::to_string_pretty(&tx_value).unwrap_or_else(|_| tx_value.to_string());
         let raw_tx: RawTx = serde_json::from_value(tx_value)
             .map_err(|e| DomainError::Internal(format!("tx decode: {e}")))?;
 
@@ -119,8 +113,7 @@ impl TxReaderPort for AlchemyTxReader {
             _ => None,
         };
         let value = Wei::new(parse_hex_u128(&raw_tx.value).map_err(|e| e.into_domain())?);
-        let gas_price =
-            Wei::new(parse_hex_u128(&raw_tx.gas_price).map_err(|e| e.into_domain())?);
+        let gas_price = Wei::new(parse_hex_u128(&raw_tx.gas_price).map_err(|e| e.into_domain())?);
         let gas_limit = parse_hex_u64(&raw_tx.gas).map_err(|e| e.into_domain())?;
         let nonce = parse_hex_u64(&raw_tx.nonce).map_err(|e| e.into_domain())?;
         let tx_type = raw_tx
@@ -223,9 +216,7 @@ fn opt_block_hash(s: Option<&str>) -> Result<Option<BlockHash>, DomainError> {
 
 fn opt_hex_u64(s: Option<&str>) -> Result<Option<u64>, DomainError> {
     match s {
-        Some(hex) if !hex.is_empty() => {
-            Ok(Some(parse_hex_u64(hex).map_err(|e| e.into_domain())?))
-        }
+        Some(hex) if !hex.is_empty() => Ok(Some(parse_hex_u64(hex).map_err(|e| e.into_domain())?)),
         _ => Ok(None),
     }
 }

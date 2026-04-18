@@ -72,16 +72,12 @@ impl SourcifySignatureDirectory {
 
     pub fn with_default_http() -> Result<Self, SignatureError> {
         let http = Client::builder().timeout(Duration::from_secs(5)).build()?;
-        let url = Url::parse("https://api.4byte.sourcify.dev")
-            .expect("static Sourcify URL must parse");
+        let url =
+            Url::parse("https://api.4byte.sourcify.dev").expect("static Sourcify URL must parse");
         Ok(Self::new(http, url))
     }
 
-    async fn fetch_first(
-        &self,
-        path: &str,
-        hex: &str,
-    ) -> Result<Option<String>, SignatureError> {
+    async fn fetch_first(&self, path: &str, hex: &str) -> Result<Option<String>, SignatureError> {
         let mut url = self.base_url.clone();
         url.set_path(path);
         url.query_pairs_mut().append_pair("hex_signature", hex);
@@ -99,20 +95,14 @@ impl SourcifySignatureDirectory {
 }
 
 impl SignatureDirectoryPort for SourcifySignatureDirectory {
-    async fn lookup_selector(
-        &self,
-        selector: [u8; 4],
-    ) -> Result<Option<String>, DomainError> {
+    async fn lookup_selector(&self, selector: [u8; 4]) -> Result<Option<String>, DomainError> {
         let hex = format!("0x{}", hex::encode(selector));
         self.fetch_first("/api/v1/signatures", &hex)
             .await
             .map_err(SignatureError::into_domain)
     }
 
-    async fn lookup_event_topic(
-        &self,
-        topic: [u8; 32],
-    ) -> Result<Option<String>, DomainError> {
+    async fn lookup_event_topic(&self, topic: [u8; 32]) -> Result<Option<String>, DomainError> {
         let hex = format!("0x{}", hex::encode(topic));
         self.fetch_first("/api/v1/event-signatures", &hex)
             .await

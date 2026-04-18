@@ -42,6 +42,13 @@ Feature: Universal search
     Then the primary candidate is "address"
     And the candidates include a "contract" entry for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 
+  Scenario: A 7702-delegated EOA routes to AddressDetail
+    Given the active chain is "polygon"
+    And the address "0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919" has code "0xef0100c0ffee…" on that chain
+    When the user searches for "0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919"
+    Then the first result is an Address row flagged as delegated
+    And the second result is not a Contract row
+
   Scenario: Address input for an ERC-20 contract also surfaces a Token row after the probe
     Given the address stub classifies "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as a contract
     And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 0

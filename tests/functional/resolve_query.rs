@@ -106,10 +106,7 @@ fn classification_of_uppercase_ens_name_is_normalised() {
 
 #[test]
 fn classification_of_ticker() {
-    assert_eq!(
-        classify("USDC"),
-        Classification::TokenTicker("USDC".into())
-    );
+    assert_eq!(classify("USDC"), Classification::TokenTicker("USDC".into()));
 }
 
 #[test]
@@ -183,7 +180,7 @@ async fn resolves_ens_name_and_classifies_resulting_address() {
     let (b, t, a, e, s) = fresh();
     let addr = Address::from_hex(VITALIK_ADDR_HEX).unwrap();
     e.set_forward("vitalik.eth", addr);
-    a.set_kind(addr, AddressKind::Eoa);
+    a.set_kind(addr, AddressKind::Eoa { delegated_to: None });
 
     let got = q(&b, &t, &a, &e, &s)
         .run("vitalik.eth", Chain::Ethereum)
@@ -198,7 +195,7 @@ async fn resolves_ens_name_and_classifies_resulting_address() {
             ens_name,
         } => {
             assert_eq!(*address, addr);
-            assert_eq!(*kind, AddressKind::Eoa);
+            assert_eq!(*kind, AddressKind::Eoa { delegated_to: None });
             assert_eq!(ens_name.as_deref(), Some("vitalik.eth"));
         }
         other => panic!("expected Address, got {other:?}"),
@@ -209,7 +206,7 @@ async fn resolves_ens_name_and_classifies_resulting_address() {
 async fn classifies_address_and_includes_reverse_ens() {
     let (b, t, a, e, s) = fresh();
     let addr = Address::from_hex(ADDR_HEX).unwrap();
-    a.set_kind(addr, AddressKind::Eoa);
+    a.set_kind(addr, AddressKind::Eoa { delegated_to: None });
     e.set_reverse(addr, "vitalik.eth");
 
     let got = q(&b, &t, &a, &e, &s)
@@ -269,7 +266,7 @@ async fn contract_address_also_emits_contract_shortcut_after_the_address_row() {
 async fn eoa_address_does_not_emit_contract_shortcut() {
     let (b, t, a, e, s) = fresh();
     let addr = Address::from_hex(ADDR_HEX).unwrap();
-    a.set_kind(addr, AddressKind::Eoa);
+    a.set_kind(addr, AddressKind::Eoa { delegated_to: None });
 
     let got = q(&b, &t, &a, &e, &s)
         .run(ADDR_HEX, Chain::Ethereum)
@@ -281,6 +278,42 @@ async fn eoa_address_does_not_emit_contract_shortcut() {
         !got.iter()
             .any(|c| matches!(c, ResolvedEntity::Contract { .. })),
         "EOA result must not include a Contract entry",
+    );
+}
+
+#[tokio::test]
+async fn delegated_eoa_emits_delegated_eoa_row_without_contract_shortcut() {
+    let (b, t, a, e, s) = fresh();
+    let addr = Address::from_hex(ADDR_HEX).unwrap();
+    let delegate = Address::from_hex("0xc0ffee000000000000000000000000000000babe").unwrap();
+    a.set_kind(
+        addr,
+        AddressKind::Eoa {
+            delegated_to: Some(delegate),
+        },
+    );
+
+    let got = q(&b, &t, &a, &e, &s)
+        .run(ADDR_HEX, Chain::Ethereum)
+        .await
+        .expect("ok");
+
+    // Exactly one row, a DelegatedEoa (no Contract shortcut).
+    assert_eq!(got.len(), 1, "delegated EOA must emit a single row");
+    match &got[0] {
+        ResolvedEntity::DelegatedEoa {
+            address,
+            delegated_to,
+        } => {
+            assert_eq!(*address, addr);
+            assert_eq!(*delegated_to, delegate);
+        }
+        other => panic!("expected DelegatedEoa, got {other:?}"),
+    }
+    assert!(
+        !got.iter()
+            .any(|c| matches!(c, ResolvedEntity::Contract { .. })),
+        "delegated EOA must not include a Contract shortcut",
     );
 }
 

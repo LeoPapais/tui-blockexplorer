@@ -173,10 +173,9 @@ mod tests {
     #[test]
     fn transfer_event_topic_matches_known_value() {
         let topic = event_topic_for("Transfer(address,address,uint256)");
-        let expected = hex::decode(
-            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-        )
-        .unwrap();
+        let expected =
+            hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+                .unwrap();
         assert_eq!(&topic[..], &expected[..]);
     }
 }

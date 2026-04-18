@@ -31,10 +31,10 @@ async fn verified_contract_returns_abi() {
         .and(path("/v2/api"))
         .and(query_param("module", "contract"))
         .and(query_param("action", "getabi"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("etherscan__getabi__usdc.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("etherscan__getabi__usdc.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

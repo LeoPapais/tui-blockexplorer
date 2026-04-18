@@ -13,10 +13,7 @@ use blockexplorer_tui::{
 };
 use serde_json::Value;
 use url::Url;
-use wiremock::{
-    Mock, MockServer, Request, Respond, ResponseTemplate,
-    matchers::method,
-};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 
@@ -48,8 +45,7 @@ impl Respond for AlchemyResponder {
             }
             _ => "alchemy__token_balances.json",
         };
-        ResponseTemplate::new(200)
-            .set_body_raw(load_text(fixture), "application/json")
+        ResponseTemplate::new(200).set_body_raw(load_text(fixture), "application/json")
     }
 }
 

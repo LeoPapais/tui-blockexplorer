@@ -128,7 +128,17 @@ async fn main() -> anyhow::Result<()> {
     let addr_reader = AlchemyAddressReader::new(rpc.clone());
     let addr_lookup = AlchemyAddressLookup::new(rpc.clone());
     match addr_lookup.classify(eoa_addr, chain).await {
-        Ok(AddressKind::Eoa) => println!("classify   : Eoa  [OK, expected EOA]"),
+        Ok(AddressKind::Eoa {
+            delegated_to: Some(delegate),
+        }) => {
+            println!(
+                "classify   : Eoa (7702, delegated to {})",
+                delegate.to_hex()
+            );
+        }
+        Ok(AddressKind::Eoa { delegated_to: None }) => {
+            println!("classify   : Eoa  [OK, expected EOA]");
+        }
         Ok(AddressKind::Contract) => {
             println!("classify   : Contract  [!! unexpected — user said this was an EOA]");
         }
@@ -188,8 +198,11 @@ async fn main() -> anyhow::Result<()> {
     let proxy = AlchemyProxyDetector::new(rpc.clone());
     match addr_lookup.classify(contract_addr, chain).await {
         Ok(AddressKind::Contract) => println!("classify   : Contract  [OK]"),
-        Ok(AddressKind::Eoa) => {
-            println!("classify   : Eoa  [!! user said this was a contract]");
+        Ok(AddressKind::Eoa { delegated_to }) => {
+            println!(
+                "classify   : Eoa  [!! user said this was a contract]  (delegated_to={:?})",
+                delegated_to.map(|a| a.to_hex()),
+            );
         }
         Err(e) => println!("classify ERROR: {e}"),
     }
@@ -384,6 +397,14 @@ async fn main() -> anyhow::Result<()> {
                         ResolvedEntity::Contract { address } => {
                             println!("   Contract   {}", address.to_hex())
                         }
+                        ResolvedEntity::DelegatedEoa {
+                            address,
+                            delegated_to,
+                        } => println!(
+                            "   DelegatedEoa {} -> {}",
+                            address.to_hex(),
+                            delegated_to.to_hex(),
+                        ),
                         ResolvedEntity::Token(m) => println!(
                             "   Token      {} {}/{} dec={}",
                             m.address.to_hex(),

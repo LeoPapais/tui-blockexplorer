@@ -11,9 +11,7 @@ use anyhow::{Context, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind},
     execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    },
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
@@ -169,11 +167,7 @@ fn install_panic_hook() {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(
-            std::io::stdout(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        );
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         hook(info);
     }));
 }

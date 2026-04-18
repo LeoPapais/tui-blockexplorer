@@ -27,23 +27,21 @@ fn reader_for(url: &str) -> AlchemyTokenReader {
 async fn happy_path_returns_overview() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"alchemy_getTokenMetadata"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__alchemy_getTokenMetadata__usdc.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"alchemy_getTokenMetadata"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__alchemy_getTokenMetadata__usdc.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_call"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_call__totalSupply_usdc.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_call__totalSupply_usdc.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -66,23 +64,21 @@ async fn happy_path_returns_overview() {
 async fn missing_metadata_returns_none() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(body_partial_json(json!({"method":"alchemy_getTokenMetadata"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__alchemy_getTokenMetadata__missing.json"),
-                "application/json",
-            ),
-        )
+        .and(body_partial_json(
+            json!({"method":"alchemy_getTokenMetadata"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__alchemy_getTokenMetadata__missing.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_call"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_call__totalSupply_usdc.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_call__totalSupply_usdc.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

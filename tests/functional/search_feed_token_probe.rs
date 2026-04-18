@@ -97,7 +97,7 @@ async fn drive_one_input(
 #[tokio::test]
 async fn eoa_input_never_probes_token_reader() {
     let address_stub = StubAddressLookupPort::new();
-    address_stub.set_kind(addr(EOA_HEX), AddressKind::Eoa);
+    address_stub.set_kind(addr(EOA_HEX), AddressKind::Eoa { delegated_to: None });
     let token_reader = StubTokenReaderPort::new();
 
     let (updates, reader) = drive_one_input(EOA_HEX, address_stub, token_reader).await;

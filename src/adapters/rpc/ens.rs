@@ -41,10 +41,7 @@ impl AlchemyEnsResolver {
         Self { client }
     }
 
-    async fn call_registry_resolver(
-        &self,
-        node: &[u8; 32],
-    ) -> Result<Option<String>, DomainError> {
+    async fn call_registry_resolver(&self, node: &[u8; 32]) -> Result<Option<String>, DomainError> {
         let data = encode_call(SELECTOR_RESOLVER, node);
         let resp: String = self
             .client
@@ -85,11 +82,7 @@ impl AlchemyEnsResolver {
 }
 
 impl EnsResolverPort for AlchemyEnsResolver {
-    async fn forward(
-        &self,
-        name: &str,
-        _chain: Chain,
-    ) -> Result<Option<Address>, DomainError> {
+    async fn forward(&self, name: &str, _chain: Chain) -> Result<Option<Address>, DomainError> {
         let node = namehash(name);
         let Some(resolver) = self.call_registry_resolver(&node).await? else {
             return Ok(None);
@@ -174,17 +167,14 @@ mod tests {
     #[test]
     fn namehash_of_eth_matches_known_value() {
         // Reference: https://docs.ens.domains/contract-api-reference/name-processing#hashing-names
-        let want = hex::decode(
-            "93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae",
-        )
-        .unwrap();
+        let want = hex::decode("93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae")
+            .unwrap();
         assert_eq!(namehash("eth")[..], want[..]);
     }
 
     #[test]
     fn extract_address_picks_last_20_bytes() {
-        let word =
-            "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045";
+        let word = "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045";
         assert_eq!(
             extract_address_from_word(word).as_deref(),
             Some("0xd8da6bf26964af9d7eed9e03e53415d37aa96045")
@@ -193,8 +183,7 @@ mod tests {
 
     #[test]
     fn extract_address_returns_none_on_all_zero() {
-        let word =
-            "0x0000000000000000000000000000000000000000000000000000000000000000";
+        let word = "0x0000000000000000000000000000000000000000000000000000000000000000";
         assert_eq!(extract_address_from_word(word), None);
     }
 }

@@ -50,12 +50,17 @@ where
 }
 
 fn insert_overview(world: &AppWorld, addr_hex: &str, kind: AddressKind, balance: u128, nonce: u64) {
+    let delegated_to = match kind {
+        AddressKind::Eoa { delegated_to } => delegated_to,
+        AddressKind::Contract => None,
+    };
     world.address_reader_stub.insert(AddressOverview {
         chain: Chain::Ethereum,
         address: Address::from_hex(addr_hex).unwrap(),
         balance: Wei::new(balance),
         nonce,
         kind,
+        delegated_to,
         ens_name: None,
     });
 }
@@ -64,7 +69,13 @@ fn insert_overview(world: &AppWorld, addr_hex: &str, kind: AddressKind, balance:
     regex = r#"^the address reader knows EOA "(0x[0-9a-fA-F]{40})" with balance (\d+) and nonce (\d+)$"#
 )]
 async fn reader_knows_eoa(world: &mut AppWorld, addr_hex: String, balance: u128, nonce: u64) {
-    insert_overview(world, &addr_hex, AddressKind::Eoa, balance, nonce);
+    insert_overview(
+        world,
+        &addr_hex,
+        AddressKind::Eoa { delegated_to: None },
+        balance,
+        nonce,
+    );
 }
 
 #[given(
@@ -90,7 +101,10 @@ async fn overview_shows_kind(world: &mut AppWorld, expected: String) {
     tick_until(stack, |s| current(s).current().is_some()).await;
     let ov = current(stack).current().expect("loaded");
     let label = match ov.kind {
-        AddressKind::Eoa => "EOA",
+        AddressKind::Eoa {
+            delegated_to: Some(_),
+        } => "EOA (7702 delegated)",
+        AddressKind::Eoa { delegated_to: None } => "EOA",
         AddressKind::Contract => "Contract",
     };
     assert_eq!(label, expected);

@@ -5,8 +5,8 @@
 use blockexplorer_tui::{
     application::use_cases::load_token_transfers,
     domain::{
-        Address, BlockNumber, Chain, TransferAsset, TransferCategory, TransferEvent,
-        TransferPage, TxHash, Wei,
+        Address, BlockNumber, Chain, TransferAsset, TransferCategory, TransferEvent, TransferPage,
+        TxHash, Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -26,10 +26,9 @@ fn bob() -> Address {
 }
 
 fn sample_page() -> TransferPage {
-    let hash = TxHash::from_hex(
-        "0xdeadbeef00000000000000000000000000000000000000000000000000000001",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0xdeadbeef00000000000000000000000000000000000000000000000000000001")
+            .unwrap();
     TransferPage {
         events: vec![TransferEvent {
             chain: Chain::Ethereum,

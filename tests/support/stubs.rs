@@ -362,13 +362,13 @@ impl StubAddressLookupPort {
 impl AddressLookupPort for StubAddressLookupPort {
     async fn classify(&self, address: Address, _chain: Chain) -> Result<AddressKind, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
-        // Default: unknown addresses are EOAs. Tests that care prime
-        // the stub explicitly.
+        // Default: unknown addresses are plain EOAs. Tests that care
+        // prime the stub explicitly.
         Ok(state
             .kinds
             .get(&address)
             .copied()
-            .unwrap_or(AddressKind::Eoa))
+            .unwrap_or(AddressKind::Eoa { delegated_to: None }))
     }
 }
 

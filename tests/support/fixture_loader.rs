@@ -20,8 +20,8 @@ fn fixtures_root() -> PathBuf {
 #[allow(dead_code)]
 pub fn load_json<T: DeserializeOwned>(relative_path: &str) -> T {
     let path = fixtures_root().join(relative_path);
-    let bytes = fs::read(&path)
-        .unwrap_or_else(|e| panic!("fixture not found at {}: {e}", path.display()));
+    let bytes =
+        fs::read(&path).unwrap_or_else(|e| panic!("fixture not found at {}: {e}", path.display()));
     serde_json::from_slice(&bytes)
         .unwrap_or_else(|e| panic!("fixture {} is not valid JSON: {e}", path.display()))
 }

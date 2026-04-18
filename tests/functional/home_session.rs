@@ -18,9 +18,15 @@ fn primed_session() -> HomeSession<StubNetworkStatusPort, StubGasOraclePort, Stu
     let gas = StubGasOraclePort::new();
     let chains = StubChainRegistry::with_all_enabled();
 
-    network.set_snapshot(NetworkStatusFixture::load("home__network_status__ethereum.json"));
-    gas.set_snapshot(GasSnapshotFixture::load("home__gas_snapshot__ethereum.json"));
-    network.set_snapshot(NetworkStatusFixture::load("home__network_status__base.json"));
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum.json",
+    ));
+    gas.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum.json",
+    ));
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__base.json",
+    ));
     gas.set_snapshot(GasSnapshotFixture::load("home__gas_snapshot__base.json"));
 
     HomeSession::new(network, gas, chains, Chain::Ethereum)
@@ -59,7 +65,10 @@ async fn on_new_head_updates_both_cards() {
     session.on_new_head().await.expect("refresh ok");
     let view = session.view();
 
-    assert_eq!(view.network.as_ref().unwrap().latest_block.value(), 21_345_679);
+    assert_eq!(
+        view.network.as_ref().unwrap().latest_block.value(),
+        21_345_679
+    );
     assert_eq!(view.gas.as_ref().unwrap().average.value(), 17);
 }
 
@@ -80,8 +89,12 @@ async fn switch_chain_swaps_the_active_chain_and_refreshes() {
 async fn switch_chain_rejects_disabled_chain() {
     let network = StubNetworkStatusPort::new();
     let gas = StubGasOraclePort::new();
-    network.set_snapshot(NetworkStatusFixture::load("home__network_status__ethereum.json"));
-    gas.set_snapshot(GasSnapshotFixture::load("home__gas_snapshot__ethereum.json"));
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum.json",
+    ));
+    gas.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum.json",
+    ));
     let chains = StubChainRegistry::new(vec![Chain::Ethereum], Chain::Ethereum);
     let mut session = HomeSession::new(network, gas, chains, Chain::Ethereum);
     session.refresh().await.unwrap();
@@ -117,8 +130,12 @@ async fn refresh_with_broken_provider_marks_disconnected() {
     let network = StubNetworkStatusPort::new();
     let gas = StubGasOraclePort::new();
     let chains = StubChainRegistry::with_all_enabled();
-    network.set_snapshot(NetworkStatusFixture::load("home__network_status__ethereum.json"));
-    gas.set_snapshot(GasSnapshotFixture::load("home__gas_snapshot__ethereum.json"));
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum.json",
+    ));
+    gas.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum.json",
+    ));
     network.set_broken(true);
 
     let mut session = HomeSession::new(network, gas, chains, Chain::Ethereum);

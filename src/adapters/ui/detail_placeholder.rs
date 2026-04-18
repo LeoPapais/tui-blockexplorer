@@ -32,11 +32,9 @@ impl DetailPlaceholderScreen {
 
     fn body(&self) -> String {
         match &self.entity {
-            ResolvedEntity::Block { number, hash } => format!(
-                "Block #{}\nhash {}",
-                number.value(),
-                hash.to_hex()
-            ),
+            ResolvedEntity::Block { number, hash } => {
+                format!("Block #{}\nhash {}", number.value(), hash.to_hex())
+            }
             ResolvedEntity::Tx { hash, block } => {
                 let block_line = match block {
                     Some(b) => format!("\nin block #{}", b.value()),
@@ -50,7 +48,10 @@ impl DetailPlaceholderScreen {
                 ens_name,
             } => {
                 let kind_label = match kind {
-                    crate::domain::AddressKind::Eoa => "EOA",
+                    crate::domain::AddressKind::Eoa {
+                        delegated_to: Some(_),
+                    } => "EOA (7702 delegated)",
+                    crate::domain::AddressKind::Eoa { delegated_to: None } => "EOA",
                     crate::domain::AddressKind::Contract => "Contract",
                 };
                 let ens_line = ens_name
@@ -61,6 +62,16 @@ impl DetailPlaceholderScreen {
             }
             ResolvedEntity::Contract { address } => {
                 format!("Contract {}", address.to_hex())
+            }
+            ResolvedEntity::DelegatedEoa {
+                address,
+                delegated_to,
+            } => {
+                format!(
+                    "Address {} (EOA, delegated to {})",
+                    address.to_hex(),
+                    delegated_to.to_hex(),
+                )
             }
             ResolvedEntity::Token(meta) => format!(
                 "Token {} ({})\nname {}\ndecimals {}",
@@ -79,6 +90,7 @@ impl DetailPlaceholderScreen {
             ResolvedEntity::Tx { .. } => "Transaction",
             ResolvedEntity::Address { .. } => "Address",
             ResolvedEntity::Contract { .. } => "Contract",
+            ResolvedEntity::DelegatedEoa { .. } => "Address",
             ResolvedEntity::Token(_) => "Token",
             ResolvedEntity::NotFound { .. } => "Not found",
         }
@@ -91,8 +103,12 @@ impl Screen for DetailPlaceholderScreen {
     }
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title(self.title_label());
-        let p = Paragraph::new(self.body()).block(block).wrap(Wrap { trim: false });
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(self.title_label());
+        let p = Paragraph::new(self.body())
+            .block(block)
+            .wrap(Wrap { trim: false });
         frame.render_widget(p, area);
     }
 

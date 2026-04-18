@@ -30,18 +30,15 @@ async fn contract_query_returns_merged_page() {
         .and(body_partial_json(json!({
             "method": "alchemy_getAssetTransfers"
         })))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("alchemy__asset_transfers__by_contract.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("alchemy__asset_transfers__by_contract.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
 
     let page = adapter
         .get_for_contract(contract, Chain::Ethereum, None)
@@ -82,8 +79,7 @@ async fn request_sends_contract_addresses_and_erc20_category_only() {
         .await;
 
     let adapter = adapter_for(&server.uri());
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
 
     let _ = adapter
         .get_for_contract(contract, Chain::Ethereum, None)
@@ -91,11 +87,13 @@ async fn request_sends_contract_addresses_and_erc20_category_only() {
         .expect("ok");
 
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1, "single RPC call for contract-scoped query");
+    assert_eq!(
+        requests.len(),
+        1,
+        "single RPC call for contract-scoped query"
+    );
     let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
-    let params = body
-        .pointer("/params/0")
-        .expect("params array [0]");
+    let params = body.pointer("/params/0").expect("params array [0]");
     assert_eq!(
         params.get("contractAddresses").unwrap(),
         &json!([contract.to_hex()])

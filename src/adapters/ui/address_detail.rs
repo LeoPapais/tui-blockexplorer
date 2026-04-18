@@ -458,16 +458,24 @@ impl Screen for AddressDetailScreen {
             ])
             .split(area);
 
-        // Header
+        // Header. When the account is a 7702-delegated EOA, surface a
+        // compact "delegated to 0x…" badge next to the address so the
+        // user sees the delegation without opening a Contract tab.
         let header = match self.current.as_ref() {
-            Some(ov) => format!(
-                "Address {addr}{ens}",
-                addr = ov.address.to_hex(),
-                ens = match ov.ens_name.as_deref() {
+            Some(ov) => {
+                let ens = match ov.ens_name.as_deref() {
                     Some(n) => format!(" ({n})"),
                     None => String::new(),
-                },
-            ),
+                };
+                let delegation = match ov.delegated_to {
+                    Some(delegate) => format!("  delegated to {}", delegate.to_hex()),
+                    None => String::new(),
+                };
+                format!(
+                    "Address {addr}{ens}{delegation}",
+                    addr = ov.address.to_hex(),
+                )
+            }
             None => "Address (loading...)".to_string(),
         };
         frame.render_widget(
@@ -774,7 +782,10 @@ fn overview_body(
         None => "Loading...".to_string(),
         Some(ov) => {
             let kind = match ov.kind {
-                AddressKind::Eoa => "EOA",
+                AddressKind::Eoa {
+                    delegated_to: Some(_),
+                } => "EOA (7702 delegated)",
+                AddressKind::Eoa { delegated_to: None } => "EOA",
                 AddressKind::Contract => "Contract",
             };
             let tx_count = transfers
