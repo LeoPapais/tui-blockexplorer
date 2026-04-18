@@ -9,8 +9,8 @@
 
 use blockexplorer_tui::{
     adapters::ui::home,
-    application::{ConnectionStatus, HomeSession, HomeViewModel},
-    domain::Chain,
+    application::{ConnectionStatus, HomeSession, HomeViewModel, use_cases::observe_new_heads},
+    domain::{BlockNumber, Chain, NewHead},
 };
 use cucumber::{given, then, when};
 use pretty_assertions::assert_eq;
@@ -182,6 +182,45 @@ async fn subscription_drops(world: &mut AppWorld) {
     world.network_stub.set_broken(true);
     let session = world.home.as_mut().expect("session must exist");
     session.on_connection_drop();
+}
+
+#[when(regex = r#"^a new head is received from the "newHeads" subscription$"#)]
+async fn new_head_received(world: &mut AppWorld) {
+    // Subscribe via the stub port, push a head with the "next head"
+    // number and drive it through HomeSession::on_new_head_event. The
+    // network / gas stubs are re-primed with the "next head" fixtures
+    // so the refresh picks up the new values, matching the contract
+    // described in plan/1-home.md §12.3.
+    let chain = world.active_chain.expect("active chain must be set");
+    let mut rx = futures_lite_block_on(async {
+        observe_new_heads::run(&world.new_heads_stub, chain)
+            .await
+            .expect("subscribe ok")
+    });
+
+    world.network_stub.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum_next_head.json",
+    ));
+    world.gas_stub.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum_next_head.json",
+    ));
+
+    let head = NewHead {
+        chain,
+        number: BlockNumber::new(21_345_679),
+    };
+    world.new_heads_stub.push_head(head);
+
+    let received = rx.try_recv().expect("head must land in the channel");
+    assert_eq!(received, head);
+
+    let session = world.home.as_mut().expect("session must exist");
+    futures_lite_block_on(async {
+        session
+            .on_new_head_event(received)
+            .await
+            .expect("refresh ok");
+    });
 }
 
 // ---------------------------------------------------------------------------

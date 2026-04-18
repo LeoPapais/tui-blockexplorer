@@ -4,7 +4,7 @@
 
 use blockexplorer_tui::{
     application::{ConnectionStatus, HomeSession},
-    domain::Chain,
+    domain::{BlockNumber, Chain, NewHead},
 };
 use pretty_assertions::assert_eq;
 
@@ -123,6 +123,74 @@ async fn connection_drop_flips_view_model_flag() {
             reconnect_scheduled: true
         }
     ));
+}
+
+#[tokio::test]
+async fn on_new_head_event_refreshes_for_matching_chain() {
+    // plan/1-home.md §12.3: an event carrying the active chain triggers
+    // a full refresh (matching the periodic behaviour). Using the
+    // "next head" fixtures proves the view model actually re-read the
+    // ports.
+    let network = StubNetworkStatusPort::new();
+    let gas = StubGasOraclePort::new();
+    let chains = StubChainRegistry::with_all_enabled();
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum_next_head.json",
+    ));
+    gas.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum_next_head.json",
+    ));
+    let mut session = HomeSession::new(network, gas, chains, Chain::Ethereum);
+
+    session
+        .on_new_head_event(NewHead {
+            chain: Chain::Ethereum,
+            number: BlockNumber::new(21_345_679),
+        })
+        .await
+        .expect("refresh ok");
+
+    let view = session.view();
+    assert_eq!(
+        view.network.as_ref().unwrap().latest_block.value(),
+        21_345_679
+    );
+    assert_eq!(view.gas.as_ref().unwrap().average.value(), 17);
+}
+
+#[tokio::test]
+async fn on_new_head_event_ignores_events_from_other_chains() {
+    // plan/1-home.md §12.3 makes cross-chain events a no-op so a
+    // still-draining WS stream cannot bulldoze a freshly-switched chain.
+    let network = StubNetworkStatusPort::new();
+    let gas = StubGasOraclePort::new();
+    network.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum.json",
+    ));
+    gas.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum.json",
+    ));
+    let chains = StubChainRegistry::with_all_enabled();
+    let network_handle = network.clone();
+    let mut session = HomeSession::new(network, gas, chains, Chain::Ethereum);
+    session.refresh().await.unwrap();
+    let before = session.view().network.as_ref().unwrap().latest_block;
+
+    // Break the network stub so any accidental refresh would surface
+    // as a disconnected view. A proper ignore does not touch the port
+    // at all, so the view must stay Connected with the same block.
+    network_handle.set_broken(true);
+    session
+        .on_new_head_event(NewHead {
+            chain: Chain::Base,
+            number: BlockNumber::new(42),
+        })
+        .await
+        .expect("cross-chain event must be a no-op");
+
+    let view = session.view();
+    assert_eq!(view.connection, ConnectionStatus::Connected);
+    assert_eq!(view.network.as_ref().unwrap().latest_block, before);
 }
 
 #[tokio::test]

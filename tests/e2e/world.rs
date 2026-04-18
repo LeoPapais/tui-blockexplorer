@@ -16,10 +16,10 @@ use cucumber::World;
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
-    StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
-    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
-    StubStoragePort, StubTokenReaderPort, StubTokenSearchPort, StubTransfersPort, StubTxLookupPort,
-    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
+    StubPendingTxStreamPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
+    StubSignatureDirectoryPort, StubStoragePort, StubTokenReaderPort, StubTokenSearchPort,
+    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession = HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
@@ -30,6 +30,11 @@ pub struct AppWorld {
     pub network_stub: StubNetworkStatusPort,
     pub gas_stub: StubGasOraclePort,
     pub chain_registry: StubChainRegistry,
+
+    /// `newHeads` WebSocket stub. Scenarios that cover the WS path
+    /// subscribe through this stub and push events into the receiver
+    /// held by the session (see `tests/e2e/steps/home.rs`).
+    pub new_heads_stub: StubNewHeadsStreamPort,
 
     /// Search-screen stubs.
     pub tx_stub: StubTxLookupPort,

@@ -36,3 +36,9 @@ Feature: Home screen
     Then the header shows a "reconnecting" hint
     And the Network card still renders the last-known latest block
     And the Gas Tracker card still renders the last-known slow, average and fast gwei
+
+  Scenario: New head event updates the Home view
+    Given the Home screen is rendered
+    When a new head is received from the "newHeads" subscription
+    Then the Network card updates the latest block number
+    And the Gas Tracker card recomputes its values

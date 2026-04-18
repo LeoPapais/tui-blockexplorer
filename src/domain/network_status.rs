@@ -18,6 +18,14 @@ pub struct NetworkStatus {
     pub block_time_avg_ms: u64,
 }
 
+/// Minimal event emitted by the `newHeads` WebSocket subscription and
+/// consumed by the Home dispatcher. See `plan/1-home.md` section 12.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewHead {
+    pub chain: Chain,
+    pub number: BlockNumber,
+}
+
 /// Slow / average / fast gwei tiers plus extra context used on the Gas
 /// Tracker card.
 #[derive(Debug, Clone, PartialEq, Eq)]

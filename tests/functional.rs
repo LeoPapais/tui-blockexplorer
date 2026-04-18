@@ -58,6 +58,9 @@ mod alchemy_tx_reader;
 #[path = "functional/observe_pending_txs.rs"]
 mod observe_pending_txs;
 
+#[path = "functional/observe_new_heads.rs"]
+mod observe_new_heads;
+
 #[path = "functional/load_address_overview.rs"]
 mod load_address_overview;
 
