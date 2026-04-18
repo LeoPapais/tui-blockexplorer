@@ -9,7 +9,8 @@
 //! Sourcify or Noop) let the caller opt out of individual decoders
 //! without having to pick a different spawn path.
 //!
-//! See `plan/4-tx-detail.md` sections 12.3, 12.4.2 and 12.4.3.
+//! See `plan/4-tx-detail.md` sections 12.3, 12.4.2 and 12.4.3, plus
+//! `plan/15-backlog.md` section 3.3 for the proxy-following cascade.
 
 use tokio::task::JoinHandle;
 
@@ -18,18 +19,15 @@ use crate::{
     application::{
         TxView,
         ports::{
-            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort,
-            TxTracePort,
+            ContractSourcePort, ProxyDetectionPort, SignatureDirectoryPort, TxReaderPort,
+            TxSimulationPort, TxTracePort,
         },
         use_cases::load_tx_overview,
     },
     domain::Chain,
 };
 
-fn send_or_break(
-    tx: &tokio::sync::mpsc::UnboundedSender<TxView>,
-    view: TxView,
-) -> bool {
+fn send_or_break(tx: &tokio::sync::mpsc::UnboundedSender<TxView>, view: TxView) -> bool {
     tx.send(view).is_ok()
 }
 
@@ -37,11 +35,13 @@ fn send_or_break(
 /// state-diff trace. The enriched view is delivered twice so the
 /// UI renders the decoded overview immediately and the heavier
 /// tabs populate as soon as the downstream adapters return.
-pub fn spawn_full<R, C, S, Sim, Trace>(
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_full<R, C, S, P, Sim, Trace>(
     chain: Chain,
     reader: R,
     contract_source: C,
     signatures: S,
+    proxy_detector: P,
     sim: Sim,
     trace: Trace,
     sender: TxFeedSender,
@@ -50,6 +50,7 @@ where
     R: TxReaderPort + 'static,
     C: ContractSourcePort + 'static,
     S: SignatureDirectoryPort + 'static,
+    P: ProxyDetectionPort + 'static,
     Sim: TxSimulationPort + Clone + 'static,
     Trace: TxTracePort + Clone + 'static,
 {
@@ -64,6 +65,7 @@ where
                 &reader,
                 &contract_source,
                 &signatures,
+                &proxy_detector,
                 hash,
                 chain,
             )

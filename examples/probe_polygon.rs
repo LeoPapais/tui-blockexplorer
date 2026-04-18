@@ -15,9 +15,9 @@ use blockexplorer_tui::{
     adapters::{
         etherscan::{EtherscanClient, EtherscanContractSource},
         rpc::{
-            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
-            AlchemyBlockReader, AlchemyEnsResolver, AlchemyProxyDetector, AlchemyTokenReader,
-            AlchemyTxLookup, AlchemyTxReader, RpcClient,
+            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
+            AlchemyEnsResolver, AlchemyProxyDetector, AlchemyTokenReader, AlchemyTxLookup,
+            AlchemyTxReader, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
     },
@@ -47,11 +47,7 @@ impl TokenSearchPort for NoopTokenSearch {
     ) -> Result<Vec<TokenMetadata>, DomainError> {
         Ok(Vec::new())
     }
-    async fn by_name(
-        &self,
-        _text: &str,
-        _chain: Chain,
-    ) -> Result<Vec<TokenMetadata>, DomainError> {
+    async fn by_name(&self, _text: &str, _chain: Chain) -> Result<Vec<TokenMetadata>, DomainError> {
         Ok(Vec::new())
     }
 }
@@ -70,8 +66,8 @@ fn fmt_wei_matic(w: blockexplorer_tui::domain::Wei) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let alchemy_key = std::env::var("ALCHEMY_API_KEY")
-        .map_err(|_| anyhow::anyhow!("ALCHEMY_API_KEY not set"))?;
+    let alchemy_key =
+        std::env::var("ALCHEMY_API_KEY").map_err(|_| anyhow::anyhow!("ALCHEMY_API_KEY not set"))?;
     let etherscan_key = std::env::var("ETHERSCAN_API_KEY").ok();
 
     let chain = Chain::Polygon;
@@ -94,15 +90,11 @@ async fn main() -> anyhow::Result<()> {
     let sigs = SourcifySignatureDirectory::with_default_http()?;
 
     // Inputs supplied by the operator.
-    let token_addr =
-        Address::from_hex("0xe6a537a407488807f0bbeb0038b79004f19dddfb")?;
-    let tx_hash = TxHash::from_hex(
-        "0x7eb65d2c123e35a37cc21048e6aa681b35f2191ce977ae7bf2feeeca0c467e8c",
-    )?;
-    let eoa_addr =
-        Address::from_hex("0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919")?;
-    let contract_addr =
-        Address::from_hex("0xab4b63bd6c214ce8409fa1b31afa50d4e17597f9")?;
+    let token_addr = Address::from_hex("0xe6a537a407488807f0bbeb0038b79004f19dddfb")?;
+    let tx_hash =
+        TxHash::from_hex("0x7eb65d2c123e35a37cc21048e6aa681b35f2191ce977ae7bf2feeeca0c467e8c")?;
+    let eoa_addr = Address::from_hex("0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919")?;
+    let contract_addr = Address::from_hex("0xab4b63bd6c214ce8409fa1b31afa50d4e17597f9")?;
     let block_no = BlockNumber::new(85_696_170);
 
     // ---------------------------------------------------------------
@@ -153,12 +145,10 @@ async fn main() -> anyhow::Result<()> {
             "params": [eoa_addr.to_hex(), "latest"],
         });
         let resp: serde_json::Value = reqwest::Client::new()
-            .post(
-                Url::parse(&format!(
-                    "https://{sub}.g.alchemy.com/v2/{alchemy_key}",
-                    sub = chain.alchemy_subdomain(),
-                ))?,
-            )
+            .post(Url::parse(&format!(
+                "https://{sub}.g.alchemy.com/v2/{alchemy_key}",
+                sub = chain.alchemy_subdomain(),
+            ))?)
             .json(&body)
             .send()
             .await?
@@ -175,7 +165,11 @@ async fn main() -> anyhow::Result<()> {
         println!(
             "getCode    : {n_bytes} bytes  (prefix {}{})",
             body_no_pref.chars().take(12).collect::<String>(),
-            if is_7702 { "  -> EIP-7702 delegator" } else { "" }
+            if is_7702 {
+                "  -> EIP-7702 delegator"
+            } else {
+                ""
+            }
         );
     }
     match load_address_overview::run(&addr_reader, eoa_addr, chain).await {
@@ -258,14 +252,10 @@ async fn main() -> anyhow::Result<()> {
                 "metadata   : symbol={}  name={}  decimals={}",
                 t.metadata.symbol, t.metadata.name, t.metadata.decimals
             );
-            let scaled = (t.total_supply as f64)
-                / 10f64.powi(i32::from(t.metadata.decimals));
+            let scaled = (t.total_supply as f64) / 10f64.powi(i32::from(t.metadata.decimals));
             println!("totalSupply: {} raw  (~{scaled:.4})", t.total_supply);
             match t.price {
-                Some(p) => println!(
-                    "price      : ${:.6} (currency {})",
-                    p.value, p.currency
-                ),
+                Some(p) => println!("price      : ${:.6} (currency {})", p.value, p.currency),
                 None => println!("price      : (none)"),
             }
         }
@@ -277,11 +267,27 @@ async fn main() -> anyhow::Result<()> {
     // ---------------------------------------------------------------
     section(&format!("Tx {}", tx_hash.to_hex()));
     let tx_reader = AlchemyTxReader::new(rpc.clone());
+    let tx_proxy_detector = AlchemyProxyDetector::new(rpc.clone());
     let view = if let Some(es) = etherscan.as_ref() {
-        load_tx_overview::run_with_decoding(&tx_reader, es, &sigs, tx_hash, chain).await
+        load_tx_overview::run_with_decoding(
+            &tx_reader,
+            es,
+            &sigs,
+            &tx_proxy_detector,
+            tx_hash,
+            chain,
+        )
+        .await
     } else {
-        load_tx_overview::run_with_decoding(&tx_reader, &NoopContractSource, &sigs, tx_hash, chain)
-            .await
+        load_tx_overview::run_with_decoding(
+            &tx_reader,
+            &NoopContractSource,
+            &sigs,
+            &tx_proxy_detector,
+            tx_hash,
+            chain,
+        )
+        .await
     };
     match view {
         Ok(v) => {
@@ -296,7 +302,9 @@ async fn main() -> anyhow::Result<()> {
             println!("from       : {}", t.from.to_hex());
             println!(
                 "to         : {}",
-                t.to.as_ref().map(|a| a.to_hex()).unwrap_or_else(|| "(contract creation)".into())
+                t.to.as_ref()
+                    .map(|a| a.to_hex())
+                    .unwrap_or_else(|| "(contract creation)".into())
             );
             println!("value      : {}", fmt_wei_matic(t.value));
             println!("gas used   : {:?}", t.gas_used);
@@ -314,14 +322,14 @@ async fn main() -> anyhow::Result<()> {
             }
             println!("logs       : {}", t.logs.len());
             match v.decoded_method {
-                Some(dm) => println!(
-                    "method     : {}  [source={:?}]",
-                    dm.signature, dm.source
-                ),
+                Some(dm) => println!("method     : {}  [source={:?}]", dm.signature, dm.source),
                 None => println!("method     : (not decoded)"),
             }
-            let decoded_logs =
-                v.decoded_logs.iter().filter(|l| l.signature.is_some()).count();
+            let decoded_logs = v
+                .decoded_logs
+                .iter()
+                .filter(|l| l.signature.is_some())
+                .count();
             println!(
                 "logs decod.: {} / {} via signature lookup",
                 decoded_logs,

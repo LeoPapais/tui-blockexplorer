@@ -9,9 +9,9 @@ use blockexplorer_tui::{
     adapters::ui::{ScreenStack, TxDetailScreen, TxTab, tx_feed},
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
-        AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
-        BlockNumber, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind,
-        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
+        Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
+        Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind, StateDiff, Transaction,
+        TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -39,9 +39,7 @@ fn sample_tx(hash_hex: &str, status: TxStatus) -> Transaction {
         ),
         tx_index: Some(0),
         from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
-        to: Some(
-            Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
-        ),
+        to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
         value: Wei::new(0),
         gas_price: Wei::new(14_000_000_000),
         gas_used: Some(52_341),
@@ -95,9 +93,7 @@ async fn reader_knows_success(world: &mut AppWorld, hash_hex: String) {
     world.tx_reader_stub.insert(tx);
 }
 
-#[given(
-    regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" failed with reason "([^"]+)"$"#
-)]
+#[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" failed with reason "([^"]+)"$"#)]
 async fn reader_knows_failure(world: &mut AppWorld, hash_hex: String, reason: String) {
     let tx = sample_tx(
         &hash_hex,
@@ -144,9 +140,7 @@ async fn contract_source_has_proxy_abi(world: &mut AppWorld, addr_hex: String) {
     world.contract_source_stub.insert(address, abi);
 }
 
-#[given(
-    regex = r#"^the contract source knows the implementation ABI of "(0x[0-9a-fA-F]{40})"$"#
-)]
+#[given(regex = r#"^the contract source knows the implementation ABI of "(0x[0-9a-fA-F]{40})"$"#)]
 async fn contract_source_has_impl_abi(world: &mut AppWorld, addr_hex: String) {
     let address = Address::from_hex(&addr_hex).unwrap();
     let abi = ContractAbi {
@@ -160,11 +154,7 @@ async fn contract_source_has_impl_abi(world: &mut AppWorld, addr_hex: String) {
 #[given(
     regex = r#"^the proxy detector maps "(0x[0-9a-fA-F]{40})" to implementation "(0x[0-9a-fA-F]{40})"$"#
 )]
-async fn proxy_detector_maps(
-    world: &mut AppWorld,
-    proxy_hex: String,
-    impl_hex: String,
-) {
+async fn proxy_detector_maps(world: &mut AppWorld, proxy_hex: String, impl_hex: String) {
     let proxy = Address::from_hex(&proxy_hex).unwrap();
     let implementation = Address::from_hex(&impl_hex).unwrap();
     world.proxy_detector_stub.set(
@@ -179,12 +169,11 @@ async fn proxy_detector_maps(
 #[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" emitted a Transfer event$"#)]
 async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
     let mut tx = sample_tx(&hash_hex, TxStatus::Success);
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     tx.logs.push(LogEntry {
         address: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
         topics: vec![topic],
@@ -196,12 +185,11 @@ async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
 
 #[given("the signature directory resolves the Transfer event topic")]
 async fn sigdb_has_transfer_event(world: &mut AppWorld) {
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     world
         .signatures_stub
         .set_event_topic(topic, "Transfer(address,address,uint256)");
@@ -305,14 +293,8 @@ async fn opens_tx_detail_with_decoding(world: &mut AppWorld, hash_hex: String) {
     let contract_source = world.contract_source_stub.clone();
     let signatures = world.signatures_stub.clone();
     let detector = world.proxy_detector_stub.clone();
-    let screen = spawn_tx_detail_with_decoding(
-        chain,
-        hash,
-        reader,
-        contract_source,
-        signatures,
-        detector,
-    );
+    let screen =
+        spawn_tx_detail_with_decoding(chain, hash, reader, contract_source, signatures, detector);
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
 }
@@ -351,6 +333,7 @@ fn spawn_tx_detail_with_decoding(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_tx_detail_with_full_enrichment(
     chain: Chain,
     hash: TxHash,
@@ -410,9 +393,7 @@ async fn overview_status(world: &mut AppWorld, expected: String) {
     assert_eq!(actual_status_line, expected);
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the decoded method is "([^"]+)" from ABI$"#
-)]
+#[then(regex = r#"^once the transaction is loaded, the decoded method is "([^"]+)" from ABI$"#)]
 async fn overview_method_from_abi(world: &mut AppWorld, expected: String) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
@@ -461,9 +442,7 @@ async fn overview_method_via_proxy(
     }
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the Asset Changes tab lists (\d+) change$"#
-)]
+#[then(regex = r#"^once the transaction is loaded, the Asset Changes tab lists (\d+) change$"#)]
 async fn asset_changes_lists_n(world: &mut AppWorld, expected: u32) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
@@ -518,9 +497,7 @@ async fn state_changes_lists_n(world: &mut AppWorld, expected: u32) {
     }
 }
 
-#[then(
-    regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#
-)]
+#[then(regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#)]
 async fn logs_tab_decodes(world: &mut AppWorld, expected: String) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {

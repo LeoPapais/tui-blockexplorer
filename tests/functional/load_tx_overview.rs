@@ -5,16 +5,16 @@
 use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
-        AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
-        BlockNumber, Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo,
-        ProxyKind, StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
+        Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
+        Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo, ProxyKind, StateDiff,
+        Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use pretty_assertions::assert_eq;
 
 use crate::support::stubs::{
-    StubContractSourcePort, StubProxyDetectionPort, StubSignatureDirectoryPort,
-    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubContractSourcePort, StubProxyDetectionPort, StubSignatureDirectoryPort, StubTxReaderPort,
+    StubTxSimulationPort, StubTxTracePort,
 };
 
 fn base_tx(hash_hex: &str) -> Transaction {
@@ -31,9 +31,7 @@ fn base_tx(hash_hex: &str) -> Transaction {
         ),
         tx_index: Some(3),
         from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
-        to: Some(
-            Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
-        ),
+        to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
         value: Wei::new(0),
         gas_price: Wei::new(14_000_000_000),
         gas_used: Some(52_341),
@@ -49,9 +47,7 @@ fn base_tx(hash_hex: &str) -> Transaction {
 #[tokio::test]
 async fn returns_a_successful_tx() {
     let reader = StubTxReaderPort::new();
-    let tx = base_tx(
-        "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    );
+    let tx = base_tx("0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b");
     reader.insert(tx.clone());
 
     let got = load_tx_overview::run(&reader, tx.hash, Chain::Ethereum)
@@ -70,9 +66,7 @@ async fn returns_a_successful_tx() {
 #[tokio::test]
 async fn carries_revert_reason_on_failure() {
     let reader = StubTxReaderPort::new();
-    let mut tx = base_tx(
-        "0xfefe016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944f",
-    );
+    let mut tx = base_tx("0xfefe016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944f");
     tx.status = TxStatus::Failed {
         reason: Some("InsufficientBalance()".into()),
     };
@@ -93,9 +87,7 @@ async fn carries_revert_reason_on_failure() {
 #[tokio::test]
 async fn pending_tx_has_no_block_and_pending_status() {
     let reader = StubTxReaderPort::new();
-    let mut tx = base_tx(
-        "0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a",
-    );
+    let mut tx = base_tx("0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a");
     tx.status = TxStatus::Pending;
     tx.block_number = None;
     tx.block_hash = None;
@@ -119,9 +111,7 @@ async fn decoding_prefers_abi_over_signature_directory() {
     let signatures = StubSignatureDirectoryPort::new();
     let detector = StubProxyDetectionPort::new();
 
-    let tx = base_tx(
-        "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
-    );
+    let tx = base_tx("0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa");
     reader.insert(tx.clone());
 
     let to = tx.to.expect("base tx targets a contract");
@@ -156,9 +146,7 @@ async fn decoding_falls_back_to_signature_directory() {
     let signatures = StubSignatureDirectoryPort::new();
     let detector = StubProxyDetectionPort::new();
 
-    let tx = base_tx(
-        "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb",
-    );
+    let tx = base_tx("0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb");
     reader.insert(tx.clone());
     signatures.set_selector([0xa9, 0x05, 0x9c, 0xbb], "transfer(address,uint256)");
 
@@ -185,15 +173,12 @@ async fn logs_are_decoded_via_signature_directory() {
     let signatures = StubSignatureDirectoryPort::new();
     let detector = StubProxyDetectionPort::new();
 
-    let mut tx = base_tx(
-        "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc",
-    );
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let mut tx = base_tx("0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc");
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     tx.logs.push(LogEntry {
         address: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
         topics: vec![topic],
@@ -225,14 +210,11 @@ async fn it_decodes_method_via_proxy_implementation_abi() {
     let signatures = StubSignatureDirectoryPort::new();
     let detector = StubProxyDetectionPort::new();
 
-    let tx = base_tx(
-        "0xd101016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d1",
-    );
+    let tx = base_tx("0xd101016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d1");
     reader.insert(tx.clone());
 
     let proxy = tx.to.expect("tx targets proxy");
-    let implementation =
-        Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
+    let implementation = Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
 
     // Proxy ABI is present but lacks `transfer`.
     let proxy_abi = ContractAbi {
@@ -291,14 +273,11 @@ async fn it_decodes_method_via_openchain_when_abi_has_no_match() {
     let signatures = StubSignatureDirectoryPort::new();
     let detector = StubProxyDetectionPort::new();
 
-    let tx = base_tx(
-        "0xd202016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d2",
-    );
+    let tx = base_tx("0xd202016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d2");
     reader.insert(tx.clone());
 
     let proxy = tx.to.expect("tx targets proxy");
-    let implementation =
-        Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
+    let implementation = Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
 
     // Both direct and implementation ABI miss the selector.
     let unrelated_abi = ContractAbi {
@@ -337,9 +316,7 @@ async fn it_decodes_method_via_openchain_when_abi_has_no_match() {
 #[tokio::test]
 async fn asset_changes_become_loaded_when_sim_returns_entries() {
     let sim = StubTxSimulationPort::new();
-    let tx = base_tx(
-        "0xdada016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394da",
-    );
+    let tx = base_tx("0xdada016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394da");
     sim.set_changes(
         tx.hash,
         vec![AssetChange {
@@ -367,9 +344,7 @@ async fn asset_changes_become_unsupported_on_feature_unavailable() {
     let sim = StubTxSimulationPort::new();
     sim.mark_unsupported();
 
-    let tx = base_tx(
-        "0xabab016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ab",
-    );
+    let tx = base_tx("0xabab016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ab");
     let mut view = TxView::bare(tx);
     load_tx_overview::load_asset_changes(&sim, &mut view, Chain::Ethereum).await;
     assert!(matches!(view.asset_changes, LoadStatus::Unsupported));
@@ -378,9 +353,7 @@ async fn asset_changes_become_unsupported_on_feature_unavailable() {
 #[tokio::test]
 async fn state_diff_becomes_loaded_when_tracer_returns_entries() {
     let tracer = StubTxTracePort::new();
-    let tx = base_tx(
-        "0xecec016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ec",
-    );
+    let tx = base_tx("0xecec016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ec");
     tracer.set_state_diff(
         tx.hash,
         StateDiff {
@@ -411,9 +384,7 @@ async fn state_diff_becomes_loaded_when_tracer_returns_entries() {
 async fn state_diff_becomes_unsupported_on_feature_unavailable() {
     let tracer = StubTxTracePort::new();
     tracer.mark_unsupported();
-    let tx = base_tx(
-        "0xfbfb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fb",
-    );
+    let tx = base_tx("0xfbfb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fb");
     let mut view = TxView::bare(tx);
     load_tx_overview::load_state_diff(&tracer, &mut view, Chain::Ethereum).await;
     assert!(matches!(view.state_diff, LoadStatus::Unsupported));
@@ -422,10 +393,9 @@ async fn state_diff_becomes_unsupported_on_feature_unavailable() {
 #[tokio::test]
 async fn missing_tx_returns_not_found() {
     let reader = StubTxReaderPort::new();
-    let hash = TxHash::from_hex(
-        "0x0000000000000000000000000000000000000000000000000000000000000001",
-    )
-    .unwrap();
+    let hash =
+        TxHash::from_hex("0x0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
 
     let err = load_tx_overview::run(&reader, hash, Chain::Ethereum)
         .await

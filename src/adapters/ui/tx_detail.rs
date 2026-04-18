@@ -40,10 +40,10 @@ use crate::{
         screen::{Command, Screen},
         scroll::ScrollState,
     },
-    application::{DecodedLog, DecodedMethod, LoadStatus, TxView},
+    application::{DecodedLog, DecodedMethod, LoadStatus, SignatureSource, TxView},
     domain::{
-        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange,
-        StateDiff, TxHash, TxStatus, Wei,
+        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, StateDiff,
+        TxHash, TxStatus, Wei,
     },
 };
 
@@ -214,9 +214,7 @@ impl TxDetailScreen {
     /// by functional tests.
     #[must_use]
     pub fn overview_selected_label(&self) -> Option<&str> {
-        self.overview_rows()
-            .get(self.overview_row)
-            .map(|r| r.label)
+        self.overview_rows().get(self.overview_row).map(|r| r.label)
     }
 
     /// Canonical copy value of the currently selected Overview
@@ -286,7 +284,9 @@ impl Screen for TxDetailScreen {
         };
         frame.render_widget(
             Paragraph::new(header).block(
-                RatBlock::default().borders(Borders::ALL).title("Transaction"),
+                RatBlock::default()
+                    .borders(Borders::ALL)
+                    .title("Transaction"),
             ),
             chunks[0],
         );
@@ -387,8 +387,7 @@ impl TxDetailScreen {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.overview_row =
-                    (self.overview_row + rows.len() - 1) % rows.len();
+                self.overview_row = (self.overview_row + rows.len() - 1) % rows.len();
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.overview_row = (self.overview_row + 1) % rows.len();
@@ -436,8 +435,7 @@ impl TxDetailScreen {
                 }
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
-                        self.logs_field =
-                            (self.logs_field + fields.len() - 1) % fields.len();
+                        self.logs_field = (self.logs_field + fields.len() - 1) % fields.len();
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         self.logs_field = (self.logs_field + 1) % fields.len();
@@ -498,9 +496,7 @@ impl TxDetailScreen {
                 let log = view.decoded_logs.get(self.logs_selected)?;
                 let fields = self.log_fields(log);
                 match self.logs_focus {
-                    LogsFocus::Detail => fields
-                        .get(self.logs_field)
-                        .map(|f| f.copy_value.clone()),
+                    LogsFocus::Detail => fields.get(self.logs_field).map(|f| f.copy_value.clone()),
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
                 }
             }),
@@ -518,9 +514,8 @@ impl TxDetailScreen {
     fn render_body(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(view) = self.current.as_ref() else {
             frame.render_widget(
-                Paragraph::new("Loading...").block(
-                    RatBlock::default().borders(Borders::ALL).title("Overview"),
-                ),
+                Paragraph::new("Loading...")
+                    .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
                 area,
             );
             return;
@@ -540,9 +535,7 @@ impl TxDetailScreen {
                 "State Changes",
                 state_changes_body(&view.state_diff),
             ),
-            TxTab::Raw => {
-                self.render_scrollable(frame, area, "Raw", view.tx.raw_json.clone())
-            }
+            TxTab::Raw => self.render_scrollable(frame, area, "Raw", view.tx.raw_json.clone()),
         }
     }
 
@@ -608,11 +601,18 @@ impl TxDetailScreen {
             format!("addr: {}", log.raw.address.to_hex()),
             Style::default().fg(Color::Gray),
         )))
-        .chain(fields.iter().enumerate().map(|(idx, field)| {
-            log_field_line(field, focused && idx == self.logs_field)
-        }))
+        .chain(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| log_field_line(field, focused && idx == self.logs_field)),
+        )
         .collect();
-        let title = if focused { "Log detail *" } else { "Log detail" };
+        let title = if focused {
+            "Log detail *"
+        } else {
+            "Log detail"
+        };
         frame.render_widget(
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
@@ -805,9 +805,7 @@ fn overview_line(row: &OverviewRow, selected: bool) -> Line<'static> {
         Span::styled(label, base_style),
         Span::styled(primary, base_style),
     ];
-    if selected
-        && let Some(hint) = &row.raw_hint
-    {
+    if selected && let Some(hint) = &row.raw_hint {
         spans.push(Span::styled(
             format!("    {hint}"),
             Style::default().fg(Color::Gray),
@@ -818,15 +816,30 @@ fn overview_line(row: &OverviewRow, selected: bool) -> Line<'static> {
 
 fn method_line(view: &TxView) -> String {
     match view.decoded_method.as_ref() {
-        Some(DecodedMethod { signature, source }) => {
-            format!("{signature} ({tag})", tag = source.tag())
-        }
+        Some(DecodedMethod { signature, source }) => match source {
+            SignatureSource::ProxyAbi { implementation, .. } => format!(
+                "{signature} (decoded via implementation {})",
+                short_address(implementation)
+            ),
+            other => format!("{signature} ({tag})", tag = other.tag()),
+        },
         None => match view.tx.selector() {
             Some(sel) => format!("0x{} (unknown)", hex::encode(sel)),
             None if view.tx.input.is_empty() => "(empty)".to_string(),
             None => format!("0x{} (unknown)", hex::encode(&view.tx.input)),
         },
     }
+}
+
+/// Short-hand form used next to ProxyAbi decoding: keep the leading
+/// `0x` + 4 bytes and the last 2 bytes so the user can correlate the
+/// line with the real address without eating the whole row.
+fn short_address(addr: &crate::domain::Address) -> String {
+    let hex = addr.to_hex();
+    if hex.len() <= 12 {
+        return hex;
+    }
+    format!("{}…{}", &hex[..8], &hex[hex.len() - 4..])
 }
 
 fn log_summary(idx: usize, log: &DecodedLog) -> String {
@@ -947,9 +960,7 @@ fn log_field_line(field: &LogField, selected: bool) -> Line<'static> {
         Span::styled(label, base_style),
         Span::styled(field.display.clone(), base_style),
     ];
-    if selected
-        && let Some(hint) = &field.raw_hint
-    {
+    if selected && let Some(hint) = &field.raw_hint {
         spans.push(Span::styled(
             format!("    {hint}"),
             Style::default().fg(Color::Gray),
@@ -1036,12 +1047,14 @@ fn decode_word(ty: Option<&str>, word: &[u8; 32]) -> (String, String) {
     }
     if ty == "bool" {
         let v = word.iter().any(|b| *b != 0);
-        let s = if v { "true".to_string() } else { "false".to_string() };
+        let s = if v {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        };
         return (s.clone(), s);
     }
-    if (ty.starts_with("uint") || ty.starts_with("int"))
-        && word[..16].iter().all(|b| *b == 0)
-    {
+    if (ty.starts_with("uint") || ty.starts_with("int")) && word[..16].iter().all(|b| *b == 0) {
         let mut u = [0u8; 16];
         u.copy_from_slice(&word[16..]);
         let v = u128::from_be_bytes(u);
@@ -1071,13 +1084,23 @@ fn asset_changes_body(status: &LoadStatus<Vec<AssetChange>>) -> String {
                 };
                 let asset = match &change.asset {
                     AssetKind::Native => "ETH (native)".to_string(),
-                    AssetKind::Erc20 { symbol, contract, .. } => {
+                    AssetKind::Erc20 {
+                        symbol, contract, ..
+                    } => {
                         format!("{symbol} @ {}", contract.to_hex())
                     }
-                    AssetKind::Erc721 { symbol, contract, token_id } => {
+                    AssetKind::Erc721 {
+                        symbol,
+                        contract,
+                        token_id,
+                    } => {
                         format!("{symbol} #{token_id} @ {}", contract.to_hex())
                     }
-                    AssetKind::Erc1155 { symbol, contract, token_id } => {
+                    AssetKind::Erc1155 {
+                        symbol,
+                        contract,
+                        token_id,
+                    } => {
                         format!("{symbol} id={token_id} @ {}", contract.to_hex())
                     }
                 };
@@ -1099,11 +1122,7 @@ fn asset_changes_body(status: &LoadStatus<Vec<AssetChange>>) -> String {
     }
 }
 
-fn humanize_wei_if_native(
-    _kind: AssetChangeKind,
-    asset: &AssetKind,
-    amount: Wei,
-) -> String {
+fn humanize_wei_if_native(_kind: AssetChangeKind, asset: &AssetKind, amount: Wei) -> String {
     match asset {
         AssetKind::Native => humanize_eth(amount),
         _ => amount.value().to_string(),
@@ -1117,9 +1136,7 @@ fn state_changes_body(status: &LoadStatus<StateDiff>) -> String {
             "State-diff trace is unavailable on this chain / tier.".to_string()
         }
         LoadStatus::Failed(msg) => format!("Trace failed: {msg}"),
-        LoadStatus::Loaded(diff) if diff.is_empty() => {
-            "No state changes recorded.".to_string()
-        }
+        LoadStatus::Loaded(diff) if diff.is_empty() => "No state changes recorded.".to_string(),
         LoadStatus::Loaded(diff) => render_state_diff(diff),
     }
 }
@@ -1204,7 +1221,8 @@ mod tests {
     #[test]
     fn decode_word_decodes_address_from_padded_word() {
         let mut word = [0u8; 32];
-        word[12..].copy_from_slice(&hex::decode("d8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap());
+        word[12..]
+            .copy_from_slice(&hex::decode("d8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap());
         let (display, copy) = decode_word(Some("address"), &word);
         assert_eq!(display, "0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
         assert_eq!(copy, display);
