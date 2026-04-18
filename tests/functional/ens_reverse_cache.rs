@@ -10,7 +10,8 @@
 use std::time::Duration;
 
 use blockexplorer_tui::{
-    adapters::ens::CachedEnsResolver, application::ports::EnsResolverPort,
+    adapters::ens::CachedEnsResolver,
+    application::ports::EnsResolverPort,
     domain::{Address, Chain},
 };
 
@@ -26,8 +27,11 @@ async fn reverse_caches_a_hit_within_the_ttl() {
     let vitalik = addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     inner.set_reverse(vitalik, "vitalik.eth");
     let clock = FrozenClock::default();
-    let cached =
-        CachedEnsResolver::with_ttl_and_clock(inner.clone(), Duration::from_secs(300), clock.clone());
+    let cached = CachedEnsResolver::with_ttl_and_clock(
+        inner.clone(),
+        Duration::from_secs(300),
+        clock.clone(),
+    );
 
     let first = cached.reverse(vitalik, Chain::Ethereum).await.unwrap();
     assert_eq!(first.as_deref(), Some("vitalik.eth"));
@@ -47,8 +51,11 @@ async fn reverse_refreshes_after_ttl_expires() {
     let vitalik = addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     inner.set_reverse(vitalik, "vitalik.eth");
     let clock = FrozenClock::default();
-    let cached =
-        CachedEnsResolver::with_ttl_and_clock(inner.clone(), Duration::from_secs(300), clock.clone());
+    let cached = CachedEnsResolver::with_ttl_and_clock(
+        inner.clone(),
+        Duration::from_secs(300),
+        clock.clone(),
+    );
 
     let _ = cached.reverse(vitalik, Chain::Ethereum).await.unwrap();
 
@@ -63,8 +70,11 @@ async fn reverse_caches_a_miss() {
     let inner = StubEnsResolverPort::new();
     let rogue = addr("0x0000000000000000000000000000000000000099");
     let clock = FrozenClock::default();
-    let cached =
-        CachedEnsResolver::with_ttl_and_clock(inner.clone(), Duration::from_secs(300), clock.clone());
+    let cached = CachedEnsResolver::with_ttl_and_clock(
+        inner.clone(),
+        Duration::from_secs(300),
+        clock.clone(),
+    );
 
     let first = cached.reverse(rogue, Chain::Ethereum).await.unwrap();
     assert!(first.is_none());
@@ -88,8 +98,11 @@ async fn forward_is_not_cached() {
     let vitalik = addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     inner.set_forward(name, vitalik);
     let clock = FrozenClock::default();
-    let cached =
-        CachedEnsResolver::with_ttl_and_clock(inner.clone(), Duration::from_secs(300), clock.clone());
+    let cached = CachedEnsResolver::with_ttl_and_clock(
+        inner.clone(),
+        Duration::from_secs(300),
+        clock.clone(),
+    );
 
     let first = cached.forward(name, Chain::Ethereum).await.unwrap();
     assert_eq!(first, Some(vitalik));

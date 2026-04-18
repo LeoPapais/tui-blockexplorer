@@ -14,9 +14,7 @@
 //! The assertions drive the screen directly through
 //! `Screen::handle_key`, mirroring `block_detail_screen_keys.rs`.
 
-use blockexplorer_tui::adapters::ui::{
-    AddressDetailScreen, AddressTab, Screen, address_feed,
-};
+use blockexplorer_tui::adapters::ui::{AddressDetailScreen, AddressTab, Screen, address_feed};
 use blockexplorer_tui::domain::{
     Address, AddressKind, AddressOverview, BlockNumber, Chain, PriceLookup, TokenHolding,
     TokenMetadata, TokenPrice, TransferAsset, TransferCategory, TransferEvent, TransferPage,
@@ -52,8 +50,7 @@ fn overview_with_ens(ens: Option<&str>) -> AddressOverview {
 
 fn build_screen(ov: AddressOverview) -> AddressDetailScreen {
     let (feed, _sender) = address_feed();
-    let mut screen =
-        AddressDetailScreen::loading(Chain::Ethereum, ov.address, feed);
+    let mut screen = AddressDetailScreen::loading(Chain::Ethereum, ov.address, feed);
     screen.set_overview_for_test(ov);
     screen
 }
@@ -196,8 +193,7 @@ fn e_on_transactions_exports_csv_with_header_and_rows() {
         .expect("CSV blob written to clipboard sink");
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(
-        lines[0],
-        "block,tx_hash,category,from,to,asset,symbol,decimals,value",
+        lines[0], "block,tx_hash,category,from,to,asset,symbol,decimals,value",
         "header row",
     );
     assert_eq!(lines.len(), 3, "header + 2 rows");

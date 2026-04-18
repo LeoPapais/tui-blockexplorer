@@ -80,11 +80,7 @@ where
         self.inner.forward(name, chain).await
     }
 
-    async fn reverse(
-        &self,
-        address: Address,
-        chain: Chain,
-    ) -> Result<Option<String>, DomainError> {
+    async fn reverse(&self, address: Address, chain: Chain) -> Result<Option<String>, DomainError> {
         let key = (chain, address);
         if let Some(cached) = self.reverse.get(&key).await {
             return Ok(cached);

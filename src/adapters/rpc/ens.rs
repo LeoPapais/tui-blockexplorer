@@ -113,11 +113,7 @@ impl EnsResolverPort for AlchemyEnsResolver {
         self.call_resolver_addr(&resolver, &node).await
     }
 
-    async fn reverse(
-        &self,
-        address: Address,
-        chain: Chain,
-    ) -> Result<Option<String>, DomainError> {
+    async fn reverse(&self, address: Address, chain: Chain) -> Result<Option<String>, DomainError> {
         // plan/6-address-detail.md §11 "Shipped" + external-apis rule:
         //
         //   1. namehash "<lower-hex>.addr.reverse"
@@ -278,9 +274,7 @@ mod tests {
         // node for `0xd8da6bf26964af9d7eed9e03e53415d37aa96045` is
         // `namehash("d8da6bf26964af9d7eed9e03e53415d37aa96045.addr.reverse")`.
         let addr = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
-        let expected = namehash(
-            "d8da6bf26964af9d7eed9e03e53415d37aa96045.addr.reverse",
-        );
+        let expected = namehash("d8da6bf26964af9d7eed9e03e53415d37aa96045.addr.reverse");
         assert_eq!(reverse_namehash(&addr), expected);
     }
 

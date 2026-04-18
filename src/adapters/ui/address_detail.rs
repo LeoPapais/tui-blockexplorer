@@ -492,9 +492,9 @@ impl AddressDetailScreen {
         let csv = match self.active_tab {
             AddressTab::Transactions => csv_for_transfers(self.transfers.as_ref()),
             AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
-            AddressTab::Overview
-            | AddressTab::Token
-            | AddressTab::Contract => csv_for_overview(self.current.as_ref()),
+            AddressTab::Overview | AddressTab::Token | AddressTab::Contract => {
+                csv_for_overview(self.current.as_ref())
+            }
         };
         self.last_copied_value = Some(csv);
     }
@@ -1014,8 +1014,7 @@ fn csv_for_overview(overview: Option<&AddressOverview>) -> String {
 }
 
 fn csv_for_transfers(page: Option<&TransferPage>) -> String {
-    let mut buf =
-        String::from("block,tx_hash,category,from,to,asset,symbol,decimals,value\n");
+    let mut buf = String::from("block,tx_hash,category,from,to,asset,symbol,decimals,value\n");
     let Some(page) = page else { return buf };
     for event in &page.events {
         let (asset_kind, symbol, decimals) = match &event.asset {
@@ -1049,9 +1048,8 @@ fn csv_for_transfers(page: Option<&TransferPage>) -> String {
 }
 
 fn csv_for_holdings(holdings: Option<&Vec<TokenHolding>>) -> String {
-    let mut buf = String::from(
-        "symbol,name,contract,decimals,balance,price_usd,price_status,value_usd\n",
-    );
+    let mut buf =
+        String::from("symbol,name,contract,decimals,balance,price_usd,price_status,value_usd\n");
     let Some(holdings) = holdings else { return buf };
     for h in holdings {
         let (price_column, status, value_column) = match &h.price {
@@ -1063,9 +1061,11 @@ fn csv_for_holdings(holdings: Option<&Vec<TokenHolding>>) -> String {
                     format_csv_number(usd_value),
                 )
             }
-            PriceLookup::Unsupported { provider } => {
-                (String::new(), format!("unsupported:{provider}"), String::new())
-            }
+            PriceLookup::Unsupported { provider } => (
+                String::new(),
+                format!("unsupported:{provider}"),
+                String::new(),
+            ),
             PriceLookup::Pending => (String::new(), "pending".to_string(), String::new()),
         };
         buf.push_str(&format!(

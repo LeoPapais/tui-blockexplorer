@@ -20,9 +20,7 @@ use blockexplorer_tui::{
 use reqwest::Client;
 use serde_json::{Value, json};
 use url::Url;
-use wiremock::{
-    Mock, MockServer, Request, Respond, ResponseTemplate, matchers::method,
-};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 
@@ -92,10 +90,8 @@ impl Respond for EnsReverseResponder {
             // Resolver addr(bytes32) — 0x3b3b57de — the forward
             // confirmation step. The fixture varies per test.
             if selector == "0x3b3b57de" {
-                return ResponseTemplate::new(200).set_body_raw(
-                    load_text(self.forward_addr_fixture),
-                    "application/json",
-                );
+                return ResponseTemplate::new(200)
+                    .set_body_raw(load_text(self.forward_addr_fixture), "application/json");
             }
         }
         ResponseTemplate::new(500)
@@ -138,10 +134,7 @@ async fn reverse_returns_none_when_forward_disagrees() {
     let adapter = AlchemyEnsResolver::new(rpc(&server.uri()));
     let vitalik = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
 
-    let got = adapter
-        .reverse(vitalik, Chain::Ethereum)
-        .await
-        .expect("ok");
+    let got = adapter.reverse(vitalik, Chain::Ethereum).await.expect("ok");
 
     assert!(got.is_none(), "forward mismatch must yield None");
 }
@@ -171,7 +164,8 @@ async fn reverse_returns_none_when_resolver_is_zero() {
                     "application/json",
                 )
             } else {
-                ResponseTemplate::new(500).set_body_string(json!({"error":"unexpected"}).to_string())
+                ResponseTemplate::new(500)
+                    .set_body_string(json!({"error":"unexpected"}).to_string())
             }
         })
         .mount(&server)
@@ -179,10 +173,7 @@ async fn reverse_returns_none_when_resolver_is_zero() {
 
     let adapter = AlchemyEnsResolver::new(rpc(&server.uri()));
     let naked = Address::from_hex("0x0000000000000000000000000000000000000099").unwrap();
-    let got = adapter
-        .reverse(naked, Chain::Ethereum)
-        .await
-        .expect("ok");
+    let got = adapter.reverse(naked, Chain::Ethereum).await.expect("ok");
     assert!(got.is_none());
 }
 
@@ -231,10 +222,7 @@ async fn reverse_returns_none_when_name_is_empty_string() {
 
     let adapter = AlchemyEnsResolver::new(rpc(&server.uri()));
     let vitalik = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
-    let got = adapter
-        .reverse(vitalik, Chain::Ethereum)
-        .await
-        .expect("ok");
+    let got = adapter.reverse(vitalik, Chain::Ethereum).await.expect("ok");
     assert!(got.is_none());
 }
 
@@ -242,10 +230,10 @@ async fn reverse_returns_none_when_name_is_empty_string() {
 async fn reverse_maps_rate_limit_to_domain_rate_limit() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(429).set_body_raw(
-            load_text("rpc__error__rate_limit.json"),
-            "application/json",
-        ))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_raw(load_text("rpc__error__rate_limit.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
@@ -256,7 +244,10 @@ async fn reverse_maps_rate_limit_to_domain_rate_limit() {
         .await
         .expect_err("429 must bubble as a domain error");
     assert!(
-        matches!(err, blockexplorer_tui::domain::DomainError::ProviderUnavailable),
+        matches!(
+            err,
+            blockexplorer_tui::domain::DomainError::ProviderUnavailable
+        ),
         "unexpected error: {err:?}",
     );
 }

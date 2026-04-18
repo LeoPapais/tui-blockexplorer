@@ -26,10 +26,8 @@ where
     P: AddressReaderPort,
     E: EnsResolverPort,
 {
-    let (overview, reverse) = tokio::join!(
-        reader.get(address, chain),
-        ens.reverse(address, chain),
-    );
+    let (overview, reverse) =
+        tokio::join!(reader.get(address, chain), ens.reverse(address, chain),);
     let mut overview = overview?.ok_or(DomainError::NotFound)?;
     if overview.ens_name.is_none()
         && let Ok(Some(name)) = reverse
