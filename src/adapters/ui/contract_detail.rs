@@ -1164,11 +1164,23 @@ fn overview_body(
         return "Loading...".to_string();
     };
     let proxy_line = match ov.proxy {
-        Some(info) => format!(
-            "Proxy       {kind} -> {impl_addr}",
-            kind = info.kind.label(),
-            impl_addr = info.implementation.to_hex(),
-        ),
+        Some(info) => {
+            // For Transparent proxies the address stored in `info`
+            // is actually the admin (plan/7 §12.5.2); label it so
+            // the user is not misled into thinking it is the
+            // implementation.
+            let role = match info.kind {
+                crate::domain::ProxyKind::Transparent => "admin",
+                _ => "impl",
+            };
+            format!(
+                "Proxy       {kind} [{source}] -> {role} {impl_addr}",
+                kind = info.kind.label(),
+                source = info.source.label(),
+                role = role,
+                impl_addr = info.implementation.to_hex(),
+            )
+        }
         None => "Proxy       not detected".to_string(),
     };
     let source_line = match source {

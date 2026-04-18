@@ -59,13 +59,9 @@ where
 async fn proxy_reports_impl(world: &mut AppWorld, impl_hex: String, proxy_hex: String) {
     let impl_addr = Address::from_hex(&impl_hex).unwrap();
     let proxy_addr = Address::from_hex(&proxy_hex).unwrap();
-    world.proxy_detector_stub.set(
-        proxy_addr,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation: impl_addr,
-        },
-    );
+    world
+        .proxy_detector_stub
+        .set(proxy_addr, ProxyInfo::eip1967_slot(impl_addr));
 }
 
 #[when(regex = r#"^the user opens ContractDetail for "(0x[0-9a-fA-F]{40})"$"#)]

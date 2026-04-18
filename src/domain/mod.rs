@@ -33,7 +33,7 @@ pub use block::{
     BlockTxReceipt, TxCategory, Withdrawal,
 };
 pub use chain::Chain;
-pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
+pub use contract::{ContractOverview, ProxyInfo, ProxyKind, ProxySource};
 pub use contract_read::{
     AbiFunction, AbiParam, AbiParamType, AbiValue, DecodedValue, parse_abi_functions,
 };

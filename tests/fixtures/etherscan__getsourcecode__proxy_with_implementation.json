@@ -1,0 +1,20 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "",
+      "ABI": "[]",
+      "ContractName": "ClonedProxy",
+      "CompilerVersion": "",
+      "OptimizationUsed": "0",
+      "Runs": "0",
+      "EVMVersion": "",
+      "LicenseType": "",
+      "Library": "",
+      "Proxy": "1",
+      "Implementation": "0xb0b1000000000000000000000000000000000099",
+      "SwarmSource": ""
+    }
+  ]
+}

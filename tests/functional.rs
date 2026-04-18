@@ -82,6 +82,12 @@ mod load_contract_overview;
 #[path = "functional/alchemy_proxy_detector.rs"]
 mod alchemy_proxy_detector;
 
+#[path = "functional/composite_proxy_detector.rs"]
+mod composite_proxy_detector;
+
+#[path = "functional/etherscan_proxy_hint.rs"]
+mod etherscan_proxy_hint;
+
 #[path = "functional/load_token_overview.rs"]
 mod load_token_overview;
 

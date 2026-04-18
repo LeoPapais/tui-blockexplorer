@@ -7,7 +7,7 @@ use blockexplorer_tui::{
     domain::{
         Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
         CallKind, CallNode, Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo,
-        ProxyKind, StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
+        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -225,13 +225,7 @@ async fn it_decodes_method_via_proxy_implementation_abi() {
     contract_source.insert(proxy, proxy_abi);
 
     // Detector resolves proxy -> implementation.
-    detector.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    detector.set(proxy, ProxyInfo::eip1967_slot(implementation));
 
     // Implementation ABI carries the selector.
     let impl_abi = ContractAbi {
@@ -286,13 +280,7 @@ async fn it_decodes_method_via_openchain_when_abi_has_no_match() {
     };
     contract_source.insert(proxy, unrelated_abi.clone());
     contract_source.insert(implementation, unrelated_abi);
-    detector.set(
-        proxy,
-        ProxyInfo {
-            kind: ProxyKind::Eip1967,
-            implementation,
-        },
-    );
+    detector.set(proxy, ProxyInfo::eip1967_slot(implementation));
 
     // Signature directory returns the name.
     signatures.set_selector([0xa9, 0x05, 0x9c, 0xbb], "transfer(address,uint256)");
