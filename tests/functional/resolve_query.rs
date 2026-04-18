@@ -3,7 +3,9 @@
 //! See `plan/2-search.md` section 10.1.
 
 use blockexplorer_tui::{
-    application::use_cases::resolve_query::{Classification, ResolveQuery, classify, classify_input},
+    application::use_cases::resolve_query::{
+        Classification, ResolveQuery, classify, classify_input,
+    },
     domain::{
         Address, AddressKind, BlockHash, BlockNumber, BlockSummary, Chain, DomainError,
         ResolvedEntity, TokenMetadata, TxHash, TxSummary,
@@ -153,27 +155,24 @@ fn classify_input_preserves_ticker_casing() {
 #[rstest]
 #[case(
     "https://etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
 )]
 #[case(
     "http://www.etherscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
-    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
 )]
 #[case(
     "https://polygonscan.com/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
 )]
-#[case(
-    "https://basescan.org/block/21345678",
-    "21345678",
-)]
+#[case("https://basescan.org/block/21345678", "21345678")]
 #[case(
     "https://arbiscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
-    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
 )]
 #[case(
     "https://optimistic.etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
 )]
 fn classify_input_unwraps_block_explorer_urls(#[case] input: &str, #[case] expected: &str) {
     let out = classify_input(input);
@@ -199,9 +198,8 @@ fn classify_input_url_to_block_yields_block_number() {
 
 #[test]
 fn classify_input_url_to_address_yields_address() {
-    let out = classify_input(
-        "https://etherscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
-    );
+    let out =
+        classify_input("https://etherscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
     assert!(matches!(out.classification, Classification::Address { .. }));
 }
 

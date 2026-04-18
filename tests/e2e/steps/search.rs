@@ -921,9 +921,5 @@ async fn close_search_modal(world: &mut AppWorld) {
 
 #[then(regex = r#"^the tx lookup stub was called exactly (\d+) times?$"#)]
 async fn tx_lookup_call_count(world: &mut AppWorld, expected: usize) {
-    assert_eq!(
-        world.tx_stub.call_count(),
-        expected,
-        "tx lookup call count",
-    );
+    assert_eq!(world.tx_stub.call_count(), expected, "tx lookup call count",);
 }

@@ -40,8 +40,7 @@ use crate::{
 /// active chain plus the normalised input, value is the last enriched
 /// candidate list we published for that key. See `plan/2-search.md`
 /// section 12.4.
-pub type SearchCache<C = SystemClock> =
-    TtlCache<(Chain, String), Vec<ResolvedEntity>, C>;
+pub type SearchCache<C = SystemClock> = TtlCache<(Chain, String), Vec<ResolvedEntity>, C>;
 
 /// Spawn the resolver task with six ports. The extra `token_reader`
 /// (compared with the pre-ERC20-probe shape of `plan/2-search.md`)
@@ -192,9 +191,7 @@ where
                 && !final_candidates
                     .iter()
                     .all(|c| matches!(c, ResolvedEntity::NotFound { .. }));
-            if cache_worthy
-                && let Some(cache) = cache.as_ref()
-            {
+            if cache_worthy && let Some(cache) = cache.as_ref() {
                 cache.insert(cache_key, final_candidates).await;
             }
         }

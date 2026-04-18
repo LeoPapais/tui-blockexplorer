@@ -12,10 +12,7 @@ use pretty_assertions::assert_eq;
 
 use crate::support::stubs::FrozenClock;
 
-fn cache(
-    ttl_secs: u64,
-    clock: FrozenClock,
-) -> TtlCache<(&'static str, u64), String, FrozenClock> {
+fn cache(ttl_secs: u64, clock: FrozenClock) -> TtlCache<(&'static str, u64), String, FrozenClock> {
     TtlCache::with_ttl_and_clock(Duration::from_secs(ttl_secs), clock)
 }
 

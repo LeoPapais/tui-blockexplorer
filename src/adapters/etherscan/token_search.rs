@@ -110,11 +110,7 @@ impl TokenSearchPort for EtherscanTokenSearch {
         Ok(out)
     }
 
-    async fn by_name(
-        &self,
-        text: &str,
-        chain: Chain,
-    ) -> Result<Vec<TokenMetadata>, DomainError> {
+    async fn by_name(&self, text: &str, chain: Chain) -> Result<Vec<TokenMetadata>, DomainError> {
         let needle = text.trim().to_ascii_lowercase();
         if needle.is_empty() {
             return Ok(Vec::new());

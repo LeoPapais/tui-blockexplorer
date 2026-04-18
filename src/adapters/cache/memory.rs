@@ -109,6 +109,12 @@ where
         self.inner.entries.read().await.len()
     }
 
+    /// Whether the cache is empty. Like [`Self::len`], this is a
+    /// diagnostic — use it only when a stale answer is acceptable.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.entries.read().await.is_empty()
+    }
+
     /// TTL this cache was configured with. Useful for observability.
     #[must_use]
     pub fn ttl(&self) -> Duration {

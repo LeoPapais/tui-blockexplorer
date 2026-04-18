@@ -269,9 +269,7 @@ fn unwrap_explorer_url(input: &str) -> Option<&str> {
     for prefix in ["tx/", "address/", "block/"] {
         if let Some(rest) = path.strip_prefix(prefix) {
             // Trim any trailing query string / fragment / path noise.
-            let end = rest
-                .find(|c: char| c == '/' || c == '?' || c == '#')
-                .unwrap_or(rest.len());
+            let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
             let value = &rest[..end];
             if !value.is_empty() {
                 return Some(value);

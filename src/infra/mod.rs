@@ -23,10 +23,13 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use url::Url;
 
+use std::time::Duration;
+
 use crate::{
     adapters::{
+        cache::TtlCache,
         config::InMemoryChainRegistry,
-        etherscan::{EtherscanClient, EtherscanContractSource},
+        etherscan::{EtherscanClient, EtherscanContractSource, EtherscanTokenSearch},
         prices::{AlchemyPrices, PricesClient},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
@@ -47,8 +50,13 @@ use crate::{
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
     domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
+    infra::search_feed::SearchCache,
 };
 use mempool_feed::EmptyPendingTxStream;
+
+/// Per-(chain, input) TTL for the search resolution cache. Matches the
+/// figure documented in `plan/2-search.md` section 12.4.
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Build a live `TxDetailScreen`. Every tab is populated through the
 /// full enrichment pipeline (ABI decoding when possible + asset
@@ -279,27 +287,47 @@ impl crate::application::ports::PricesPort for TokenPrices {
     }
 }
 
-/// Stub token search used until the Etherscan adapter lands. Returns
-/// no candidates for every query.
-#[derive(Default, Clone, Copy)]
-struct NoopTokenSearch;
+/// Composite TokenSearchPort used by the Search screen: prefers the
+/// Etherscan-backed implementation when an API key is available and
+/// degrades to a Noop otherwise. The Noop path preserves today's
+/// behaviour (no ticker rows, no errors). See `plan/2-search.md`
+/// section 10.2.
+#[derive(Clone)]
+enum TokenSearchBackend {
+    Etherscan(EtherscanTokenSearch),
+    Noop,
+}
 
-impl crate::application::ports::TokenSearchPort for NoopTokenSearch {
+impl crate::application::ports::TokenSearchPort for TokenSearchBackend {
     async fn by_symbol(
         &self,
-        _symbol: &str,
-        _chain: Chain,
+        symbol: &str,
+        chain: Chain,
     ) -> Result<Vec<crate::domain::TokenMetadata>, crate::domain::DomainError> {
-        Ok(Vec::new())
+        match self {
+            TokenSearchBackend::Etherscan(inner) => inner.by_symbol(symbol, chain).await,
+            TokenSearchBackend::Noop => Ok(Vec::new()),
+        }
     }
 
     async fn by_name(
         &self,
-        _text: &str,
-        _chain: Chain,
+        text: &str,
+        chain: Chain,
     ) -> Result<Vec<crate::domain::TokenMetadata>, crate::domain::DomainError> {
-        Ok(Vec::new())
+        match self {
+            TokenSearchBackend::Etherscan(inner) => inner.by_name(text, chain).await,
+            TokenSearchBackend::Noop => Ok(Vec::new()),
+        }
     }
+}
+
+fn build_token_search(etherscan_key: Option<&str>) -> TokenSearchBackend {
+    etherscan_key
+        .and_then(|key| EtherscanClient::with_default_http(key.to_string()).ok())
+        .map(EtherscanTokenSearch::new)
+        .map(TokenSearchBackend::Etherscan)
+        .unwrap_or(TokenSearchBackend::Noop)
 }
 
 /// Composite ContractSourcePort used by the tx-detail pipeline so the
@@ -456,19 +484,21 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let session = HomeSession::new(network, gas, chains, chain);
     let (feed, _home_handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
 
+    let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
     let search_factory = {
         let rpc = rpc.clone();
         let etherscan_key = etherscan_key.clone();
         let alchemy_key = key.to_string();
+        let search_cache = search_cache.clone();
         Box::new(move || -> Box<dyn Screen> {
             let block = AlchemyBlockLookup::new(rpc.clone());
             let tx = AlchemyTxLookup::new(rpc.clone());
             let addr = AlchemyAddressLookup::new(rpc.clone());
             let ens = AlchemyEnsResolver::new(rpc.clone());
-            let token = NoopTokenSearch;
+            let token = build_token_search(etherscan_key.as_deref());
             let token_reader = AlchemyTokenReader::new(rpc.clone());
             let (search_feed_rx, sender) = search_feed();
-            std::mem::drop(search_feed::spawn(
+            std::mem::drop(search_feed::spawn_with_cache(
                 chain,
                 block,
                 tx,
@@ -477,6 +507,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                 token,
                 token_reader,
                 sender,
+                Some(search_cache.clone()),
             ));
 
             let detail_factory = {
