@@ -27,6 +27,12 @@ pub enum PricesError {
     #[error("rate limited")]
     Rate,
 
+    /// The Alchemy Prices API answered 404 for the requested token,
+    /// i.e. the provider has no price data for that contract. See
+    /// `plan/15-backlog.md` §3.4 for the fallback contract.
+    #[error("token not indexed by prices provider")]
+    NotIndexed,
+
     #[error("prices API returned {status}: {body}")]
     Api { status: u16, body: String },
 }
@@ -39,6 +45,9 @@ impl PricesError {
             PricesError::Http(err) if err.is_connect() => DomainError::ProviderUnavailable,
             PricesError::Http(err) => DomainError::Internal(err.to_string()),
             PricesError::Decode(err) => DomainError::Internal(err.to_string()),
+            PricesError::NotIndexed => {
+                DomainError::Internal("token not indexed by prices provider".into())
+            }
             PricesError::Api { status, body } if (500..600).contains(&status) => {
                 DomainError::Internal(format!("prices API {status}: {body}"))
             }
@@ -72,16 +81,13 @@ impl PricesClient {
     /// a client with a 10-second timeout pointing at the canonical
     /// Alchemy host.
     pub fn with_api_key(api_key: &str) -> Result<Self, PricesError> {
-        let url = Url::parse(&format!(
-            "https://api.g.alchemy.com/prices/v1/{api_key}/"
-        ))
-        .map_err(|e| PricesError::Api {
-            status: 0,
-            body: format!("invalid base URL: {e}"),
-        })?;
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+        let url = Url::parse(&format!("https://api.g.alchemy.com/prices/v1/{api_key}/")).map_err(
+            |e| PricesError::Api {
+                status: 0,
+                body: format!("invalid base URL: {e}"),
+            },
+        )?;
+        let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
         Ok(Self::new(url, http))
     }
 
@@ -92,19 +98,24 @@ impl PricesClient {
         path: &str,
         body: &B,
     ) -> Result<R, PricesError> {
-        let url = self
-            .base_url
-            .join(path)
-            .map_err(|e| PricesError::Api {
-                status: 0,
-                body: format!("invalid path: {e}"),
-            })?;
+        let url = self.base_url.join(path).map_err(|e| PricesError::Api {
+            status: 0,
+            body: format!("invalid path: {e}"),
+        })?;
 
         let resp = self.http.post(url).json(body).send().await?;
         let status = resp.status();
 
         if status == StatusCode::TOO_MANY_REQUESTS {
             return Err(PricesError::Rate);
+        }
+
+        // plan/15-backlog.md §3.4: a 404 means the Alchemy Prices
+        // API has no data for this contract. Treat it as a first-
+        // class signal rather than a generic Api error so the
+        // adapter can map it to `PriceLookup::Unsupported`.
+        if status == StatusCode::NOT_FOUND {
+            return Err(PricesError::NotIndexed);
         }
 
         let body_text = resp.text().await?;

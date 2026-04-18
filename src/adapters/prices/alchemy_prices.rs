@@ -19,10 +19,15 @@ use super::client::{PricesClient, PricesError};
 use crate::{
     application::ports::PricesPort,
     domain::{
-        Address, Chain, DomainError, PricePoint, PriceSeries, PriceWindow, TokenPrice,
+        Address, Chain, DomainError, PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenPrice,
         UnixTimestamp,
     },
 };
+
+/// Provider label surfaced via `PriceLookup::Unsupported` when the
+/// Alchemy Prices API declines to price a contract. Centralised so
+/// UI and tests agree on the spelling.
+pub const PROVIDER_LABEL: &str = "alchemy-prices";
 
 #[derive(Debug, Clone)]
 pub struct AlchemyPrices {
@@ -111,11 +116,7 @@ struct HistoricalPoint {
 // ---------------------------------------------------------------------------
 
 impl PricesPort for AlchemyPrices {
-    async fn get_single(
-        &self,
-        address: Address,
-        chain: Chain,
-    ) -> Result<Option<TokenPrice>, DomainError> {
+    async fn get_single(&self, address: Address, chain: Chain) -> Result<PriceLookup, DomainError> {
         let req = ByAddressRequest {
             addresses: vec![ByAddressEntry {
                 network: chain.alchemy_subdomain(),
@@ -123,11 +124,25 @@ impl PricesPort for AlchemyPrices {
             }],
         };
 
-        let resp: ByAddressResponse = self
+        // plan/15-backlog.md §3.4: a 404 response is translated by
+        // the client into `PricesError::NotIndexed`; a 200 with an
+        // empty `data`/`prices` array is the other "no data"
+        // shape. Both flow into `PriceLookup::Unsupported`. Any
+        // other failure (timeout, 5xx, decode) stays a
+        // `DomainError`.
+        let resp: ByAddressResponse = match self
             .client
-            .post("tokens/by-address", &req)
+            .post::<_, ByAddressResponse>("tokens/by-address", &req)
             .await
-            .map_err(PricesError::into_domain)?;
+        {
+            Ok(r) => r,
+            Err(PricesError::NotIndexed) => {
+                return Ok(PriceLookup::Unsupported {
+                    provider: PROVIDER_LABEL,
+                });
+            }
+            Err(other) => return Err(other.into_domain()),
+        };
 
         let entry = resp
             .data
@@ -147,7 +162,12 @@ impl PricesPort for AlchemyPrices {
                     as_of,
                 })
             });
-        Ok(entry)
+        Ok(match entry {
+            Some(price) => PriceLookup::Available(price),
+            None => PriceLookup::Unsupported {
+                provider: PROVIDER_LABEL,
+            },
+        })
     }
 
     async fn get_history(
@@ -250,14 +270,10 @@ fn ymdhms_to_epoch(y: i64, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> Option<
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = (y - era * 400) as u32;
-    let doy =
-        (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + (d - 1);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + (d - 1);
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146_097 + doe as i64 - 719_468;
-    let secs = days * 86_400
-        + i64::from(hh) * 3600
-        + i64::from(mm) * 60
-        + i64::from(ss);
+    let secs = days * 86_400 + i64::from(hh) * 3600 + i64::from(mm) * 60 + i64::from(ss);
     Some(secs)
 }
 
