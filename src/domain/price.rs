@@ -120,6 +120,13 @@ pub struct PriceSeries {
 }
 
 impl PriceSeries {
+    /// Upper bound on the number of points the Token Detail chart
+    /// keeps as a rolling live tail. See
+    /// `plan/8-token-detail.md` §13.1 — the screen appends one point
+    /// per streamed `Available` sample and drops the oldest when the
+    /// total exceeds this cap.
+    pub const ROLLING_CAP: usize = 60;
+
     /// Convenience: an empty series for a given window, used by the
     /// UI during the loading state.
     #[must_use]
