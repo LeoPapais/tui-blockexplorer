@@ -13,8 +13,8 @@ use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
-        Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind, StateDiff, Transaction,
-        TxHash, TxStatus, TxType, Wei,
+        CallKind, CallNode, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind,
+        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -250,6 +250,54 @@ async fn overview_loads_before_tracer(world: &mut AppWorld) {
     );
 }
 
+#[given("the tracer exposes a call tree with one staticcall child")]
+async fn tracer_exposes_call_tree(world: &mut AppWorld) {
+    let hash = last_tx_hash(world);
+    let from = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+    let to = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let child_to = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+    let tree = CallNode {
+        kind: CallKind::Call,
+        from,
+        to: Some(to),
+        value: Wei::new(0),
+        input: Vec::new(),
+        output: Vec::new(),
+        gas_used: 52_341,
+        error: None,
+        children: vec![CallNode {
+            kind: CallKind::Staticcall,
+            from: to,
+            to: Some(child_to),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 128,
+            error: None,
+            children: Vec::new(),
+        }],
+    };
+    world.tx_trace_stub.set_call_tree(hash, tree);
+}
+
+#[then(regex = r"^once the transaction is loaded, the Internal tab renders (\d+) call frames$")]
+async fn internal_tab_renders_n_frames(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_tx_detail(s).current().map(|v| &v.call_tree),
+            Some(LoadStatus::Loaded(_)) | Some(LoadStatus::Unsupported)
+        )
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view = screen.current().expect("loaded");
+    match &view.call_tree {
+        LoadStatus::Loaded(root) => assert_eq!(root.frame_count(), expected as usize),
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
 #[given(regex = r"^the tracer reports a balance diff for the sender$")]
 async fn tracer_has_balance_diff(world: &mut AppWorld) {
     let hash = last_tx_hash(world);
@@ -410,7 +458,8 @@ fn spawn_tx_detail_with_full_enrichment(
             let tracer = tracer.clone();
             let mut v_sim = view.clone();
             let mut v_trace = view.clone();
-            let (a, s) = tokio::join!(
+            let mut v_call_tree = view.clone();
+            let (a, s, c) = tokio::join!(
                 async {
                     load_tx_overview::load_asset_changes(&sim, &mut v_sim, chain).await;
                     v_sim.asset_changes
@@ -419,9 +468,14 @@ fn spawn_tx_detail_with_full_enrichment(
                     load_tx_overview::load_state_diff(&tracer, &mut v_trace, chain).await;
                     v_trace.state_diff
                 },
+                async {
+                    load_tx_overview::load_call_tree(&tracer, &mut v_call_tree, chain).await;
+                    v_call_tree.call_tree
+                },
             );
             view.asset_changes = a;
             view.state_diff = s;
+            view.call_tree = c;
             if updates_tx.send(view).is_err() {
                 break;
             }
@@ -702,10 +756,7 @@ async fn once_loaded_press_s(world: &mut AppWorld) {
         crossterm::event::KeyCode::Char('s'),
         crossterm::event::KeyModifiers::NONE,
     );
-    stack
-        .top_mut()
-        .expect("stack non-empty")
-        .handle_key(key);
+    stack.top_mut().expect("stack non-empty").handle_key(key);
 }
 
 #[then(regex = r#"^the tx detail screen has observed (\d+) re-simulation$"#)]

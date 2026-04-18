@@ -64,6 +64,9 @@ fn tab_moves_to_the_next_tab() {
     screen.handle_key(key(KeyCode::Tab));
     assert_eq!(screen.active_tab(), TxTab::Logs);
     screen.handle_key(key(KeyCode::Tab));
+    // Plan 12.6.5: Internal tab ships between Logs and Asset Changes.
+    assert_eq!(screen.active_tab(), TxTab::Internal);
+    screen.handle_key(key(KeyCode::Tab));
     assert_eq!(screen.active_tab(), TxTab::AssetChanges);
 }
 

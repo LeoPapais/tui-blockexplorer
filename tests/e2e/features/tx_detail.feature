@@ -91,6 +91,13 @@ Feature: Transaction detail
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the State Changes tab lists 1 address
 
+  Scenario: Internal tab shows call tree
+    Given the tx reader knows tx "0xca1e016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ca" was successful
+    And the tracer exposes a call tree with one staticcall child
+    When the user opens TxDetail with full enrichment for hash "0xca1e016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ca"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the Internal tab renders 2 call frames
+
   Scenario: Overview renders before trace finishes
     Given the tx reader knows tx "0xfade016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa" was successful
     And the tracer is slow

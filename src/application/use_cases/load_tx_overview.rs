@@ -93,6 +93,7 @@ where
         decoded_logs,
         asset_changes: LoadStatus::Pending,
         state_diff: LoadStatus::Pending,
+        call_tree: LoadStatus::Pending,
     })
 }
 
@@ -116,6 +117,16 @@ pub async fn load_state_diff<T: TxTracePort>(tracer: &T, view: &mut TxView, chai
         Err(err) => LoadStatus::Failed(format!("{err}")),
     };
     view.state_diff = status;
+}
+
+/// Resolve the call tree for a loaded [`TxView`] (plan 12.6.5).
+pub async fn load_call_tree<T: TxTracePort>(tracer: &T, view: &mut TxView, chain: Chain) {
+    let status = match tracer.call_tree(view.tx.hash, chain).await {
+        Ok(tree) => LoadStatus::Loaded(tree),
+        Err(DomainError::FeatureUnavailable) => LoadStatus::Unsupported,
+        Err(err) => LoadStatus::Failed(format!("{err}")),
+    };
+    view.call_tree = status;
 }
 
 /// Walk the decoding cascade for a method selector. Tried in order:

@@ -6,7 +6,7 @@
 //!
 //! See `plan/4-tx-detail.md` section 12.4.2.
 
-use crate::domain::{Address, AssetChange, LogEntry, StateDiff, Transaction};
+use crate::domain::{Address, AssetChange, CallNode, LogEntry, StateDiff, Transaction};
 
 /// Where a decoded signature came from. Surfaced to the UI so users
 /// can tell an ABI-backed decoding from a best-effort directory
@@ -129,6 +129,9 @@ pub struct TxView {
     pub decoded_logs: Vec<DecodedLog>,
     pub asset_changes: LoadStatus<Vec<AssetChange>>,
     pub state_diff: LoadStatus<StateDiff>,
+    /// Call tree for the Internal tab (plan 12.6.5). Populated by
+    /// `TxTracePort::call_tree`.
+    pub call_tree: LoadStatus<CallNode>,
 }
 
 impl TxView {
@@ -148,6 +151,7 @@ impl TxView {
             decoded_logs,
             asset_changes: LoadStatus::default(),
             state_diff: LoadStatus::default(),
+            call_tree: LoadStatus::default(),
         }
     }
 }

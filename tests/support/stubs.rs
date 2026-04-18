@@ -26,8 +26,8 @@ use blockexplorer_tui::{
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
-        BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, Chain, ContractAbi,
-        ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
+        BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode, Chain,
+        ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
         NetworkStatus, NewHead, PendingTx, PendingTxEvent, PendingTxFilter, PriceLookup,
         PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview,
         TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
@@ -1125,12 +1125,17 @@ impl TxSimulationPort for StubTxSimulationPort {
 #[derive(Default)]
 struct TxTraceState {
     by_hash: HashMap<TxHash, StateDiff>,
+    call_trees: HashMap<TxHash, CallNode>,
     unsupported: bool,
     /// Artificial delay injected before answering. See the sibling
     /// comment on `StubTxSimulationPort::set_delay`.
     delay: Option<Duration>,
     /// Count of `state_diff` invocations since construction.
     call_count: usize,
+    /// Count of `call_tree` invocations since construction. Kept
+    /// separate from `call_count` so the Internal-tab tests can
+    /// assert on tree access specifically.
+    call_tree_count: usize,
 }
 
 #[derive(Default, Clone)]
@@ -1148,6 +1153,12 @@ impl StubTxTracePort {
         state.by_hash.insert(hash, diff);
     }
 
+    /// Prime a call tree for the Internal tab tests (plan 12.6.5).
+    pub fn set_call_tree(&self, hash: TxHash, tree: CallNode) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.call_trees.insert(hash, tree);
+    }
+
     pub fn mark_unsupported(&self) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.unsupported = true;
@@ -1161,6 +1172,11 @@ impl StubTxTracePort {
     pub fn call_count(&self) -> usize {
         let state = self.inner.lock().expect("stub lock poisoned");
         state.call_count
+    }
+
+    pub fn call_tree_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_tree_count
     }
 }
 
@@ -1185,6 +1201,28 @@ impl TxTracePort for StubTxTracePort {
             return Err(DomainError::FeatureUnavailable);
         }
         Ok(canned)
+    }
+
+    async fn call_tree(&self, hash: TxHash, _chain: Chain) -> Result<CallNode, DomainError> {
+        let (delay, unsupported, canned) = {
+            let state = self.inner.lock().expect("stub lock poisoned");
+            (
+                state.delay,
+                state.unsupported,
+                state.call_trees.get(&hash).cloned(),
+            )
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        self.inner
+            .lock()
+            .expect("stub lock poisoned")
+            .call_tree_count += 1;
+        if unsupported {
+            return Err(DomainError::FeatureUnavailable);
+        }
+        canned.ok_or(DomainError::FeatureUnavailable)
     }
 }
 

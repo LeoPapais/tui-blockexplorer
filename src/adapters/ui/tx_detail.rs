@@ -42,8 +42,8 @@ use crate::{
     },
     application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
-        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, LogEntry,
-        StateDiff, TxHash, TxStatus, Wei,
+        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, CallNode, Chain, DiffChange,
+        LogEntry, StateDiff, TxHash, TxStatus, Wei,
     },
 };
 
@@ -77,15 +77,17 @@ pub fn tx_feed() -> (TxFeed, TxFeedSender) {
 pub enum TxTab {
     Overview,
     Logs,
+    Internal,
     AssetChanges,
     StateChanges,
     Raw,
 }
 
 impl TxTab {
-    const ALL: [TxTab; 5] = [
+    const ALL: [TxTab; 6] = [
         TxTab::Overview,
         TxTab::Logs,
+        TxTab::Internal,
         TxTab::AssetChanges,
         TxTab::StateChanges,
         TxTab::Raw,
@@ -105,9 +107,10 @@ impl TxTab {
         match self {
             TxTab::Overview => 0,
             TxTab::Logs => 1,
-            TxTab::AssetChanges => 2,
-            TxTab::StateChanges => 3,
-            TxTab::Raw => 4,
+            TxTab::Internal => 2,
+            TxTab::AssetChanges => 3,
+            TxTab::StateChanges => 4,
+            TxTab::Raw => 5,
         }
     }
 
@@ -115,6 +118,7 @@ impl TxTab {
         match self {
             TxTab::Overview => "Overview",
             TxTab::Logs => "Logs",
+            TxTab::Internal => "Internal",
             TxTab::AssetChanges => "Asset Changes",
             TxTab::StateChanges => "State Changes",
             TxTab::Raw => "Raw",
@@ -377,7 +381,7 @@ impl Screen for TxDetailScreen {
         match self.active_tab {
             TxTab::Overview => self.handle_overview_key(key),
             TxTab::Logs => self.handle_logs_key(key),
-            TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
                 self.handle_scroll_key(key);
             }
         }
@@ -553,7 +557,7 @@ impl TxDetailScreen {
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
                 }
             }),
-            TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
                 self.current.as_ref().map(|v| v.tx.hash.to_hex())
             }
         };
@@ -576,6 +580,9 @@ impl TxDetailScreen {
         match self.active_tab {
             TxTab::Overview => self.render_overview(frame, area, view),
             TxTab::Logs => self.render_logs(frame, area, view),
+            TxTab::Internal => {
+                self.render_scrollable(frame, area, "Internal", internal_body(&view.call_tree))
+            }
             TxTab::AssetChanges => self.render_scrollable(
                 frame,
                 area,
@@ -1005,7 +1012,11 @@ fn push_abi_fields(fields: &mut Vec<LogField>, parsed: &EventAbi, raw: &LogEntry
                     let (d, c) = decode_word(Some(param.type_.as_str()), &w);
                     (d, c, format!("0x{}", hex::encode(w)))
                 }
-                None => ("(missing data word)".to_string(), String::new(), String::new()),
+                None => (
+                    "(missing data word)".to_string(),
+                    String::new(),
+                    String::new(),
+                ),
             };
             fields.push(LogField {
                 label: format!("{label_name} ({})", param.type_),
@@ -1324,6 +1335,72 @@ fn short_hex(s: &str) -> String {
     format!("{}...{}", &s[..8], &s[s.len() - 4..])
 }
 
+/// Render the Internal tab body for the given call-tree status.
+/// Mirrors the status-based fallback used by the other tabs.
+/// See `plan/4-tx-detail.md` section 12.6.5.
+fn internal_body(status: &LoadStatus<CallNode>) -> String {
+    match status {
+        LoadStatus::Pending => "Fetching call tree...".to_string(),
+        LoadStatus::Unsupported => {
+            "Call tree is unavailable on this chain / tier (trace + debug namespaces disabled)."
+                .to_string()
+        }
+        LoadStatus::Failed(msg) => format!("Trace failed: {msg}"),
+        LoadStatus::Loaded(root) => render_call_tree(root),
+    }
+}
+
+fn render_call_tree(root: &CallNode) -> String {
+    let mut out = String::new();
+    render_call_node(root, "", true, &mut out);
+    out
+}
+
+/// Emit one line per node using indent + elbow glyphs, then recurse.
+/// `prefix` carries the accumulated prefix for deeper levels;
+/// `is_last` controls which elbow character to use. Plan 12.6.5
+/// deliberately keeps this dead-simple (no Unicode box drawing):
+/// ASCII is enough and keeps copy/paste readable.
+fn render_call_node(node: &CallNode, prefix: &str, is_last: bool, out: &mut String) {
+    let marker = if prefix.is_empty() {
+        ""
+    } else if is_last {
+        "`- "
+    } else {
+        "|- "
+    };
+    let to = match node.to {
+        Some(addr) => short_address(&addr),
+        None => "(create)".to_string(),
+    };
+    let error = node
+        .error
+        .as_ref()
+        .map(|e| format!(" !! {e}"))
+        .unwrap_or_default();
+    out.push_str(&format!(
+        "{prefix}{marker}{kind} -> {to}  gas={gas}{error}\n",
+        kind = node.kind.label(),
+        gas = node.gas_used,
+    ));
+    let child_prefix = if prefix.is_empty() {
+        String::new()
+    } else if is_last {
+        format!("{prefix}   ")
+    } else {
+        format!("{prefix}|  ")
+    };
+    let next_prefix = if prefix.is_empty() {
+        "   ".to_string()
+    } else {
+        child_prefix
+    };
+    for (i, child) in node.children.iter().enumerate() {
+        let last = i + 1 == node.children.len();
+        render_call_node(child, &next_prefix, last, out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1381,5 +1458,44 @@ mod tests {
         word[0] = 1;
         let (display, _) = decode_word(Some("uint256"), &word);
         assert!(display.starts_with("0x"));
+    }
+
+    #[test]
+    fn internal_body_renders_tree_with_ascii_indent() {
+        use crate::domain::{Address, CallKind, CallNode, Wei};
+        let root = CallNode {
+            kind: CallKind::Call,
+            from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 100,
+            error: None,
+            children: vec![CallNode {
+                kind: CallKind::Staticcall,
+                from: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
+                to: Some(Address::from_hex("0x1111111111111111111111111111111111111111").unwrap()),
+                value: Wei::new(0),
+                input: Vec::new(),
+                output: Vec::new(),
+                gas_used: 10,
+                error: None,
+                children: Vec::new(),
+            }],
+        };
+        let body = internal_body(&LoadStatus::Loaded(root));
+        assert!(body.contains("CALL ->"));
+        assert!(body.contains("`- STATICCALL ->"));
+    }
+
+    #[test]
+    fn internal_body_pending_message() {
+        assert!(internal_body(&LoadStatus::Pending).starts_with("Fetching call tree"));
+    }
+
+    #[test]
+    fn internal_body_unsupported_message() {
+        assert!(internal_body(&LoadStatus::Unsupported).contains("unavailable"));
     }
 }

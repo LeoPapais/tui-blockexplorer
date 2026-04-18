@@ -53,4 +53,4 @@ pub use transfers::{
 };
 pub use tx::{LogEntry, Transaction, TxHash, TxStatus, TxSummary, TxType};
 pub use tx_simulation::{AssetChange, AssetChangeKind, AssetKind};
-pub use tx_trace::{AddressStateDiff, DiffChange, StateDiff, StorageSlotDiff};
+pub use tx_trace::{AddressStateDiff, CallKind, CallNode, DiffChange, StateDiff, StorageSlotDiff};
