@@ -1,7 +1,8 @@
-//! Alchemy JSON-RPC HTTP adapter.
+//! Alchemy JSON-RPC HTTP + WebSocket adapter.
 //!
 //! Implements the node-level ports currently required by the Home and
-//! Search screens. WebSocket subscriptions are a future concern.
+//! Search screens, plus the incremental Alchemy WebSocket stream for
+//! the Mempool screen (see `plan/5-mempool.md` §11.3.4).
 //!
 //! See `plan/13-alchemy-adapter.md` and `plan/2-search.md` section 10.2.
 
@@ -16,6 +17,7 @@ pub mod ens;
 pub mod event_log;
 pub mod gas_oracle;
 pub mod network_status;
+pub mod pending_tx_stream;
 pub mod portfolio;
 pub mod proxy_detection;
 pub mod storage;
@@ -37,6 +39,7 @@ pub use ens::AlchemyEnsResolver;
 pub use event_log::AlchemyEventLog;
 pub use gas_oracle::AlchemyGasOracleAdapter;
 pub use network_status::AlchemyNetworkStatusAdapter;
+pub use pending_tx_stream::AlchemyPendingTxStream;
 pub use portfolio::AlchemyPortfolio;
 pub use proxy_detection::AlchemyProxyDetector;
 pub use storage::AlchemyStorage;

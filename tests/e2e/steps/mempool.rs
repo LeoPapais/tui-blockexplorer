@@ -308,10 +308,7 @@ async fn port_recorded_filter(world: &mut AppWorld, addr_hex: String) {
     let history = tokio::time::timeout(Duration::from_millis(200), async {
         loop {
             let history = world.pending_stub.filter_history();
-            if history
-                .iter()
-                .any(|(_, f)| f.from == Some(expected))
-            {
+            if history.iter().any(|(_, f)| f.from == Some(expected)) {
                 break history;
             }
             tokio::task::yield_now().await;
@@ -320,8 +317,6 @@ async fn port_recorded_filter(world: &mut AppWorld, addr_hex: String) {
     .await
     .expect("filter update reached the port within 200ms");
 
-    let last = history
-        .last()
-        .expect("at least one recorded filter update");
+    let last = history.last().expect("at least one recorded filter update");
     assert_eq!(last.1.from, Some(expected));
 }

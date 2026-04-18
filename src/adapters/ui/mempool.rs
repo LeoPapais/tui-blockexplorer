@@ -12,9 +12,7 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-use tokio::sync::mpsc::{
-    UnboundedReceiver, UnboundedSender, error::TryRecvError,
-};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},

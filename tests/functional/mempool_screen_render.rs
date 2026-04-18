@@ -105,7 +105,9 @@ fn paused_and_reconnecting_badges_coexist() {
     let mut screen = MempoolScreen::new(events_rx, PendingTxFilter::default(), open_tx_panic())
         .with_status_feed(status_rx);
 
-    events_tx.send(PendingTxEvent::Added(sample_pending())).unwrap();
+    events_tx
+        .send(PendingTxEvent::Added(sample_pending()))
+        .unwrap();
     screen.tick();
 
     screen.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));

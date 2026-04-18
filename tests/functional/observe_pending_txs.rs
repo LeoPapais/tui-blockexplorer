@@ -111,20 +111,12 @@ async fn update_filter_is_recorded_in_order() {
     observe_pending_txs::update_filter(&port, Chain::Ethereum, PendingTxFilter::default())
         .await
         .unwrap();
-    observe_pending_txs::update_filter(
-        &port,
-        Chain::Ethereum,
-        PendingTxFilter { from: Some(a) },
-    )
-    .await
-    .unwrap();
-    observe_pending_txs::update_filter(
-        &port,
-        Chain::Polygon,
-        PendingTxFilter { from: Some(b) },
-    )
-    .await
-    .unwrap();
+    observe_pending_txs::update_filter(&port, Chain::Ethereum, PendingTxFilter { from: Some(a) })
+        .await
+        .unwrap();
+    observe_pending_txs::update_filter(&port, Chain::Polygon, PendingTxFilter { from: Some(b) })
+        .await
+        .unwrap();
 
     let history = port.filter_history();
     assert_eq!(history.len(), 3);

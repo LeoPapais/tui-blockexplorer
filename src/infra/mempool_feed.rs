@@ -19,11 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    application::{
-        ConnectionStatus,
-        ports::PendingTxStreamPort,
-        use_cases::observe_pending_txs,
-    },
+    application::{ConnectionStatus, ports::PendingTxStreamPort, use_cases::observe_pending_txs},
     domain::{Chain, DomainError, PendingTxEvent, PendingTxFilter},
 };
 
