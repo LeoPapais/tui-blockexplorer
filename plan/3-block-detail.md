@@ -303,9 +303,15 @@ pub enum TxCategory {
 
 Exposed through a pure classifier
 `TxCategory::classify(to: Option<Address>, input: &[u8], value: Wei)`
-with exhaustive unit tests in `src/domain/block.rs`. The
-Transactions tab renders a short badge (`[T]` / `[I]` / `[D]`) next
-to each row.
+with exhaustive unit tests in `src/domain/block.rs`. `TxCategory`
+also provides `badge()` (`"T"` / `"I"` / `"D"`) and `label()` so
+future UI renderers do not re-derive the strings.
+
+The category travels through the pipeline as a field of
+`BlockTxReceipt` (see §12.3). Rendering the badge in the
+Transactions tab is intentionally gated on the BlockFeed carrying
+`BlockTxPage` updates — see §13 "UI wiring for receipts and
+labels".
 
 ### 12.3 `BlockReceiptsPort` and `load_block_transactions`
 
@@ -343,9 +349,10 @@ Use case:
   switching blocks cancels an in-flight page load.
 - Never issues network calls when the offset is beyond the tail.
 
-BDD: `tests/e2e/features/block_detail.feature` — new
-`Scenario: Paginate transactions tab` drives the Transactions tab
-past the first page and asserts that categorisation renders.
+BDD: the pagination + badge rendering scenario is deferred until
+the BlockFeed refactor described in §13 so the UI can observe
+`BlockTxPage` updates. The domain / adapter / use-case layers are
+covered end-to-end by the functional tests below.
 
 Functional tests
 (`tests/functional/load_block_transactions.rs`):
@@ -412,10 +419,12 @@ Use case: `load_block_overview` is reshaped to return a
 `BlockOverview { block, miner_label, signer_label }` view-model.
 Missing labels stay `None`; label-port errors are non-fatal.
 
-BDD:
-`tests/e2e/features/block_detail.feature` —
-`Scenario: Polygon block shows labelled signer` replaces the
-existing §3.5 scenario with one that also asserts on the label.
+BDD: the labelled-signer scenario lands with the BlockFeed
+refactor tracked in §13. The existing
+`Scenario: Polygon block shows extraData signer` stays green (raw
+signer row) in the meantime; the domain / adapter / use-case
+layers of the label lookup are covered by the functional tests
+below.
 
 Functional tests
 (`tests/functional/load_block_overview.rs` — extend) +
@@ -470,10 +479,24 @@ Fixtures:
 
 ## 13. Still deferred
 
+- **UI wiring for receipts and labels.** Domain types, ports,
+  adapters and use cases for `BlockReceiptsPort` +
+  `load_block_transactions` (§12.3) and `LabelPort` +
+  `run_with_labels` (§12.4) have all shipped and are exercised
+  end-to-end by the functional tests. Rendering the category
+  badge in the Transactions tab and the miner / signer label in
+  the Overview tab requires refactoring `BlockFeed` so the
+  resolver task emits a richer `BlockOverviewUpdate { block,
+  miner_label, signer_label, tx_page }` envelope. Promoting this
+  work mechanically unblocks the
+  `Scenario: Paginate transactions tab` and
+  `Scenario: Polygon block shows labelled signer` BDD slots that
+  §12.3 and §12.4 reserved.
 - Beacon blob sidecars (`/v1/beacon/blob_sidecars/{id}`). Separate
   host, different credential (beacon node / Alchemy Beacon API),
-  non-trivial retry semantics. The "Blobs" half of the tab renders
-  a clearly-marked placeholder until a `BeaconApiPort` lands.
+  non-trivial retry semantics. The Blobs half of the
+  Blobs / Withdrawals tab renders a clearly-marked placeholder
+  until a `BeaconApiPort` lands.
 - `eth_blobBaseFee` on the block header. Same tab as sidecars; no
   adapter wired yet.
 - Reconstructing the Bor seal hash inside `AlchemyBlockReader` so
