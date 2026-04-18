@@ -29,24 +29,23 @@ use crate::{
         etherscan::{EtherscanClient, EtherscanContractSource},
         prices::{AlchemyPrices, PricesClient},
         rpc::{
-            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
-            AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog,
-            AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyPortfolio,
-            AlchemyProxyDetector, AlchemySimulation, AlchemyStorage, AlchemyTokenReader,
-            AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, RpcClient,
+            AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
+            AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
+            AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector, AlchemySimulation,
+            AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
+            AlchemyTxTracer, RpcClient,
         },
-        signatures::SourcifySignatureDirectory,
+        signatures::{
+            CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
+        },
         ui::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
             ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen, TxDetailScreen,
-            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed,
-            tx_feed,
+            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed, tx_feed,
         },
     },
-    application::{
-        ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort,
-    },
+    application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
     domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
 };
 use mempool_feed::EmptyPendingTxStream;
@@ -75,9 +74,7 @@ fn live_tx_detail_screen(
         .map(TxContractSource::Etherscan)
         .unwrap_or(TxContractSource::Noop);
 
-    let signatures = SourcifySignatureDirectory::with_default_http()
-        .map(TxSignatureDir::Sourcify)
-        .unwrap_or(TxSignatureDir::Noop);
+    let signatures = build_signature_directory();
 
     std::mem::drop(tx_feed::spawn_full(
         chain,
@@ -127,12 +124,7 @@ fn live_address_detail_screen(
     let rpc_for_tx = rpc.clone();
     let etherscan_for_tx = etherscan_key.clone();
     let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
-        live_tx_detail_screen(
-            chain,
-            hash,
-            rpc_for_tx.clone(),
-            etherscan_for_tx.clone(),
-        )
+        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
     });
 
     let rpc_for_token = rpc.clone();
@@ -235,15 +227,9 @@ fn live_token_detail_screen(
 
     let rpc_for_tx = rpc;
     let etherscan_for_tx = etherscan_key;
-    let open_tx: crate::adapters::ui::TokenOpenTxFactory =
-        Box::new(move |hash| {
-            live_tx_detail_screen(
-                chain,
-                hash,
-                rpc_for_tx.clone(),
-                etherscan_for_tx.clone(),
-            )
-        });
+    let open_tx: crate::adapters::ui::TokenOpenTxFactory = Box::new(move |hash| {
+        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
+    });
 
     Box::new(TokenDetailScreen::with_open_tx(
         chain,
@@ -344,12 +330,17 @@ impl crate::application::ports::ContractSourcePort for TxContractSource {
     }
 }
 
-/// Same idea for the signature directory. When the Sourcify HTTP
-/// client cannot be built we fall back to a Noop and the UI shows the
-/// raw selector / topic0, but the heavier tabs still populate.
+/// Same idea for the signature directory: when a concrete adapter
+/// cannot be built (offline CI, unexpected URL parse failure, ...) we
+/// fall back to a Noop and the UI shows the raw selector / topic0,
+/// but the heavier tabs still populate.
 #[derive(Clone)]
 enum TxSignatureDir {
-    Sourcify(SourcifySignatureDirectory),
+    /// openchain (primary) + Samczsun (fallback) wired behind a
+    /// composite per `plan/15-backlog.md` section 3.2.
+    Composite(CompositeSignatureDirectory<HttpSignatureDirectory, SamczsunSignatureDirectory>),
+    /// openchain only, when the Samczsun adapter could not be built.
+    Openchain(HttpSignatureDirectory),
     Noop,
 }
 
@@ -357,9 +348,10 @@ impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
     async fn lookup_selector(
         &self,
         selector: [u8; 4],
-    ) -> Result<Option<String>, crate::domain::DomainError> {
+    ) -> Result<Option<crate::application::ports::SignatureHit>, crate::domain::DomainError> {
         match self {
-            TxSignatureDir::Sourcify(inner) => inner.lookup_selector(selector).await,
+            TxSignatureDir::Composite(inner) => inner.lookup_selector(selector).await,
+            TxSignatureDir::Openchain(inner) => inner.lookup_selector(selector).await,
             TxSignatureDir::Noop => Ok(None),
         }
     }
@@ -367,15 +359,31 @@ impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
     async fn lookup_event_topic(
         &self,
         topic: [u8; 32],
-    ) -> Result<Option<String>, crate::domain::DomainError> {
+    ) -> Result<Option<crate::application::ports::SignatureHit>, crate::domain::DomainError> {
         match self {
-            TxSignatureDir::Sourcify(inner) => inner.lookup_event_topic(topic).await,
+            TxSignatureDir::Composite(inner) => inner.lookup_event_topic(topic).await,
+            TxSignatureDir::Openchain(inner) => inner.lookup_event_topic(topic).await,
             TxSignatureDir::Noop => Ok(None),
         }
     }
 }
 
-pub use config::{AppConfig, ApiCredentials, ConfigLoader};
+/// Wire the fallback chain openchain → Samczsun, degrading to a
+/// Noop when neither client can be built.
+fn build_signature_directory() -> TxSignatureDir {
+    let openchain = HttpSignatureDirectory::openchain_with_default_http().ok();
+    let samczsun = SamczsunSignatureDirectory::with_default_http().ok();
+
+    match (openchain, samczsun) {
+        (Some(primary), Some(fallback)) => {
+            TxSignatureDir::Composite(CompositeSignatureDirectory::new(primary, fallback))
+        }
+        (Some(primary), None) => TxSignatureDir::Openchain(primary),
+        (None, _) => TxSignatureDir::Noop,
+    }
+}
+
+pub use config::{ApiCredentials, AppConfig, ConfigLoader};
 
 /// Hint printed when the binary is invoked without credentials and
 /// without `--demo`.
@@ -492,12 +500,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                                 open_tx,
                             ))
                         }
-                        ResolvedEntity::Tx { hash, .. } => live_tx_detail_screen(
-                            chain,
-                            hash,
-                            rpc.clone(),
-                            etherscan_key.clone(),
-                        ),
+                        ResolvedEntity::Tx { hash, .. } => {
+                            live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
+                        }
                         ResolvedEntity::Address { address, .. } => {
                             // Always route to AddressDetail: the screen
                             // itself detects bytecode and surfaces a
@@ -561,11 +566,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
             let open_tx = Box::new(move |hash| {
                 live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
             });
-            Box::new(MempoolScreen::new(
-                rx,
-                PendingTxFilter::default(),
-                open_tx,
-            ))
+            Box::new(MempoolScreen::new(rx, PendingTxFilter::default(), open_tx))
         })
     };
 
@@ -588,13 +589,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         let snapshot = AppConfigSnapshot {
             chain,
             alchemy_key_present: config.has_alchemy_key(),
-            config_path_hint: Some(
-                "~/.config/blockexplorer-tui/config.toml (via XDG)".to_string(),
-            ),
+            config_path_hint: Some("~/.config/blockexplorer-tui/config.toml (via XDG)".to_string()),
         };
-        Box::new(move || -> Box<dyn Screen> {
-            Box::new(SettingsScreen::new(snapshot.clone()))
-        })
+        Box::new(move || -> Box<dyn Screen> { Box::new(SettingsScreen::new(snapshot.clone())) })
     };
 
     let mut stack = ScreenStack::new();
