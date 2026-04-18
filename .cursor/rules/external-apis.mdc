@@ -13,11 +13,15 @@ There is no in-house indexer. All on-chain data comes from external providers.
 - **Alchemy** (primary): Node API (JSON-RPC + WebSocket), Data API (Transfers,
   Portfolio, Prices, Token, NFT), Simulation API, Beacon API, Trace / Debug
   namespaces. Adapter: `src/adapters/rpc/`.
-- **Etherscan V2** (source + labels): `getsourcecode`, `getabi`, label lookup.
-  Multichain endpoint. Adapter: `src/adapters/etherscan/`.
-- **openchain.xyz** (signatures): primary 4byte / event topic resolver.
-- **Samczsun signature DB** (signatures): fallback for openchain misses.
-  Adapter: `src/adapters/signatures/` implements both.
+- **Etherscan V2** (source + labels): unified multichain REST at
+  `https://api.etherscan.io/v2/api` with the chain id passed as the `chainid`
+  query parameter. Implements `ContractSourcePort` via
+  `module=contract&action=getabi`. Adapter: `src/adapters/etherscan/`.
+- **Sourcify 4byte** (signatures): function selector and event topic
+  resolver at `https://api.4byte.sourcify.dev`. Speaks the same
+  4byte.directory-style API as openchain.xyz; we picked Sourcify's mirror
+  because the docs it exposes are directly linked from the project notes.
+  Samczsun fallback stays deferred. Adapter: `src/adapters/signatures/`.
 - **ENS** via `eth_call` on the ENS Registry using Alchemy RPC. No dedicated
   SaaS. Adapter: `src/adapters/ens/`.
 

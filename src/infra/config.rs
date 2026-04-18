@@ -13,6 +13,7 @@ use crate::domain::{Chain, DomainError};
 
 /// Names of env vars consulted in order of precedence.
 pub const ENV_ALCHEMY_KEY: &str = "ALCHEMY_API_KEY";
+pub const ENV_ETHERSCAN_KEY: &str = "ETHERSCAN_API_KEY";
 pub const ENV_CHAIN: &str = "BLOCKEXPLORER_TUI_CHAIN";
 
 /// Function type used by [`ConfigLoader`] to read the environment.
@@ -30,6 +31,7 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ApiCredentials {
     pub alchemy: Option<String>,
+    pub etherscan: Option<String>,
 }
 
 impl AppConfig {
@@ -87,10 +89,13 @@ impl ConfigLoader {
         let file = self.load_file()?;
 
         let env_alchemy = (self.env)(ENV_ALCHEMY_KEY);
+        let env_etherscan = (self.env)(ENV_ETHERSCAN_KEY);
         let env_chain = (self.env)(ENV_CHAIN);
 
         let alchemy = env_alchemy
             .or_else(|| file.credentials.as_ref().and_then(|c| c.alchemy.clone()));
+        let etherscan = env_etherscan
+            .or_else(|| file.credentials.as_ref().and_then(|c| c.etherscan.clone()));
 
         let chain = match env_chain.or(file.defaults.and_then(|d| d.chain)) {
             Some(slug) => Chain::from_slug(&slug)?,
@@ -98,7 +103,7 @@ impl ConfigLoader {
         };
 
         Ok(AppConfig {
-            credentials: ApiCredentials { alchemy },
+            credentials: ApiCredentials { alchemy, etherscan },
             chain,
         })
     }
@@ -128,6 +133,7 @@ struct ConfigFile {
 #[derive(Debug, Default, Deserialize)]
 struct CredentialsFile {
     alchemy: Option<String>,
+    etherscan: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

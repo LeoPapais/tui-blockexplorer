@@ -75,3 +75,9 @@ mod load_token_overview;
 
 #[path = "functional/alchemy_token_reader.rs"]
 mod alchemy_token_reader;
+
+#[path = "functional/etherscan_contract_source.rs"]
+mod etherscan_contract_source;
+
+#[path = "functional/sourcify_signatures.rs"]
+mod sourcify_signatures;

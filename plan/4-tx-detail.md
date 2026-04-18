@@ -1,9 +1,10 @@
 # 4 — Transaction Detail
 
-Status: **done** (MVP scope) — Overview + Raw tabs are live and the
-two BDD scenarios in `tests/e2e/features/tx_detail.feature` are green.
-Logs / Internal / State Changes / Asset Changes and ABI decoding
-remain deferred (see section 12.4).
+Status: **expanded** — MVP Overview + Raw tabs shipped earlier and
+this phase extends the screen with ABI-based method decoding, the
+Logs / Asset-Changes / State-Changes tabs and pending-tx support.
+The Internal-calls tab (Trace namespace) stays explicitly deferred;
+see section 12.5.
 
 The most feature-dense screen. Six tabs: Overview, Logs, Internal, State Changes,
 Asset Changes, Raw. Heavy reliance on Alchemy's Trace, Debug and Simulation APIs,
@@ -332,15 +333,97 @@ Acceptance: two new BDD scenarios pass, every previous test stays
 green, plan status flipped to `done` (Overview MVP) in
 `plan/README.md`, clippy clean.
 
-### 12.4 Deferred (future slices under this plan)
+### 12.4 Expanded slices (delivered in this iteration)
 
-Each becomes its own slice, roughly in this order:
+Three commits unlock the bulk of the deferred functionality. The
+Internal-calls tab stays out of scope and is tracked in section 12.5.
 
-1. ABI decoding of the Overview method row: requires
-   `ContractSourcePort` (Etherscan V2) and the signature-directory
-   adapter (openchain + Samczsun).
-2. Logs tab.
-3. Internal-calls tab (Trace namespace + Debug fallback).
-4. Asset Changes tab (Alchemy Simulation).
-5. State Changes tab.
-6. Pending-tx support + `s` re-simulate key.
+#### 12.4.1 Commit 1 — Signature directory + Etherscan source
+
+New outbound ports and HTTP adapters:
+
+- `ContractSourcePort::get_abi(address, chain) -> Option<ContractAbi>`
+  backed by the Etherscan V2 `module=contract&action=getabi` endpoint
+  (`https://api.etherscan.io/v2/api?chainid={id}&...`). Supports every
+  EVM chain via the `chainid` query param, per the V2 docs.
+- `SignatureDirectoryPort::lookup_selector(bytes4) -> Option<String>`
+  and `lookup_event_topic(bytes32) -> Option<String>`, backed by the
+  Sourcify 4byte service at `https://api.4byte.sourcify.dev`.
+  `openchain.xyz` was the original plan but the user picked Sourcify's
+  mirror, which exposes the same 4byte.directory-style schema.
+
+Tests live under `tests/functional/etherscan_contract_source.rs` and
+`tests/functional/sourcify_signatures.rs` using wiremock, plus stubs
+(`StubContractSourcePort`, `StubSignatureDirectoryPort`) driving
+`tests/functional/{decode_selector,decode_event_topic}.rs`.
+
+Config gains `etherscan: Option<String>` under `ApiCredentials`,
+sourced from `ETHERSCAN_API_KEY` or the TOML file. When absent, the
+Etherscan adapter short-circuits to `Ok(None)` so the rest of the
+stack degrades gracefully.
+
+#### 12.4.2 Commit 2 — Pending tx + Logs + ABI method decoding
+
+Domain changes on `Transaction`:
+
+- `block_number`, `block_hash`, `tx_index`, `gas_used` become
+  `Option<...>` so pending txs (null receipt, null blockNumber) fit
+  the same entity without sentinels.
+- New variant `TxStatus::Pending` shipped alongside
+  `Success | Failed { reason }`.
+- New field `logs: Vec<LogEntry>` mirroring the raw receipt logs.
+
+New types `DecodedMethod { signature, source }`, `DecodedLog
+{ signature, source, topics, data }`, and a composite `TxView`
+returned by `load_tx_overview`: it stays thin and just enriches the
+existing `Transaction` with the decoded method and the decoded logs
+(best-effort: ABI first, signature directory fallback, raw selector /
+topic0 last).
+
+`AlchemyTxReader` is extended to:
+- capture receipt logs into `Transaction.logs`,
+- handle a null `blockNumber` / null receipt by marking the tx as
+  `TxStatus::Pending` and leaving block-level fields at `None`.
+
+UI: `TxDetailScreen` gains a **Logs** tab rendered from
+`decoded_logs`, and the Overview `Method` line now shows the
+decoded signature + source tag (`from ABI`, `from sigdb`, or
+`unknown`). Tab cycle becomes `Overview → Logs → Raw` (`Asset
+Changes` and `State Changes` land in commit 3).
+
+BDD additions in `tests/e2e/features/tx_detail.feature`:
+- `Overview decodes the method via ABI`.
+- `Logs tab shows decoded event signatures`.
+- `Pending transaction is handled`.
+
+#### 12.4.3 Commit 3 — Asset Changes + State Changes
+
+New ports and Alchemy adapters:
+
+- `TxSimulationPort::asset_changes(tx_input, chain)` using
+  `alchemy_simulateAssetChanges`.
+- `TxTracePort::state_diff(tx_hash, chain)` using
+  `trace_replayTransaction` with `["stateDiff"]`.
+
+Both inject results into the enriched `TxView`; the UI adds two tabs
+(`Asset Changes`, `State Changes`), each with an "unsupported on this
+chain" fallback when the underlying call returns
+`DomainError::FeatureUnavailable`.
+
+BDD additions:
+- `Asset Changes tab renders decoded deltas`.
+- `State Changes tab renders storage and balance diffs`.
+- `State Changes degrades gracefully on a chain without trace_`.
+
+### 12.5 Still deferred
+
+1. Internal-calls tab (Trace / Debug namespace): needs a recursive
+   call-tree domain type + collapsible outline widget; worth a
+   dedicated plan entry when prioritised.
+2. Argument-level ABI decoding of calldata on the Overview tab
+   (currently we show the signature text only; showing the decoded
+   argument values requires a proper ABI decoder — shipping a
+   minimal subset later).
+3. `s` re-simulate key on pending txs: the pending screen renders
+   correctly but the key is bound to a no-op until the simulation
+   path is extended to re-run against the latest block on demand.
