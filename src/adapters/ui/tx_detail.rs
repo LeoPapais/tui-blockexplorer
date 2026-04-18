@@ -152,6 +152,10 @@ struct LogField {
 pub struct TxDetailScreen {
     #[allow(dead_code)]
     chain: Chain,
+    /// Hash originally requested. Kept around so `s` can re-send the
+    /// same request on the feed when the user asks to re-simulate a
+    /// pending tx (plan 12.6.3).
+    hash: TxHash,
     current: Option<TxView>,
     feed: TxFeed,
     active_tab: TxTab,
@@ -173,6 +177,10 @@ pub struct TxDetailScreen {
     /// runtime wires a clipboard adapter on top; tests inspect the
     /// field directly.
     last_copied_value: Option<String>,
+    /// Count of `s` re-simulate hits delivered to the feed. Tests
+    /// inspect it; the UI itself never surfaces the value. See
+    /// `plan/4-tx-detail.md` section 12.6.3.
+    resimulate_count: u32,
 }
 
 impl TxDetailScreen {
@@ -181,6 +189,7 @@ impl TxDetailScreen {
         let _ = feed.input_tx.send(hash);
         Self {
             chain,
+            hash,
             current: None,
             feed,
             active_tab: TxTab::Overview,
@@ -190,6 +199,7 @@ impl TxDetailScreen {
             logs_focus: LogsFocus::List,
             scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
+            resimulate_count: 0,
         }
     }
 
@@ -231,6 +241,16 @@ impl TxDetailScreen {
     #[must_use]
     pub fn last_copied_value(&self) -> Option<String> {
         self.last_copied_value.clone()
+    }
+
+    /// Number of successful `s` re-simulate keystrokes handled since
+    /// construction. Mined txs ignore `s`; pending txs increment the
+    /// counter and re-send the tx hash on the feed.
+    ///
+    /// See `plan/4-tx-detail.md` section 12.6.3.
+    #[must_use]
+    pub fn resimulate_count(&self) -> u32 {
+        self.resimulate_count
     }
 
     fn drain_feed(&mut self) {
@@ -343,6 +363,14 @@ impl Screen for TxDetailScreen {
         // `y` copies the selected row / field, regardless of tab.
         if key.code == KeyCode::Char('y') {
             self.copy_selected();
+            return Command::None;
+        }
+
+        // `s` re-simulates when the tx is still pending (plan 12.6.3).
+        // Mined txs have no meaningful re-simulate semantics, so the
+        // key is a no-op for them.
+        if key.code == KeyCode::Char('s') {
+            self.resimulate();
             return Command::None;
         }
 
@@ -484,6 +512,31 @@ impl TxDetailScreen {
                 });
             }
             _ => {}
+        }
+    }
+
+    /// Re-send the current tx hash on the feed when it is pending.
+    /// The background task re-runs the full pipeline, which refreshes
+    /// the Asset Changes / State Changes tabs against the latest
+    /// block. No-op for mined txs. See plan 12.6.3.
+    fn resimulate(&mut self) {
+        let is_pending = self
+            .current
+            .as_ref()
+            .map(|v| v.tx.is_pending())
+            .unwrap_or(false);
+        if !is_pending {
+            return;
+        }
+        if self.feed.input_tx.send(self.hash).is_ok() {
+            self.resimulate_count = self.resimulate_count.saturating_add(1);
+            // Reset enrichment status to `Pending` so the tabs show
+            // the spinner text while the fresh simulation is on its
+            // way. The next channel drain will overwrite both.
+            if let Some(view) = self.current.as_mut() {
+                view.asset_changes = LoadStatus::Pending;
+                view.state_diff = LoadStatus::Pending;
+            }
         }
     }
 

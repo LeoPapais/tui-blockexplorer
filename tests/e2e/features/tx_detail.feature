@@ -28,6 +28,12 @@ Feature: Transaction detail
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the Overview tab shows status "pending"
 
+  Scenario: Pressing s on a pending tx refetches asset changes
+    Given the tx reader knows tx "0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a" is pending
+    When the user opens TxDetail for hash "0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a"
+    And once the transaction is loaded, the user presses "s"
+    Then the tx detail screen has observed 1 re-simulation
+
   Scenario: Overview decodes the method via ABI
     Given the tx reader knows tx "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa" was successful
     And the contract source knows the ABI of "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"

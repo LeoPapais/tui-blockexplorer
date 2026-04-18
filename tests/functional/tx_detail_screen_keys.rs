@@ -1,8 +1,8 @@
 //! Key-handling tests for [`TxDetailScreen`].
 //!
 //! Covers plan/4-tx-detail.md sections 13.1 (Overview row cursor +
-//! copy), 13.3 (bounded scrolling) and 13.5 (tab nav with
-//! `Shift+Tab` / arrow keys).
+//! copy), 13.3 (bounded scrolling), 13.5 (tab nav with `Shift+Tab`
+//! / arrow keys) and 12.6.3 (`s` re-simulate on pending txs).
 
 use blockexplorer_tui::adapters::ui::{Screen, TxDetailScreen, TxTab, tx_feed};
 use blockexplorer_tui::application::TxView;
@@ -121,4 +121,56 @@ fn y_on_fee_paid_row_copies_raw_wei_amount() {
         screen.last_copied_value().as_deref(),
         Some(fee_wei.to_string().as_str())
     );
+}
+
+/// `s` on a mined tx is a no-op (plan 12.6.3).
+#[test]
+fn s_is_noop_when_tx_is_mined() {
+    let mut screen = loaded_screen(sample_tx());
+    assert_eq!(screen.resimulate_count(), 0);
+    screen.handle_key(key(KeyCode::Char('s')));
+    assert_eq!(screen.resimulate_count(), 0);
+}
+
+/// `s` on a pending tx resends the hash on the feed and resets the
+/// Asset Changes / State Changes enrichment statuses to `Pending`
+/// so the tabs render their loading text until the background task
+/// replies.
+#[test]
+fn s_on_pending_tx_triggers_resimulate() {
+    use blockexplorer_tui::application::{LoadStatus, TxView};
+    let mut tx = sample_tx();
+    tx.status = TxStatus::Pending;
+    tx.block_number = None;
+    tx.block_hash = None;
+    tx.tx_index = None;
+    tx.gas_used = None;
+
+    let (feed, sender) = tx_feed();
+    let blockexplorer_tui::adapters::ui::TxFeedSender {
+        updates_tx,
+        mut input_rx,
+    } = sender;
+
+    let mut screen = TxDetailScreen::loading(tx.chain, tx.hash, feed);
+    // Initial load request.
+    assert_eq!(input_rx.try_recv().ok(), Some(tx.hash));
+
+    // Deliver a pending TxView with loaded enrichment slots so we
+    // can assert the `s` binding flips them back to `Pending`.
+    let mut view = TxView::bare(tx.clone());
+    view.asset_changes = LoadStatus::Loaded(Vec::new());
+    updates_tx.send(view).unwrap();
+    screen.tick();
+
+    assert_eq!(screen.resimulate_count(), 0);
+    screen.handle_key(key(KeyCode::Char('s')));
+    assert_eq!(screen.resimulate_count(), 1);
+
+    // The resimulate binding resends the hash on the input channel.
+    assert_eq!(input_rx.try_recv().ok(), Some(tx.hash));
+    // And resets enrichment statuses.
+    let current = screen.current().expect("view loaded");
+    assert!(matches!(current.asset_changes, LoadStatus::Pending));
+    assert!(matches!(current.state_diff, LoadStatus::Pending));
 }

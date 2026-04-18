@@ -638,6 +638,29 @@ fn spawn_tx_detail_with_composite(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
+/// Wait for the view to load, then press `s`. Mirrors the helper
+/// pattern used by the Overview / Logs tab steps above.
+#[when(regex = r#"^once the transaction is loaded, the user presses "s"$"#)]
+async fn once_loaded_press_s(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current_tx_detail(s).current().is_some()).await;
+    let key = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('s'),
+        crossterm::event::KeyModifiers::NONE,
+    );
+    stack
+        .top_mut()
+        .expect("stack non-empty")
+        .handle_key(key);
+}
+
+#[then(regex = r#"^the tx detail screen has observed (\d+) re-simulation$"#)]
+async fn tx_detail_resimulate_count(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_ref().expect("stack");
+    let screen = current_tx_detail(stack);
+    assert_eq!(screen.resimulate_count(), expected);
+}
+
 #[then(regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#)]
 async fn logs_tab_decodes(world: &mut AppWorld, expected: String) {
     let stack = world.stack.as_mut().expect("stack");
