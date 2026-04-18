@@ -7,11 +7,13 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{Command, MempoolScreen, ScreenStack},
-    application::use_cases::observe_pending_txs::run as subscribe,
+    application::{ConnectionStatus, use_cases::observe_pending_txs::run as subscribe},
     domain::{Address, Chain, PendingTx, PendingTxFilter, TxHash, Wei},
+    infra::mempool_feed::spawn_filter_drain,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
 use crate::{steps::search::build_stack, world::AppWorld};
 
@@ -87,17 +89,22 @@ async fn open_mempool(world: &mut AppWorld) {
         .await
         .expect("stub always subscribes");
 
+    // Mirror the production wiring: the screen broadcasts filter
+    // changes on a control channel; the infra task calls
+    // `PendingTxStreamPort::update_filter`. This exercises §11.3.2
+    // end-to-end — `set_filter` in BDD reaches the stub's history.
+    let (filter_control, _drain_handle) = spawn_filter_drain(port.clone(), chain);
+
     // The open-tx factory is irrelevant for the current scenarios;
     // use a placeholder that panics if Enter is pressed unexpectedly.
     let open_tx: Box<dyn Fn(TxHash) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> + Send> =
         Box::new(|_| panic!("tx navigation not exercised by these scenarios"));
 
     let stack = world.stack.as_mut().unwrap();
-    stack.push(Box::new(MempoolScreen::new(
-        rx,
-        PendingTxFilter::default(),
-        open_tx,
-    )));
+    stack.push(Box::new(
+        MempoolScreen::new(rx, PendingTxFilter::default(), open_tx)
+            .with_filter_control(filter_control),
+    ));
 }
 
 fn sample_pending(hash_hex: &str, from_hex: &str) -> PendingTx {
@@ -199,6 +206,19 @@ async fn stub_emits_removed(world: &mut AppWorld, hash_hex: String) {
     tick_until(stack, |s| current_mempool(s).items().is_empty()).await;
 }
 
+#[when("the pending-tx stream drops")]
+async fn stream_drops(world: &mut AppWorld) {
+    world.pending_stub.disconnect_all();
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_mempool(s).stream_state(),
+            ConnectionStatus::Disconnected { .. }
+        )
+    })
+    .await;
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
@@ -245,4 +265,63 @@ async fn list_has_three(world: &mut AppWorld) {
 async fn list_is_empty(world: &mut AppWorld) {
     let stack = world.stack.as_ref().expect("stack");
     assert!(current_mempool(stack).items().is_empty());
+}
+
+#[then("the mempool filter is empty")]
+async fn filter_is_empty(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    assert_eq!(current_mempool(stack).filter(), &PendingTxFilter::default());
+}
+
+#[then("the reconnecting badge is not shown")]
+async fn reconnect_badge_absent(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    assert_eq!(
+        current_mempool(stack).stream_state(),
+        &ConnectionStatus::Connected,
+    );
+}
+
+#[then("the reconnecting badge is shown")]
+async fn reconnect_badge_present(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    assert_eq!(
+        current_mempool(stack).stream_state(),
+        &ConnectionStatus::Disconnected {
+            reconnect_scheduled: true
+        },
+    );
+}
+
+#[then("three rows still appear in the list")]
+async fn three_rows_still(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    assert_eq!(current_mempool(stack).items().len(), 3);
+}
+
+#[then(regex = r#"^the port recorded an update_filter from "(0x[0-9a-fA-F]{40})"$"#)]
+async fn port_recorded_filter(world: &mut AppWorld, addr_hex: String) {
+    let expected = Address::from_hex(&addr_hex).unwrap();
+    // The filter-drain task runs on the Tokio executor; give it a few
+    // short yields to consume the control-channel message before we
+    // read the stub history.
+    let history = tokio::time::timeout(Duration::from_millis(200), async {
+        loop {
+            let history = world.pending_stub.filter_history();
+            if history
+                .iter()
+                .any(|(_, f)| f.from == Some(expected))
+            {
+                break history;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("filter update reached the port within 200ms");
+
+    let last = history
+        .last()
+        .expect("at least one recorded filter update");
+    assert_eq!(last.1.from, Some(expected));
 }
