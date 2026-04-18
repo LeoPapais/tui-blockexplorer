@@ -5,8 +5,8 @@
 use blockexplorer_tui::{
     application::use_cases::load_block_overview,
     domain::{
-        Address, Block, BlockHash, BlockId, BlockNumber, Chain, DomainError, TxHash,
-        UnixTimestamp, Wei,
+        Address, Block, BlockHash, BlockId, BlockNumber, Chain, DomainError, TxHash, UnixTimestamp,
+        Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -15,16 +15,13 @@ use crate::support::stubs::StubBlockReaderPort;
 
 fn sample_block(number: u64, hash_hex: &str) -> Block {
     let hash = BlockHash::from_hex(hash_hex).unwrap();
-    let parent = BlockHash::from_hex(
-        "0x0000000000000000000000000000000000000000000000000000000000000000",
-    )
-    .unwrap();
+    let parent =
+        BlockHash::from_hex("0x0000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap();
     let miner = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
     let tx_hashes = vec![
-        TxHash::from_hex(
-            "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
-        )
-        .unwrap(),
+        TxHash::from_hex("0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b")
+            .unwrap(),
     ];
     Block {
         chain: Chain::Ethereum,
@@ -39,6 +36,7 @@ fn sample_block(number: u64, hash_hex: &str) -> Block {
         size: 102_400,
         extra_data: vec![0x42, 0x42],
         tx_hashes,
+        extra_signer: None,
     }
 }
 
@@ -51,10 +49,9 @@ async fn happy_path_by_number() {
     );
     reader.insert(block.clone());
 
-    let got =
-        load_block_overview::run(&reader, BlockId::Number(block.number), Chain::Ethereum)
-            .await
-            .expect("ok");
+    let got = load_block_overview::run(&reader, BlockId::Number(block.number), Chain::Ethereum)
+        .await
+        .expect("ok");
 
     assert_eq!(got, block);
 }

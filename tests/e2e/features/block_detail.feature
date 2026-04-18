@@ -31,3 +31,13 @@ Feature: Block detail
     Then BlockDetail eventually shows block 21345678
     When the user presses "]"
     Then BlockDetail eventually shows block 21345679
+
+  # Covers plan/15-backlog.md section 3.5. The scenario exercises the
+  # UI contract: when the domain block carries `extra_signer`, the
+  # Overview tab renders a Signer row below the zero miner. The actual
+  # ecrecover over the Bor seal hash is covered by the functional
+  # tests in `tests/functional/domain_block.rs`.
+  Scenario: Polygon block shows extraData signer
+    Given a Polygon block whose miner is the zero address
+    When the user opens BlockDetail
+    Then the Overview tab shows a signer row recovered from extraData
