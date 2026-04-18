@@ -325,6 +325,7 @@ impl ChainRegistryPort for StubChainRegistry {
 #[derive(Default)]
 struct TxLookupState {
     by_hash: HashMap<TxHash, TxSummary>,
+    call_count: usize,
 }
 
 #[derive(Default, Clone)]
@@ -341,11 +342,19 @@ impl StubTxLookupPort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.by_hash.insert(summary.hash, summary);
     }
+
+    /// Number of times `get` was invoked. Used by the search-cache
+    /// tests to assert that a cache hit skips the downstream lookup.
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
 }
 
 impl TxLookupPort for StubTxLookupPort {
     async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<TxSummary>, DomainError> {
-        let state = self.inner.lock().expect("stub lock poisoned");
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count += 1;
         Ok(state.by_hash.get(&hash).cloned())
     }
 }

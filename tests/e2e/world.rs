@@ -10,8 +10,11 @@ use blockexplorer_tui::{
     adapters::ui::ScreenStack,
     application::HomeSession,
     domain::{Address, Chain, TxHash},
+    infra::search_feed::SearchCache,
 };
 use cucumber::World;
+
+use crate::support::stubs::FrozenClock;
 
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
@@ -120,6 +123,11 @@ pub struct AppWorld {
     /// Home screen is built, a single-element stack once Home is on
     /// top.
     pub stack: Option<ScreenStack>,
+
+    /// Optional shared TTL cache for the search feed. The default
+    /// scenarios keep it `None`; the repeat-within-TTL scenario sets
+    /// it via a Given step. See `plan/2-search.md` §12.4.
+    pub search_cache: Option<SearchCache<FrozenClock>>,
 }
 
 impl fmt::Debug for AppWorld {

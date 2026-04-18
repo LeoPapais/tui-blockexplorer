@@ -78,3 +78,11 @@ Feature: Universal search
     Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
     When the user opens search with "0x88DF016429689C079F3B2F6AD39FA052532C56795B733DA78A91EBE6A713944B"
     Then the primary candidate is "transaction"
+
+  Scenario: Repeated search within 60 s reuses the cache
+    Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    And the search cache is enabled with a 60 second TTL
+    When the user opens search with "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    And the user closes the search modal
+    And the user opens search with "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    Then the tx lookup stub was called exactly 1 time

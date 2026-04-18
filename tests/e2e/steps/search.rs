@@ -79,6 +79,7 @@ pub(crate) fn build_search_factory(
     let address_reader = world.address_reader_stub.clone();
     let proxy_detector = world.proxy_detector_stub.clone();
     let token_reader = world.token_reader_stub.clone();
+    let search_cache = world.search_cache.clone();
 
     Box::new(move || {
         let (feed, sender) = search_feed();
@@ -93,10 +94,11 @@ pub(crate) fn build_search_factory(
         let address_reader_for_detail = address_reader.clone();
         let proxy_detector_for_detail = proxy_detector.clone();
         let token_reader_for_detail = token_reader.clone();
+        let cache_for_spawn = search_cache.clone();
 
         // Reuse the production search feed so the BDD scenarios
         // cover the same two-phase emission path used live.
-        std::mem::drop(blockexplorer_tui::infra::search_feed::spawn(
+        std::mem::drop(blockexplorer_tui::infra::search_feed::spawn_with_cache(
             chain,
             block,
             tx,
@@ -105,6 +107,7 @@ pub(crate) fn build_search_factory(
             token,
             token_reader_probe,
             sender,
+            cache_for_spawn,
         ));
 
         let detail_factory: Box<
@@ -884,4 +887,43 @@ async fn hint_mentions_chain(world: &mut AppWorld) {
         }
         other => panic!("expected NotFound, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Search cache scenarios (plan/2 §12.4)
+// ---------------------------------------------------------------------------
+
+#[given(regex = r#"^the search cache is enabled with a (\d+) second TTL$"#)]
+async fn enable_search_cache(world: &mut AppWorld, ttl_secs: u64) {
+    use blockexplorer_tui::adapters::cache::TtlCache;
+
+    let clock = crate::support::stubs::FrozenClock::default();
+    world.search_cache = Some(TtlCache::with_ttl_and_clock(
+        Duration::from_secs(ttl_secs),
+        clock,
+    ));
+    // Drop the pre-cache stack so the next interaction rebuilds
+    // HomeScreen with a search_factory that captures the fresh cache.
+    world.stack = None;
+}
+
+#[when("the user closes the search modal")]
+async fn close_search_modal(world: &mut AppWorld) {
+    // Give the previous feed task a tick to flush the cache write
+    // that happens right after it sends the last update. The write
+    // is `await`ed in the task but lives on a separate tokio task,
+    // so without the yield we occasionally race the close.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let stack = world.stack.as_mut().expect("stack exists");
+    press(stack, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(stack.top().unwrap().title(), "Home");
+}
+
+#[then(regex = r#"^the tx lookup stub was called exactly (\d+) times?$"#)]
+async fn tx_lookup_call_count(world: &mut AppWorld, expected: usize) {
+    assert_eq!(
+        world.tx_stub.call_count(),
+        expected,
+        "tx lookup call count",
+    );
 }
