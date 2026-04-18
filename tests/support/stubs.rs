@@ -13,16 +13,17 @@ use std::{
 
 use blockexplorer_tui::{
     application::ports::{
-        AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
+        AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
         ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-        GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
-        ProxyDetectionPort, SignatureDirectoryPort, TokenReaderPort, TokenSearchPort,
-        TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
+        EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
+        ProxyDetectionPort, SignatureDirectoryPort, StoragePort, TokenReaderPort,
+        TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort,
+        TxTracePort,
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
-        DecodedValue, DomainError, GasSnapshot, Gwei, NetworkStatus, PendingTx,
+        DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, PendingTx,
         PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff, TokenHolding, TokenMetadata,
         TokenOverview, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
@@ -1038,5 +1039,83 @@ impl ContractReaderPort for StubContractReaderPort {
             }
             Some(Err(_)) | None => Err(DomainError::NotFound),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: EventLogPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct EventLogState {
+    by_address: HashMap<Address, Vec<LogEntry>>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubEventLogPort {
+    inner: Arc<Mutex<EventLogState>>,
+}
+
+impl StubEventLogPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_logs(&self, address: Address, logs: Vec<LogEntry>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, logs);
+    }
+}
+
+impl EventLogPort for StubEventLogPort {
+    async fn get_logs(
+        &self,
+        address: Address,
+        _chain: Chain,
+        _range: BlockRange,
+    ) -> Result<Vec<LogEntry>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned().unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: StoragePort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct StorageState {
+    by_slot: HashMap<(Address, [u8; 32]), [u8; 32]>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubStoragePort {
+    inner: Arc<Mutex<StorageState>>,
+}
+
+impl StubStoragePort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_value(&self, address: Address, slot: [u8; 32], value: [u8; 32]) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_slot.insert((address, slot), value);
+    }
+}
+
+impl StoragePort for StubStoragePort {
+    async fn get_at(
+        &self,
+        address: Address,
+        _chain: Chain,
+        slot: [u8; 32],
+    ) -> Result<[u8; 32], DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .by_slot
+            .get(&(address, slot))
+            .copied()
+            .unwrap_or([0u8; 32]))
     }
 }

@@ -52,3 +52,18 @@ Feature: Contract detail
     And the user switches to the Read tab
     And the user selects the first function and executes it
     Then once executed, the Read tab reports a revert with "InsufficientBalance()"
+
+  Scenario: Events tab renders decoded logs
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events tab
+    Then once loaded, the Events tab lists 2 events
+
+  Scenario: Storage tab reads the requested slot
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the storage stub returns the u128 value 42 at slot 0 for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Storage tab
+    And the user presses Enter on the Storage tab
+    Then once loaded, the Storage tab shows the value 42

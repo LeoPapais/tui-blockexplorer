@@ -16,9 +16,11 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
+    application::ports::BlockRange,
     domain::{
-        AbiFunction, AbiParamType, AbiValue, Address, Chain, ContractOverview,
-        ContractSource, DecodedValue, DomainError, SourceFile, parse_abi_functions,
+        AbiFunction, AbiParamType, AbiValue, Address, BlockNumber, Chain, ContractOverview,
+        ContractSource, DecodedValue, DomainError, LogEntry, SourceFile,
+        parse_abi_functions,
     },
 };
 
@@ -35,12 +37,36 @@ pub struct ReadRequest {
 /// reason so the UI can render it on the result pane.
 pub type ReadResult = Result<Vec<DecodedValue>, DomainError>;
 
+/// Request shape for the Events tab: the caller passes the block
+/// range and the background task answers with the decoded logs.
+#[derive(Debug, Clone)]
+pub struct EventsRequest {
+    pub range: BlockRange,
+}
+
+/// Result of a single Events tab refresh.
+pub type EventsResult = Result<Vec<LogEntry>, DomainError>;
+
+/// Request shape for the Storage tab. Slot is already a 32-byte
+/// buffer (parsed from the user-supplied decimal or hex string).
+#[derive(Debug, Clone)]
+pub struct StorageRequest {
+    pub slot: [u8; 32],
+}
+
+/// Result of a single Storage tab read.
+pub type StorageResult = Result<[u8; 32], DomainError>;
+
 pub struct ContractFeed {
     pub input_tx: UnboundedSender<Address>,
     pub updates_rx: UnboundedReceiver<ContractOverview>,
     pub source_rx: UnboundedReceiver<ContractSource>,
     pub read_tx: UnboundedSender<ReadRequest>,
     pub read_rx: UnboundedReceiver<ReadResult>,
+    pub events_tx: UnboundedSender<EventsRequest>,
+    pub events_rx: UnboundedReceiver<EventsResult>,
+    pub storage_tx: UnboundedSender<StorageRequest>,
+    pub storage_rx: UnboundedReceiver<StorageResult>,
 }
 
 pub struct ContractFeedSender {
@@ -48,6 +74,10 @@ pub struct ContractFeedSender {
     pub source_tx: UnboundedSender<ContractSource>,
     pub read_rx: UnboundedReceiver<ReadRequest>,
     pub read_tx: UnboundedSender<ReadResult>,
+    pub events_rx: UnboundedReceiver<EventsRequest>,
+    pub events_tx: UnboundedSender<EventsResult>,
+    pub storage_rx: UnboundedReceiver<StorageRequest>,
+    pub storage_tx: UnboundedSender<StorageResult>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -58,6 +88,10 @@ pub fn contract_feed() -> (ContractFeed, ContractFeedSender) {
     let (source_tx, source_rx) = unbounded_channel();
     let (read_req_tx, read_req_rx) = unbounded_channel();
     let (read_res_tx, read_res_rx) = unbounded_channel();
+    let (events_req_tx, events_req_rx) = unbounded_channel();
+    let (events_res_tx, events_res_rx) = unbounded_channel();
+    let (storage_req_tx, storage_req_rx) = unbounded_channel();
+    let (storage_res_tx, storage_res_rx) = unbounded_channel();
     (
         ContractFeed {
             input_tx,
@@ -65,12 +99,20 @@ pub fn contract_feed() -> (ContractFeed, ContractFeedSender) {
             source_rx,
             read_tx: read_req_tx,
             read_rx: read_res_rx,
+            events_tx: events_req_tx,
+            events_rx: events_res_rx,
+            storage_tx: storage_req_tx,
+            storage_rx: storage_res_rx,
         },
         ContractFeedSender {
             updates_tx,
             source_tx,
             read_rx: read_req_rx,
             read_tx: read_res_tx,
+            events_rx: events_req_rx,
+            events_tx: events_res_tx,
+            storage_rx: storage_req_rx,
+            storage_tx: storage_res_tx,
             input_rx,
         },
     )
@@ -82,14 +124,18 @@ pub enum ContractTab {
     Source,
     Abi,
     Read,
+    Events,
+    Storage,
 }
 
 impl ContractTab {
-    const ALL: [ContractTab; 4] = [
+    const ALL: [ContractTab; 6] = [
         ContractTab::Overview,
         ContractTab::Source,
         ContractTab::Abi,
         ContractTab::Read,
+        ContractTab::Events,
+        ContractTab::Storage,
     ];
 
     fn next(self) -> Self {
@@ -103,6 +149,8 @@ impl ContractTab {
             ContractTab::Source => 1,
             ContractTab::Abi => 2,
             ContractTab::Read => 3,
+            ContractTab::Events => 4,
+            ContractTab::Storage => 5,
         }
     }
 
@@ -112,6 +160,8 @@ impl ContractTab {
             ContractTab::Source => "Source",
             ContractTab::Abi => "ABI",
             ContractTab::Read => "Read",
+            ContractTab::Events => "Events",
+            ContractTab::Storage => "Storage",
         }
     }
 }
@@ -145,6 +195,17 @@ pub struct ContractDetailScreen {
     /// Rendered last result (or error) for the selected function.
     last_result: Option<Result<Vec<DecodedValue>, String>>,
     last_result_for: Option<String>,
+
+    /// Events tab state.
+    events: Option<Result<Vec<LogEntry>, String>>,
+    events_range: Option<BlockRange>,
+    events_requested: bool,
+
+    /// Storage tab state. `slot_buffer` is the raw input string so
+    /// the user can edit it; `storage_result` is the last read-out.
+    slot_buffer: String,
+    storage_result: Option<Result<[u8; 32], String>>,
+    storage_slot_requested: Option<[u8; 32]>,
 }
 
 impl ContractDetailScreen {
@@ -173,6 +234,12 @@ impl ContractDetailScreen {
             arg_cursor: 0,
             last_result: None,
             last_result_for: None,
+            events: None,
+            events_range: None,
+            events_requested: false,
+            slot_buffer: "0".to_string(),
+            storage_result: None,
+            storage_slot_requested: None,
         }
     }
 
@@ -210,6 +277,30 @@ impl ContractDetailScreen {
         matches!(self.last_result.as_ref(), Some(Err(msg)) if msg.contains(needle))
     }
 
+    /// Test helper: Events tab row count once loaded.
+    #[must_use]
+    pub fn events_count(&self) -> Option<usize> {
+        match self.events.as_ref() {
+            Some(Ok(rows)) => Some(rows.len()),
+            _ => None,
+        }
+    }
+
+    /// Test helper: Storage tab value parsed as a u128 (only valid
+    /// when the high 16 bytes are zero).
+    #[must_use]
+    pub fn storage_value_u128(&self) -> Option<u128> {
+        let Some(Ok(word)) = self.storage_result.as_ref() else {
+            return None;
+        };
+        if word[..16].iter().any(|b| *b != 0) {
+            return None;
+        }
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&word[16..]);
+        Some(u128::from_be_bytes(buf))
+    }
+
     fn selected_file(&self) -> Option<&SourceFile> {
         let files = self.source.as_ref().map(|s| &s.files)?;
         let idx = self.file_list_state.selected().unwrap_or(0);
@@ -234,6 +325,12 @@ impl ContractDetailScreen {
             self.last_result_for = self
                 .selected_function()
                 .map(|f| f.signature());
+        }
+        while let Ok(result) = self.feed.events_rx.try_recv() {
+            self.events = Some(result.map_err(|e| domain_error_message(&e)));
+        }
+        while let Ok(result) = self.feed.storage_rx.try_recv() {
+            self.storage_result = Some(result.map_err(|e| domain_error_message(&e)));
         }
     }
 
@@ -423,6 +520,8 @@ impl Screen for ContractDetailScreen {
                 );
             }
             ContractTab::Read => self.render_read_tab(frame, chunks[2]),
+            ContractTab::Events => self.render_events_tab(frame, chunks[2]),
+            ContractTab::Storage => self.render_storage_tab(frame, chunks[2]),
         }
     }
 
@@ -442,6 +541,8 @@ impl Screen for ContractDetailScreen {
         match self.active_tab {
             ContractTab::Source => self.handle_source_key(key),
             ContractTab::Read => self.handle_read_key(key),
+            ContractTab::Events => self.handle_events_key(key),
+            ContractTab::Storage => self.handle_storage_key(key),
             ContractTab::Overview | ContractTab::Abi => {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -463,6 +564,18 @@ impl Screen for ContractDetailScreen {
 
     fn tick(&mut self) -> Command {
         self.drain_feed();
+        // Fire the first Events request lazily when the user actually
+        // opens the tab; that way we never issue an eth_getLogs for
+        // contracts the user just glances at.
+        if self.active_tab == ContractTab::Events && !self.events_requested {
+            let range = BlockRange {
+                from: BlockNumber::new(0),
+                to: BlockNumber::new(u64::MAX),
+            };
+            self.events_range = Some(range);
+            let _ = self.feed.events_tx.send(EventsRequest { range });
+            self.events_requested = true;
+        }
         Command::None
     }
 
@@ -756,6 +869,140 @@ Contract may be unverified or expose only events / constructors.",
         );
     }
 
+    fn handle_events_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Char('r') | KeyCode::Enter => {
+                // Force-refresh with the sentinel "latest" range.
+                let range = BlockRange {
+                    from: BlockNumber::new(0),
+                    to: BlockNumber::new(u64::MAX),
+                };
+                self.events_range = Some(range);
+                self.events = None;
+                let _ = self.feed.events_tx.send(EventsRequest { range });
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.scroll = self.scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll = self.scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::Home => self.scroll = 0,
+            KeyCode::End => self.scroll = u16::MAX,
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_storage_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Backspace => {
+                self.slot_buffer.pop();
+            }
+            // Digits or hex chars only; everything else is ignored
+            // so the input does not get polluted with stray keys.
+            KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
+                self.slot_buffer.push(c);
+            }
+            KeyCode::Enter => {
+                match parse_slot(&self.slot_buffer) {
+                    Ok(slot) => {
+                        self.storage_slot_requested = Some(slot);
+                        self.storage_result = None;
+                        let _ = self.feed.storage_tx.send(StorageRequest { slot });
+                    }
+                    Err(msg) => {
+                        self.storage_result = Some(Err(msg));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn render_events_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let range_line = match self.events_range {
+            Some(range) if range.to.value() == u64::MAX => {
+                "Range: latest 5,000 blocks   [r] refresh".to_string()
+            }
+            Some(range) => format!(
+                "Range: #{} -> #{}   [r] refresh",
+                range.from.value(),
+                range.to.value()
+            ),
+            None => "Range: (pending)   [r] refresh".to_string(),
+        };
+        let body = match self.events.as_ref() {
+            None => format!("{range_line}\n\nLoading events..."),
+            Some(Err(msg)) => format!("{range_line}\n\nERROR: {msg}"),
+            Some(Ok(logs)) if logs.is_empty() => {
+                format!("{range_line}\n\nNo events in this window.")
+            }
+            Some(Ok(logs)) => {
+                let mut out = format!("{range_line}\n\n");
+                for (idx, log) in logs.iter().enumerate() {
+                    let topic0 = log
+                        .topics
+                        .first()
+                        .map(|t| format!("0x{}", hex::encode(t)))
+                        .unwrap_or_else(|| "(anonymous)".to_string());
+                    out.push_str(&format!("#{idx}  {topic0}\n"));
+                    for (ti, topic) in log.topics.iter().enumerate().skip(1) {
+                        out.push_str(&format!("  t{ti}:   0x{}\n", hex::encode(topic)));
+                    }
+                    if !log.data.is_empty() {
+                        out.push_str(&format!("  data: 0x{}\n", hex::encode(&log.data)));
+                    }
+                    out.push('\n');
+                }
+                out
+            }
+        };
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((self.scroll, 0))
+                .block(Block::default().borders(Borders::ALL).title("Events")),
+            area,
+        );
+    }
+
+    fn render_storage_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Min(3)])
+            .split(area);
+
+        let prompt = format!(
+            "Slot (decimal or 0x-hex): {}\n[Enter] to read, [Backspace] to edit",
+            self.slot_buffer,
+        );
+        frame.render_widget(
+            Paragraph::new(prompt).block(
+                Block::default().borders(Borders::ALL).title("Slot"),
+            ),
+            chunks[0],
+        );
+
+        let body = match (self.storage_slot_requested, self.storage_result.as_ref()) {
+            (Some(slot), Some(Ok(word))) => format_storage_word(slot, word),
+            (Some(_), Some(Err(msg))) => format!("ERROR: {msg}"),
+            (Some(_), None) => "Reading...".to_string(),
+            (None, None) => "(press Enter to read the current slot)".to_string(),
+            (None, Some(Err(msg))) => format!("ERROR: {msg}"),
+            (None, Some(Ok(_))) => unreachable!(),
+        };
+        frame.render_widget(
+            Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                Block::default().borders(Borders::ALL).title("Value"),
+            ),
+            chunks[1],
+        );
+    }
+
     fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(source) = self.source.as_ref() else {
             frame.render_widget(
@@ -884,6 +1131,66 @@ Nonce       {nonce}\n\
         balance = ov.account.balance.value(),
         nonce = ov.account.nonce,
     )
+}
+
+fn parse_slot(raw: &str) -> Result<[u8; 32], String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("slot input is empty".into());
+    }
+    let (radix, digits) = if let Some(rest) = trimmed.strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else {
+        (10, trimmed)
+    };
+
+    // Accept up to 64 hex digits (32 bytes). Zero-pad on the left.
+    if radix == 16 {
+        if digits.len() > 64 {
+            return Err(format!("slot hex too long ({} > 64)", digits.len()));
+        }
+        let padded = format!("{:0>64}", digits);
+        let mut bytes = [0u8; 32];
+        hex::decode_to_slice(&padded, &mut bytes).map_err(|e| format!("invalid hex: {e}"))?;
+        Ok(bytes)
+    } else {
+        // Decimal: up to u128 (contracts with slots > 2^128 are rare
+        // enough that we keep the code simple).
+        let n: u128 = digits.parse().map_err(|e| format!("invalid decimal: {e}"))?;
+        let mut bytes = [0u8; 32];
+        bytes[16..].copy_from_slice(&n.to_be_bytes());
+        Ok(bytes)
+    }
+}
+
+fn format_storage_word(slot: [u8; 32], word: &[u8; 32]) -> String {
+    let hex_out = format!("0x{}", hex::encode(word));
+    let slot_hex = format!("0x{}", hex::encode(slot));
+    let as_u128 = if word[..16].iter().all(|b| *b == 0) {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&word[16..]);
+        Some(u128::from_be_bytes(buf))
+    } else {
+        None
+    };
+    let as_address = if word[..12].iter().all(|b| *b == 0) {
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&word[12..]);
+        Some(Address::from_bytes(bytes).to_hex())
+    } else {
+        None
+    };
+
+    let mut out = format!("Slot      {slot_hex}\nHex       {hex_out}\n");
+    if let Some(n) = as_u128 {
+        out.push_str(&format!("Decimal   {n}\n"));
+    }
+    if let Some(addr) = as_address {
+        out.push_str(&format!("Address   {addr}\n"));
+    }
+    out
 }
 
 fn domain_error_message(err: &DomainError) -> String {

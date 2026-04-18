@@ -30,7 +30,7 @@ external-only data policy).
 | 4  | [4-tx-detail.md](4-tx-detail.md)                               | Transaction detail        | done       |
 | 5  | [5-mempool.md](5-mempool.md)                                   | Mempool stream            | done (MVP) |
 | 6  | [6-address-detail.md](6-address-detail.md)                     | Address detail            | done       |
-| 7  | [7-contract-detail.md](7-contract-detail.md)                   | Contract detail           | done (MVP) |
+| 7  | [7-contract-detail.md](7-contract-detail.md)                   | Contract detail           | done       |
 | 8  | [8-token-detail.md](8-token-detail.md)                         | Token detail              | done (MVP) |
 | 9  | [9-gas-tracker.md](9-gas-tracker.md)                           | Gas tracker               | done (MVP) |
 | 10 | [10-settings.md](10-settings.md)                               | Settings                  | done (MVP) |

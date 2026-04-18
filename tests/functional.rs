@@ -108,3 +108,9 @@ mod invoke_read_function;
 
 #[path = "functional/alchemy_contract_reader.rs"]
 mod alchemy_contract_reader;
+
+#[path = "functional/alchemy_event_log.rs"]
+mod alchemy_event_log;
+
+#[path = "functional/alchemy_storage.rs"]
+mod alchemy_storage;

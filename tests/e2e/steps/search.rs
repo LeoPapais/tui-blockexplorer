@@ -215,6 +215,10 @@ pub(crate) fn spawn_contract_detail<
             source_tx: _,
             read_rx: _,
             read_tx: _,
+            events_rx: _,
+            events_tx: _,
+            storage_rx: _,
+            storage_tx: _,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {

@@ -1,10 +1,9 @@
 # 7 — Contract Detail
 
-Status: **expanded** — MVP Overview tab with EIP-1967 proxy
-detection shipped earlier; this phase adds the Source, ABI, Read,
-Events and Storage tabs so the screen matches the plan layout.
-The Write tab and decompiler integration stay deferred; see
-section 13.
+Status: **done** — MVP Overview + EIP-1967 proxy detection shipped
+earlier, and this phase landed the Source, ABI, Read, Events and
+Storage tabs so the screen matches the plan layout end to end. The
+Write tab and decompiler integration stay deferred; see section 13.
 
 Inspect and read a smart contract. Tabs in MVP: Overview, Source, ABI, Read, Events,
 Storage. The Write tab is deferred because it requires a signer.

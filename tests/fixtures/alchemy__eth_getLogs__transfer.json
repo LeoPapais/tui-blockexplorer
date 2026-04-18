@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "blockNumber": "0x1406f40",
+      "transactionHash": "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
+      "logIndex": "0x0",
+      "topics": [
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "0x0000000000000000000000000000000000000000000000000000000000000099"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+      "removed": false
+    }
+  ]
+}

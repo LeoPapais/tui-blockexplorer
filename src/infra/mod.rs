@@ -29,10 +29,10 @@ use crate::{
         etherscan::{EtherscanClient, EtherscanContractSource},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
-            AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver,
+            AlchemyBlockReader, AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog,
             AlchemyGasOracleAdapter, AlchemyNetworkStatusAdapter, AlchemyPortfolio,
-            AlchemyProxyDetector, AlchemySimulation, AlchemyTokenReader, AlchemyTransfers,
-            AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, RpcClient,
+            AlchemyProxyDetector, AlchemySimulation, AlchemyStorage, AlchemyTokenReader,
+            AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
@@ -157,7 +157,9 @@ fn live_contract_detail_screen(
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
     let detector = AlchemyProxyDetector::new(rpc.clone());
-    let contract_reader = AlchemyContractReader::new(rpc);
+    let contract_reader = AlchemyContractReader::new(rpc.clone());
+    let event_log = AlchemyEventLog::new(rpc.clone());
+    let storage = AlchemyStorage::new(rpc);
 
     let source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -172,6 +174,8 @@ fn live_contract_detail_screen(
         detector,
         source,
         contract_reader,
+        event_log,
+        storage,
         sender,
     ));
     Box::new(ContractDetailScreen::loading(chain, address, feed))

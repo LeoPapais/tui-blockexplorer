@@ -11,12 +11,14 @@ use blockexplorer_tui::{
     },
     application::{
         ports::{
-            AddressReaderPort, ContractReaderPort, ContractSourcePort, ProxyDetectionPort,
+            AddressReaderPort, ContractReaderPort, ContractSourcePort, EventLogPort,
+            ProxyDetectionPort, StoragePort,
         },
         use_cases::load_contract_overview,
     },
     domain::{
-        Address, Chain, ContractSource, DecodedValue, ProxyInfo, ProxyKind, SourceFile,
+        Address, Chain, ContractSource, DecodedValue, LogEntry, ProxyInfo, ProxyKind,
+        SourceFile,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -167,6 +169,10 @@ fn spawn_contract_detail_with_source<
             source_tx,
             read_rx: _,
             read_tx: _,
+            events_rx: _,
+            events_tx: _,
+            storage_rx: _,
+            storage_tx: _,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
@@ -325,6 +331,10 @@ fn spawn_contract_detail_full<
             source_tx,
             mut read_rx,
             read_tx,
+            events_rx: _,
+            events_tx: _,
+            storage_rx: _,
+            storage_tx: _,
             mut input_rx,
         } = sender;
         let mut active: Option<Address> = None;
@@ -393,4 +403,186 @@ async fn read_tab_reports_revert(world: &mut AppWorld, expected_reason: String) 
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| current(s).last_result_is_error_containing(&expected_reason)).await;
     assert!(current(stack).last_result_is_error_containing(&expected_reason));
+}
+
+// ---------------------------------------------------------------------------
+// Events / Storage tabs (plan 7 section 12.4.3)
+// ---------------------------------------------------------------------------
+
+#[given(
+    regex = r#"^the event log stub has (\d+) Transfer events for "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn event_log_stub_has_transfers(world: &mut AppWorld, count: u32, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let topic: [u8; 32] = hex::decode(
+        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    )
+    .unwrap()
+    .try_into()
+    .unwrap();
+    let logs: Vec<LogEntry> = (0..count as usize)
+        .map(|_| LogEntry {
+            address: addr,
+            topics: vec![topic],
+            data: Vec::new(),
+        })
+        .collect();
+    world.event_log_stub.set_logs(addr, logs);
+}
+
+#[given(
+    regex = r#"^the storage stub returns the u128 value (\d+) at slot (\d+) for "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn storage_stub_returns_u128(
+    world: &mut AppWorld,
+    value: u128,
+    slot_index: u128,
+    addr_hex: String,
+) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let mut slot = [0u8; 32];
+    slot[16..].copy_from_slice(&slot_index.to_be_bytes());
+    let mut word = [0u8; 32];
+    word[16..].copy_from_slice(&value.to_be_bytes());
+    world.storage_stub.set_value(addr, slot, word);
+}
+
+#[when(regex = r#"^the user opens ContractDetail with all wiring for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn opens_contract_detail_with_all_wiring(world: &mut AppWorld, addr_hex: String) {
+    build_stack(world);
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let reader = world.address_reader_stub.clone();
+    let detector = world.proxy_detector_stub.clone();
+    let source = world.contract_source_stub.clone();
+    let contract_reader = world.contract_reader_stub.clone();
+    let event_log = world.event_log_stub.clone();
+    let storage = world.storage_stub.clone();
+    let screen = spawn_contract_detail_full_full(
+        Chain::Ethereum,
+        addr,
+        reader,
+        detector,
+        source,
+        contract_reader,
+        event_log,
+        storage,
+    );
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_contract_detail_full_full<
+    R: AddressReaderPort + Clone + 'static,
+    P: ProxyDetectionPort + Clone + 'static,
+    S: ContractSourcePort + Clone + 'static,
+    CR: ContractReaderPort + Clone + 'static,
+    E: EventLogPort + Clone + 'static,
+    St: StoragePort + Clone + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    detector: P,
+    source: S,
+    contract_reader: CR,
+    event_log: E,
+    storage: St,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    let (feed, sender) = contract_feed();
+    tokio::spawn(async move {
+        let ContractFeedSender {
+            updates_tx,
+            source_tx,
+            mut read_rx,
+            read_tx,
+            mut events_rx,
+            events_tx,
+            mut storage_rx,
+            storage_tx,
+            mut input_rx,
+        } = sender;
+        let mut active: Option<Address> = None;
+        loop {
+            tokio::select! {
+                addr = input_rx.recv() => {
+                    let Some(addr) = addr else { break };
+                    active = Some(addr);
+                    if let Ok(ov) =
+                        load_contract_overview::run(&reader, &detector, addr, chain).await
+                        && updates_tx.send(ov).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(Some(src)) = source.get_source(addr, chain).await
+                        && source_tx.send(src).is_err()
+                    {
+                        break;
+                    }
+                }
+                req = read_rx.recv() => {
+                    let Some(req) = req else { break };
+                    let Some(a) = active else { continue };
+                    let result = contract_reader
+                        .call(a, chain, &req.function, req.args)
+                        .await;
+                    if read_tx.send(result).is_err() { break; }
+                }
+                req = events_rx.recv() => {
+                    let Some(req) = req else { break };
+                    let Some(a) = active else { continue };
+                    let result = event_log.get_logs(a, chain, req.range).await;
+                    if events_tx.send(result).is_err() { break; }
+                }
+                req = storage_rx.recv() => {
+                    let Some(req) = req else { break };
+                    let Some(a) = active else { continue };
+                    let result = storage.get_at(a, chain, req.slot).await;
+                    if storage_tx.send(result).is_err() { break; }
+                }
+            }
+        }
+    });
+    Box::new(ContractDetailScreen::loading(chain, address, feed))
+}
+
+#[when("the user switches to the Events tab")]
+async fn switches_to_events_tab(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Overview -> Source -> ABI -> Read -> Events.
+    for _ in 0..4 {
+        press_tab(stack);
+    }
+    tick_until(stack, |s| current(s).active_tab() == ContractTab::Events).await;
+}
+
+#[when("the user switches to the Storage tab")]
+async fn switches_to_storage_tab(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    for _ in 0..5 {
+        press_tab(stack);
+    }
+    tick_until(stack, |s| current(s).active_tab() == ContractTab::Storage).await;
+}
+
+#[when("the user presses Enter on the Storage tab")]
+async fn presses_enter_on_storage(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    press_key(stack, KeyCode::Enter);
+}
+
+#[then(regex = r#"^once loaded, the Events tab lists (\d+) events$"#)]
+async fn events_tab_lists_n(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).events_count().is_some()).await;
+    let count = current(stack).events_count().unwrap_or(0);
+    assert_eq!(count, expected as usize);
+}
+
+#[then(regex = r#"^once loaded, the Storage tab shows the value (\d+)$"#)]
+async fn storage_tab_shows_value(world: &mut AppWorld, expected: u128) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).storage_value_u128().is_some()).await;
+    let got = current(stack).storage_value_u128().unwrap();
+    assert_eq!(got, expected);
 }

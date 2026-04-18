@@ -16,10 +16,10 @@ use cucumber::World;
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
-    StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort, StubPortfolioPort,
-    StubProxyDetectionPort, StubSignatureDirectoryPort, StubTokenReaderPort,
-    StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
-    StubTxSimulationPort, StubTxTracePort,
+    StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubPendingTxStreamPort,
+    StubPortfolioPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
+    StubStoragePort, StubTokenReaderPort, StubTokenSearchPort, StubTransfersPort,
+    StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession =
@@ -87,6 +87,12 @@ pub struct AppWorld {
 
     /// Contract-reader stub used by the Read tab scenarios.
     pub contract_reader_stub: StubContractReaderPort,
+
+    /// Event-log stub used by the Events tab scenarios.
+    pub event_log_stub: StubEventLogPort,
+
+    /// Storage stub used by the Storage tab scenarios.
+    pub storage_stub: StubStoragePort,
 
     /// Token-detail stub.
     pub token_reader_stub: StubTokenReaderPort,

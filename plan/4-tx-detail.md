@@ -1,10 +1,14 @@
 # 4 — Transaction Detail
 
-Status: **done** — MVP Overview + Raw tabs shipped earlier and this
-phase extended the screen with ABI-based method decoding, the Logs /
-Asset-Changes / State-Changes tabs and pending-tx support. The
-Internal-calls tab (Trace namespace) stays explicitly deferred; see
-section 12.5.
+Status: **done (MVP) / follow-up in progress** — MVP Overview + Raw
+tabs shipped earlier and this phase extended the screen with
+ABI-based method decoding, the Logs / Asset-Changes / State-Changes
+tabs and pending-tx support. A new follow-up iteration (see
+section 13) tightens the UX: row-level copy on Overview, humanized
+gas/fee values, bounded scrolling project-wide, interactive Logs
+tab with ABI-decoded field copy, and `Shift+Tab` / arrow-key tab
+navigation project-wide. The Internal-calls tab (Trace namespace)
+stays explicitly deferred; see section 12.5.
 
 The most feature-dense screen. Six tabs: Overview, Logs, Internal, State Changes,
 Asset Changes, Raw. Heavy reliance on Alchemy's Trace, Debug and Simulation APIs,
@@ -55,15 +59,17 @@ Tabs detail:
 
 ## 3. Keybindings
 
-| Key       | Action                                                 |
-|-----------|--------------------------------------------------------|
-| `Tab`     | Next tab                                               |
-| `Shift+T` | Previous tab                                           |
-| `y`       | Copy tx hash                                           |
-| `s`       | Re-simulate (useful when viewing a pending tx)         |
-| `d`       | Open calldata decoder modal                            |
-| `Enter`   | On a log or internal call row, open target contract    |
-| `o`       | Open "related" menu (block, from, to, contract source) |
+| Key            | Action                                                    |
+|----------------|-----------------------------------------------------------|
+| `Tab`          | Next tab                                                  |
+| `Shift+Tab`    | Previous tab (project-wide, see 13.5)                     |
+| `Right`/`Left` | Switch tabs when no focused widget consumes the arrow key |
+| `Up`/`Down`    | Move the in-tab selection cursor (Overview 13.1, Logs 13.4) |
+| `y`            | Copy the selected row / field's canonical value (13.1)    |
+| `s`            | Re-simulate (useful when viewing a pending tx)            |
+| `d`            | Open calldata decoder modal                               |
+| `Enter`        | On a log or internal call row, open target contract       |
+| `o`            | Open "related" menu (block, from, to, contract source)    |
 
 ## 4. Use cases
 
@@ -432,3 +438,270 @@ BDD additions:
    funtion
 5. the "asset changes" tab should show ERC20 transfers and native
     tokens transfers.
+
+## 13. Follow-up fixes (in progress)
+
+Five refinements requested after the MVP shipped. Items marked
+**(project-wide)** are not tx-detail-specific and must be applied
+consistently across every screen in the app; they live here because
+they were surfaced while reviewing the tx-detail screen but the fix
+belongs to the shared screen / input infrastructure.
+
+### 13.1 Overview tab — selectable / copyable field values
+
+**Scope**: `TxDetailScreen` Overview tab.
+
+Problem: the Overview tab is currently pure static render. There is
+no way to move a selection through its rows, so the user cannot copy
+individual values (hash, from, to, block hash, raw input selector,
+revert reason, etc.) — only the hash, via the global `y` key.
+
+Design:
+
+- Add a row-level selection cursor to the Overview tab. Arrow keys
+  `Up` / `Down` (and `k` / `j`) move the cursor between the
+  information rows. Non-selectable rows (section separators, empty
+  lines) are skipped.
+- The currently selected row is highlighted using
+  `Theme::selection_bg`, matching the selection style used on list
+  screens (Blocks, Mempool, Address tx list).
+- `y` copies the selected row's canonical value (not the rendered
+  label) via the existing `ClipboardPort`. Fallback to "hash" only
+  when no row is selected (back-compat with the current binding).
+- Each selectable row declares a `copy_value: String` in the
+  Overview view-model, independent of the displayed label. For
+  example the `Fee paid` row displays a humanized value but copies
+  the exact wei string (see 13.2).
+- Status bar hint updates: `↑↓ select  y copy value  Tab next tab`.
+
+Acceptance:
+
+- Pressing `Up` / `Down` moves through the rows and loops at the
+  edges.
+- With `From` selected, `y` copies the full 0x-prefixed address.
+- With `Fee paid` selected, `y` copies the raw wei amount.
+- Snapshot test via `TestBackend` verifies the highlighted row
+  bookkeeping.
+- At least one BDD scenario: `Overview tab lets the user copy the
+  From address`.
+
+### 13.2 Humanized gas / fee values with inline raw hint
+
+**Scope**: `TxDetailScreen` Overview tab + new formatting helpers in
+`src/adapters/ui/format.rs`.
+
+Problem: `Gas used`, `Gas price`, `Fee paid` and `Value` currently
+render raw `Wei` / `Gwei` numbers. The user wants humanized values
+(ETH with 4 significant digits for fee / value, gwei for gas price,
+plain thousands-grouped integer for gas used) and, **only when the
+selection cursor from 13.1 is on that row**, the exact raw wei /
+gwei value rendered to the right of the humanized label in
+`Theme::text_muted` (gray).
+
+Design:
+
+- New formatters in `src/adapters/ui/format.rs`:
+  - `humanize_eth(wei: Wei) -> String` — strips trailing zeros,
+    keeps up to 6 decimals, thousands-grouped integer part.
+  - `humanize_gwei(wei: Wei) -> String` — rendered in gwei with at
+    most 4 decimals.
+  - `humanize_gas_units(gas: u64) -> String` — thousands-grouped
+    (`52,341`).
+- Overview row rendering uses `Line::from` spans: the primary span
+  is the humanized string; when the row is selected, a second
+  muted span is appended: `  (raw: 732145679812 wei)`.
+- The raw hint is never shown on unselected rows, so the baseline
+  layout is unchanged.
+- Formatting is pure; unit tests live in
+  `tests/unit/format.rs` covering edge cases (zero, <1 gwei,
+  exact round numbers, non-round decimals).
+
+Acceptance:
+
+- `Fee paid` renders as `0.000732 ETH` by default and as
+  `0.000732 ETH    raw: 732000000000 wei` when selected.
+- `Gas used` renders with thousands separators.
+- `Gas price` renders in gwei.
+- Unit test matrix covers at least 8 inputs per formatter.
+
+### 13.3 Bounded scrolling on all scrollable screens **(project-wide)**
+
+**Scope**: every `Screen` that maintains a vertical scroll offset
+(tx-detail Overview / Logs / Raw / Asset / State, block-detail tx
+list, address tx list, mempool, contract Read tab, token holders,
+etc.). Implementation lives in a shared `Scrollable` helper under
+`src/adapters/ui/scroll.rs`.
+
+Problems:
+
+1. Screens whose content already fits inside the visible area still
+   accept scroll input and move the `scroll_offset` past zero /
+   below zero, producing a visibly blank render.
+2. Screens whose content overflows allow scrolling past the end of
+   the content, so the user ends up staring at an empty viewport
+   after the last row.
+
+Design:
+
+- Shared helper:
+
+  ```rust
+  pub struct ScrollState {
+      offset: u16,
+      content_height: u16,
+      viewport_height: u16,
+  }
+
+  impl ScrollState {
+      pub fn scroll_by(&mut self, delta: i32);
+      pub fn max_offset(&self) -> u16 {
+          self.content_height.saturating_sub(self.viewport_height)
+      }
+      pub fn is_scrollable(&self) -> bool {
+          self.content_height > self.viewport_height
+      }
+  }
+  ```
+
+- `scroll_by` clamps `offset` to `0..=max_offset()`. When
+  `is_scrollable()` is `false`, all scroll inputs are dropped
+  (returning `None` so the dispatcher does not mark the frame
+  dirty).
+- Every screen that today keeps a `scroll: u16` field migrates to
+  a `ScrollState`, computing `content_height` from its
+  view-model and `viewport_height` from the rendered `Rect`.
+- Page-up / page-down / home / end also go through `ScrollState`
+  to inherit the clamping.
+
+Acceptance:
+
+- On a tx with a single short log, pressing `PageDown` does
+  nothing (no flicker, scroll stays at 0).
+- On a tx with many logs, pressing `PageDown` repeatedly stops
+  when the last log is anchored to the last visible row (no blank
+  tail).
+- Unit tests for `ScrollState` cover: zero content, content
+  shorter than viewport, content exactly equal to viewport,
+  content longer than viewport, delta larger than bounds in
+  either direction.
+- BDD scenario on `tx_detail.feature`:
+  `Scrolling the Logs tab stops at the last log row`.
+
+### 13.4 Logs tab — interactive navigation and ABI-decoded values
+
+**Scope**: `TxDetailScreen` Logs tab.
+
+Problem: the Logs tab today renders each log as a static paragraph.
+The user needs to:
+
+- Pick which log to inspect (multiple logs per tx).
+- Navigate inside a log across its decoded fields (topic0 / event
+  signature, indexed arguments per topic, decoded data arguments).
+- Copy a selected field's canonical value.
+- See ABI-decoded values for topics and data, falling back to raw
+  hex — with the raw hex shown to the right in gray when the
+  decoded value is selected (mirrors 13.2).
+
+Design:
+
+- Two-pane layout inside the Logs tab:
+  - **Left**: list of logs (one line per log, summary =
+    `#index  Event(...)` or `#index  0xtopic0`).
+  - **Right**: detail view of the currently highlighted log, with
+    its own row-level cursor traversing `event signature`,
+    `topic[1]..topic[3]` (indexed args), and each decoded data
+    argument.
+- Decoding path uses the existing `DecodeTxLogs` use case. The
+  `TxView` already carries `decoded_logs: Vec<DecodedLog>`; we
+  extend `DecodedLog` with `fields: Vec<DecodedField>` where:
+
+  ```rust
+  pub struct DecodedField {
+      pub name: String,
+      pub kind: AbiKind,
+      pub value: DecodedValue,
+      pub raw_hex: String,
+      pub source: SignatureSource,
+  }
+  ```
+
+- `DecodedField::raw_hex` stores the 32-byte-aligned hex of the
+  underlying topic or data slot; the Logs-tab renderer shows it in
+  `Theme::text_muted` next to the decoded value only when that
+  field row is selected.
+- When ABI decoding fails (no ABI, no sigdb hit, or type mismatch),
+  the field renders as raw hex in the primary column and the
+  muted column is empty.
+- Keybindings local to the Logs tab:
+  - `Up`/`Down` in the left pane changes the selected log.
+  - `→`/`Enter` focuses the right pane.
+  - `Up`/`Down` in the right pane walks the field cursor.
+  - `←`/`Esc` returns focus to the left pane.
+  - `y` copies the selected field's canonical value (decoded
+    textual form for primitives, `raw_hex` for bytes / unknowns).
+- ABI source: the same `ContractSourcePort` already used by
+  `LoadTxOverview`. Cache hit re-used; no extra fetch.
+
+Acceptance:
+
+- A USDC `Transfer` fixture log renders with fields
+  `from`, `to`, `value`, the `value` line copyable as the
+  decimal number (not the raw uint256 hex) and showing
+  `raw: 0x0000...03e8` in gray when selected.
+- An unknown-event log renders as
+  `topic0 0x..., topic1 0x..., data 0x...` with the muted raw
+  hex shown only on the selected row.
+- Functional test on `DecodeTxLogs`: adds a `fields` assertion to
+  the existing ABI-hit case and asserts `raw_hex` on each field.
+- BDD scenarios:
+  - `Logs tab lets the user switch between logs`.
+  - `Logs tab copies the decoded value of an indexed argument`.
+  - `Logs tab falls back to raw hex when no ABI is available`.
+
+### 13.5 Tab navigation — Shift+Tab and arrow keys **(project-wide)**
+
+**Scope**: every screen that exposes a tab strip (`TxDetailScreen`,
+`BlockDetailScreen`, `AddressDetailScreen`,
+`ContractDetailScreen`, `TokenDetailScreen`, any future tabbed
+screen). Centralised in the shared `tab_strip` widget and in the
+global keymap.
+
+Problem: today only `Tab` (forward) is bound. There is no way to
+move to the previous tab, nor to use arrow keys to move across
+tabs.
+
+Design:
+
+- Introduce a single action enum entry `Action::TabNav(Direction)`
+  where `Direction { Next, Prev }`, resolved in the global keymap
+  from `Tab` / `Shift+Tab` and — when the screen's focus scope is
+  the tab strip — from `Right` / `Left`.
+- Tabbed screens stop listening to `Tab` directly; they consume
+  `Action::TabNav` on `handle_event` and rotate with wraparound.
+- `Up` / `Down` keep their existing semantics (move the in-tab
+  selection cursor, see 13.1 and 13.4). When a screen has no
+  in-tab cursor the keys are ignored.
+- Arrow-key tab switching is disabled while the right pane of the
+  Logs tab (13.4) has focus, because there `Left` means "return
+  to the log list". The rule is: if the focused widget consumes
+  the arrow key, the tab strip doesn't see it.
+- The existing screen-local `Shift+T` previous-tab binding
+  documented in section 3 is removed in favour of `Shift+Tab`;
+  the status-bar hints across the app are updated.
+- Keymap documentation in each plan file (`3-block-detail.md`,
+  `4-tx-detail.md`, `6-address-detail.md`, `7-contract-detail.md`,
+  `8-token-detail.md`) is updated in lock-step.
+
+Acceptance:
+
+- `Shift+Tab` on any tabbed screen moves to the previous tab with
+  wraparound.
+- `Right` / `Left` on a tabbed screen with no conflicting focus
+  switch tabs.
+- `Up` / `Down` on a screen with a cursor moves the cursor; on a
+  screen without one they are a no-op (no flicker, no crash).
+- BDD scenario on `tx_detail.feature`:
+  `Shift+Tab returns to the previous tab`.
+- The plan files for every other tabbed screen are updated in the
+  same commit; checked by grep'ing for `Shift+T` / `Shift + T` in
+  plan/ to confirm only the new binding is referenced.
