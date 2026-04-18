@@ -50,9 +50,12 @@ use crate::{
 };
 use mempool_feed::EmptyPendingTxStream;
 
-/// Build a live `TxDetailScreen` backed by a dedicated Alchemy
-/// tx-reader task, plus ABI + signature-directory decoding when the
-/// corresponding keys are available.
+/// Build a live `TxDetailScreen`. Every tab is populated through the
+/// full enrichment pipeline (ABI decoding when possible + asset
+/// changes + state diff) so the heavier tabs never get stuck in
+/// "pending..." just because ETHERSCAN_API_KEY is missing: we fall
+/// back to `TxContractSource::Noop` in that case and the decoding
+/// simply returns no matches.
 fn live_tx_detail_screen(
     chain: Chain,
     hash: crate::domain::TxHash,
@@ -62,27 +65,29 @@ fn live_tx_detail_screen(
     let reader = AlchemyTxReader::new(rpc.clone());
     let (feed, sender) = tx_feed();
 
-    let signatures = SourcifySignatureDirectory::with_default_http().ok();
     let sim = AlchemySimulation::new(rpc.clone());
     let trace = AlchemyTxTracer::new(rpc);
 
-    if let (Some(key), Some(signatures)) = (etherscan_key, signatures)
-        && let Ok(client) = EtherscanClient::with_default_http(key)
-    {
-        let contract_source = EtherscanContractSource::new(client);
-        std::mem::drop(tx_feed::spawn_full(
-            chain,
-            reader,
-            contract_source,
-            signatures,
-            sim,
-            trace,
-            sender,
-        ));
-        return Box::new(TxDetailScreen::loading(chain, hash, feed));
-    }
+    let contract_source = etherscan_key
+        .and_then(|key| EtherscanClient::with_default_http(key).ok())
+        .map(EtherscanContractSource::new)
+        .map(TxContractSource::Etherscan)
+        .unwrap_or(TxContractSource::Noop);
 
-    std::mem::drop(tx_feed::spawn(chain, reader, sender));
+    let signatures = SourcifySignatureDirectory::with_default_http()
+        .map(TxSignatureDir::Sourcify)
+        .unwrap_or(TxSignatureDir::Noop);
+
+    std::mem::drop(tx_feed::spawn_full(
+        chain,
+        reader,
+        contract_source,
+        signatures,
+        sim,
+        trace,
+        sender,
+    ));
+
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
@@ -146,6 +151,60 @@ impl crate::application::ports::TokenSearchPort for NoopTokenSearch {
         _chain: Chain,
     ) -> Result<Vec<crate::domain::TokenMetadata>, crate::domain::DomainError> {
         Ok(Vec::new())
+    }
+}
+
+/// Composite ContractSourcePort used by the tx-detail pipeline so the
+/// full enrichment (asset changes + state diff) always runs, even if
+/// ETHERSCAN_API_KEY is not configured. Missing keys just mean no ABI
+/// decoding.
+#[derive(Clone)]
+enum TxContractSource {
+    Etherscan(EtherscanContractSource),
+    Noop,
+}
+
+impl crate::application::ports::ContractSourcePort for TxContractSource {
+    async fn get_abi(
+        &self,
+        address: crate::domain::Address,
+        chain: Chain,
+    ) -> Result<Option<crate::domain::ContractAbi>, crate::domain::DomainError> {
+        match self {
+            TxContractSource::Etherscan(inner) => inner.get_abi(address, chain).await,
+            TxContractSource::Noop => Ok(None),
+        }
+    }
+}
+
+/// Same idea for the signature directory. When the Sourcify HTTP
+/// client cannot be built we fall back to a Noop and the UI shows the
+/// raw selector / topic0, but the heavier tabs still populate.
+#[derive(Clone)]
+enum TxSignatureDir {
+    Sourcify(SourcifySignatureDirectory),
+    Noop,
+}
+
+impl crate::application::ports::SignatureDirectoryPort for TxSignatureDir {
+    async fn lookup_selector(
+        &self,
+        selector: [u8; 4],
+    ) -> Result<Option<String>, crate::domain::DomainError> {
+        match self {
+            TxSignatureDir::Sourcify(inner) => inner.lookup_selector(selector).await,
+            TxSignatureDir::Noop => Ok(None),
+        }
+    }
+
+    async fn lookup_event_topic(
+        &self,
+        topic: [u8; 32],
+    ) -> Result<Option<String>, crate::domain::DomainError> {
+        match self {
+            TxSignatureDir::Sourcify(inner) => inner.lookup_event_topic(topic).await,
+            TxSignatureDir::Noop => Ok(None),
+        }
     }
 }
 

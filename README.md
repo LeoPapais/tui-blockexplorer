@@ -38,6 +38,9 @@ Inside the TUI:
 | `Enter`   | Open selected candidate, transaction or mempool tx       |
 | `Up/Down` | Move selection (lists)                                   |
 | `Tab`     | Next tab (Block / Tx detail)                             |
+| `j`/`k`, Arrows | Scroll tab content by one line (Tx detail)         |
+| `PageUp`/`PageDown` | Scroll tab content by ten lines (Tx detail)    |
+| `Home`/`End` | Jump to top / bottom of current tab (Tx detail)       |
 | `[` / `]` | Previous / next block (Block detail)                     |
 | `p`       | Pause / resume stream (Mempool)                          |
 | `c`       | Clear list (Mempool)                                     |

@@ -2,12 +2,14 @@
 //! `TxView` values. Mirrors `block_feed.rs` and `search_feed.rs` for
 //! the TxDetail screen.
 //!
-//! Decoding is optional: callers can supply concrete
-//! `ContractSourcePort` / `SignatureDirectoryPort` implementations for
-//! ABI + signature directory fallback, or pass `None` to fall back to
-//! the bare-view path that leaves the method / logs undecoded.
+//! Every live caller uses [`spawn_full`]: the decoding happens
+//! up-front and the heavier asset-change / state-diff tabs populate
+//! concurrently so none of the tabs stays stuck in "Pending..."
+//! indefinitely. Composite adapters (Etherscan or Noop,
+//! Sourcify or Noop) let the caller opt out of individual decoders
+//! without having to pick a different spawn path.
 //!
-//! See `plan/4-tx-detail.md` sections 12.3 and 12.4.2.
+//! See `plan/4-tx-detail.md` sections 12.3, 12.4.2 and 12.4.3.
 
 use tokio::task::JoinHandle;
 
@@ -23,28 +25,6 @@ use crate::{
     },
     domain::Chain,
 };
-
-/// Spawn the feed without decoding: method + logs come through
-/// undecoded. Used by paths that do not yet wire ABI / signature
-/// adapters.
-pub fn spawn<R>(chain: Chain, reader: R, sender: TxFeedSender) -> JoinHandle<()>
-where
-    R: TxReaderPort + 'static,
-{
-    tokio::spawn(async move {
-        let TxFeedSender {
-            updates_tx,
-            mut input_rx,
-        } = sender;
-        while let Some(hash) = input_rx.recv().await {
-            if let Ok(view) = load_tx_overview::run(&reader, hash, chain).await
-                && updates_tx.send(view).is_err()
-            {
-                break;
-            }
-        }
-    })
-}
 
 fn send_or_break(
     tx: &tokio::sync::mpsc::UnboundedSender<TxView>,

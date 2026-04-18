@@ -1,15 +1,20 @@
 //! Transaction Detail screen.
 //!
-//! Now surfaces Overview + Logs + Raw tabs. See
-//! `plan/4-tx-detail.md` sections 12.3 (MVP) and 12.4.2 (this
-//! expansion). Asset Changes and State Changes tabs arrive in commit
-//! 3 of the plan-4 expansion.
+//! Surfaces Overview / Logs / Asset Changes / State Changes / Raw
+//! tabs. See `plan/4-tx-detail.md` sections 12.3 (MVP) and 12.4
+//! (expansion).
+//!
+//! Each tab is scrollable: `Up/Down` (or `j`/`k`) moves by one line,
+//! `PageUp`/`PageDown` by ten, `Home`/`End` jump to the extremes.
+//! Switching tabs resets the scroll offset.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block as RatBlock, Borders, Paragraph, Wrap},
+    style::{Color, Modifier, Style},
+    text::Line,
+    widgets::{Block as RatBlock, Borders, Paragraph, Tabs, Wrap},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -58,13 +63,26 @@ pub enum TxTab {
 }
 
 impl TxTab {
+    const ALL: [TxTab; 5] = [
+        TxTab::Overview,
+        TxTab::Logs,
+        TxTab::AssetChanges,
+        TxTab::StateChanges,
+        TxTab::Raw,
+    ];
+
     fn next(self) -> Self {
+        let idx = self.index();
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    fn index(self) -> usize {
         match self {
-            TxTab::Overview => TxTab::Logs,
-            TxTab::Logs => TxTab::AssetChanges,
-            TxTab::AssetChanges => TxTab::StateChanges,
-            TxTab::StateChanges => TxTab::Raw,
-            TxTab::Raw => TxTab::Overview,
+            TxTab::Overview => 0,
+            TxTab::Logs => 1,
+            TxTab::AssetChanges => 2,
+            TxTab::StateChanges => 3,
+            TxTab::Raw => 4,
         }
     }
 
@@ -85,6 +103,11 @@ pub struct TxDetailScreen {
     current: Option<TxView>,
     feed: TxFeed,
     active_tab: TxTab,
+    /// Vertical scroll offset, in wrapped lines, applied to the
+    /// currently visible tab body. Resets whenever the active tab
+    /// changes. Used by every tab so long outputs can be paged
+    /// through without being truncated.
+    scroll: u16,
 }
 
 impl TxDetailScreen {
@@ -96,6 +119,7 @@ impl TxDetailScreen {
             current: None,
             feed,
             active_tab: TxTab::Overview,
+            scroll: 0,
         }
     }
 
@@ -142,66 +166,32 @@ impl Screen for TxDetailScreen {
             chunks[0],
         );
 
-        let tabs = format!(
-            "[ {over} ]  [ {logs} ]  [ {asset} ]  [ {state} ]  [ {raw} ]",
-            over = marker(self.active_tab, TxTab::Overview),
-            logs = marker(self.active_tab, TxTab::Logs),
-            asset = marker(self.active_tab, TxTab::AssetChanges),
-            state = marker(self.active_tab, TxTab::StateChanges),
-            raw = marker(self.active_tab, TxTab::Raw),
-        );
+        let titles: Vec<Line<'static>> = TxTab::ALL
+            .iter()
+            .map(|t| Line::from(format!(" {} ", t.label())))
+            .collect();
         frame.render_widget(
-            Paragraph::new(tabs).block(
-                RatBlock::default().borders(Borders::ALL).title("Tabs"),
-            ),
+            Tabs::new(titles)
+                .select(self.active_tab.index())
+                .block(RatBlock::default().borders(Borders::ALL).title("Tabs"))
+                .divider(" ")
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238))
+                        .fg(Color::White),
+                ),
             chunks[1],
         );
 
-        match (self.current.as_ref(), self.active_tab) {
-            (None, _) => frame.render_widget(
-                Paragraph::new("Loading...")
-                    .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
-                chunks[2],
-            ),
-            (Some(view), TxTab::Overview) => frame.render_widget(
-                Paragraph::new(overview_body(view))
-                    .wrap(Wrap { trim: false })
-                    .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
-                chunks[2],
-            ),
-            (Some(view), TxTab::Logs) => frame.render_widget(
-                Paragraph::new(logs_body(&view.decoded_logs))
-                    .wrap(Wrap { trim: false })
-                    .block(RatBlock::default().borders(Borders::ALL).title("Logs")),
-                chunks[2],
-            ),
-            (Some(view), TxTab::AssetChanges) => frame.render_widget(
-                Paragraph::new(asset_changes_body(&view.asset_changes))
-                    .wrap(Wrap { trim: false })
-                    .block(
-                        RatBlock::default()
-                            .borders(Borders::ALL)
-                            .title("Asset Changes"),
-                    ),
-                chunks[2],
-            ),
-            (Some(view), TxTab::StateChanges) => frame.render_widget(
-                Paragraph::new(state_changes_body(&view.state_diff))
-                    .wrap(Wrap { trim: false })
-                    .block(
-                        RatBlock::default()
-                            .borders(Borders::ALL)
-                            .title("State Changes"),
-                    ),
-                chunks[2],
-            ),
-            (Some(view), TxTab::Raw) => frame.render_widget(
-                Paragraph::new(view.tx.raw_json.clone())
-                    .wrap(Wrap { trim: false })
-                    .block(RatBlock::default().borders(Borders::ALL).title("Raw")),
-                chunks[2],
-            ),
-        }
+        let (title, body) = self.body_text();
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((self.scroll, 0))
+                .block(RatBlock::default().borders(Borders::ALL).title(title)),
+            chunks[2],
+        );
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
@@ -210,6 +200,31 @@ impl Screen for TxDetailScreen {
             KeyCode::Esc => Command::Pop,
             KeyCode::Tab | KeyCode::BackTab => {
                 self.active_tab = self.active_tab.next();
+                self.scroll = 0;
+                Command::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.scroll = self.scroll.saturating_sub(1);
+                Command::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll = self.scroll.saturating_add(1);
+                Command::None
+            }
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(10);
+                Command::None
+            }
+            KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(10);
+                Command::None
+            }
+            KeyCode::Home => {
+                self.scroll = 0;
+                Command::None
+            }
+            KeyCode::End => {
+                self.scroll = u16::MAX;
                 Command::None
             }
             _ => Command::None,
@@ -230,11 +245,22 @@ impl Screen for TxDetailScreen {
     }
 }
 
-fn marker(active: TxTab, tab: TxTab) -> String {
-    if active == tab {
-        format!("*{}*", tab.label())
-    } else {
-        tab.label().to_string()
+impl TxDetailScreen {
+    fn body_text(&self) -> (&'static str, String) {
+        let Some(view) = self.current.as_ref() else {
+            return ("Overview", "Loading...".to_string());
+        };
+        match self.active_tab {
+            TxTab::Overview => ("Overview", overview_body(view)),
+            TxTab::Logs => ("Logs", logs_body(&view.decoded_logs)),
+            TxTab::AssetChanges => {
+                ("Asset Changes", asset_changes_body(&view.asset_changes))
+            }
+            TxTab::StateChanges => {
+                ("State Changes", state_changes_body(&view.state_diff))
+            }
+            TxTab::Raw => ("Raw", view.tx.raw_json.clone()),
+        }
     }
 }
 
