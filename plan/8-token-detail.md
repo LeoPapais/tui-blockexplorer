@@ -194,9 +194,19 @@ expected); empty history.
 
 ## 11. Deferred
 
-- Holders tab (top N holders, distribution chart). Requires data not directly
-provided by Alchemy and is deprioritised for MVP.
-- Multi-chain aggregated view (same token across chains) — future.
+- **WONT-DO**: Holders tab (top-N holders, distribution chart). Alchemy does
+not expose this directly; deprioritised for MVP. Tracked in
+`plan/15-backlog.md` §8.9.
+- **WONT-DO**: Multi-chain aggregated view (same token across chains).
+Tracked in `plan/15-backlog.md` §8.9.
+- **Shipped (13)**: Live price streaming. The dispatcher now subscribes to a
+`TokenPriceStreamPort` that polls `PricesPort::get_single` every 15 s and
+appends points to a rolling 60-sample window on the Chart tab without
+requiring the user to reopen the screen. See §13.1.
+- **Shipped (13)**: Unsupported-token empty state. `TokenMetadata::is_incomplete`
+now short-circuits the Overview into a dedicated card with a
+"View as Contract" shortcut on `c` when `symbol` / `decimals` are missing.
+See §13.2.
 
 ## 12. Implementation plan
 
@@ -341,6 +351,77 @@ supply/decimals is missing it falls back to `-`.
 
 - Holders tab (see section 11).
 - Fiat currencies other than USD.
-- Live price streaming (the chart is fetched once per window
-switch; a refresh key could land in a follow-up).
+
+## 13. Shipped follow-ups (from `plan/15-backlog.md` §8.9)
+
+### 13.1 Live price streaming
+
+Until this slice the Chart tab only refetched a window when the user
+switched between `1` / `2` / `3`; the current window stayed frozen.
+
+**Port.** `src/application/ports/token_price_stream.rs` introduces
+
+```rust
+pub trait TokenPriceStreamPort: Send + Sync {
+    fn subscribe(
+        &self,
+        address: Address,
+        chain: Chain,
+    ) -> impl Future<Output = Result<UnboundedReceiver<PriceLookup>, DomainError>> + Send;
+}
+```
+
+Semantics match `NewHeadsStreamPort` (`plan/1-home.md` §12.2): dropping the
+sender side signals that the upstream connection went away; the dispatcher
+then stops appending new samples.
+
+**Adapter.** `src/adapters/prices/stream.rs` provides
+`PollingTokenPriceStream<P>` that wraps any `PricesPort` and re-issues
+`get_single` every `interval` (15 s default). The ticker lives in the
+adapter task, not in any use case — consistent with the rule in
+`.cursor/rules/tui.mdc` ("screens never do I/O in render").
+
+**Stub.** `StubTokenPriceStreamPort` in `tests/support/stubs.rs` lets
+scenarios push `PriceLookup` values on demand with `push(lookup)`.
+
+**Feed + UI.** `src/infra/token_feed.rs` spawns one subscription per
+incoming address and forwards every received lookup onto the existing
+`price_tx` channel. The Chart tab maintains a rolling window of up to 60
+samples (`PriceSeries::ROLLING_CAP`). Each streaming `Available` value
+appends a point to the series for the active window (so switching to the
+D1 window while the stream is live keeps appending). `Unsupported` /
+`Pending` leave the series untouched but still update the Overview price
+cell.
+
+**Tests.**
+
+- Functional: `tests/functional/token_price_stream.rs` drives the stub port
+  end-to-end and asserts the screen observes a second price sample without
+  a window switch.
+- BDD: `tests/e2e/features/token_detail.feature` "Token price updates every
+  tick without reopening the screen".
+
+### 13.2 Unsupported-token empty state
+
+`TokenMetadata::is_incomplete()` returns `true` when either `symbol` is
+empty or both `name.is_empty()` and `decimals == 0` (the two ways
+`alchemy_getTokenMetadata` can degenerate on non-standard contracts).
+`TokenOverview::is_incomplete` delegates to it.
+
+When `is_incomplete()` returns `true` the Overview renders a dedicated
+empty-state card with the copy
+
+```
+This address does not look like a standard ERC-20.
+Decimals / symbol are missing from alchemy_getTokenMetadata.
+[c] View as Contract   [Esc] back
+```
+
+Pressing `c` emits `Command::Push` with a `ContractDetailScreen` built
+through the same `OpenContractFactory` pattern used on Address Detail
+(`plan/6-address-detail.md` §12.4.4).
+
+BDD scenario: "Non-standard token shows the incomplete badge and jumps to
+Contract Detail on c".
+
 
