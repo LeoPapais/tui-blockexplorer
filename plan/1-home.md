@@ -36,7 +36,8 @@ transactions here (explicitly removed from scope).
 ```
 
 The two cards render side-by-side on wide terminals (>= 120 columns) and stack
-vertically on narrow ones.
+vertically on narrow ones. The narrow-terminal fallback is snapshot-tested
+under `tests/functional/home_screen_render.rs` (see §11.6).
 
 ## 3. Keybindings (screen-specific)
 
@@ -133,6 +134,13 @@ Feature: Home screen
     When the "newHeads" subscription drops
     Then the header shows a "disconnected" badge
     And the app schedules a reconnect
+
+  Scenario: Connection drop keeps last-known snapshots visible
+    Given the Home screen is rendered
+    When the "newHeads" subscription drops
+    Then the header shows a "reconnecting" hint
+    And the Network card still renders the last-known latest block
+    And the Gas Tracker card still renders the last-known slow / average / fast gwei
 ```
 
 ## 8. Functional tests
@@ -259,7 +267,9 @@ using `rstest` + `pretty_assertions` and only talks to stubs.
 - A snapshot test under `tests/functional/home_screen_render.rs` uses
   `ratatui::backend::TestBackend` to assert the rendered frame contains the
   chain name, latest block number, the three gas tiers and (when applicable)
-  the "disconnected" badge.
+  the "disconnected" badge. A narrow-terminal case (width 60 × height 30)
+  exercises the vertical-stack fallback from §2 and asserts the same
+  content still renders when the two cards are stacked.
 
 ### 11.7 Wiring BDD steps
 
@@ -270,8 +280,129 @@ instance held by the `AppWorld`. Each step either prepares the stub state
 
 ### 11.8 Acceptance
 
-- `cargo test --test e2e` prints "4 scenarios (4 passed)" for
-  `home.feature`.
+- `cargo test --test e2e` prints "5 scenarios (5 passed)" for
+  `home.feature` once the degraded-state "cached snapshots" scenario is in.
 - `cargo test --test functional` (or `cargo test`) passes all functional
   tests added under `tests/functional/`.
 - `cargo clippy --all-targets` remains at zero errors.
+
+## 12. WebSocket `newHeads` subscription (plan/15-backlog.md §8.2)
+
+Status: **incremental** — port + stub + BDD scenario land together;
+the real Alchemy WS adapter is still deferred.
+
+The Home screen's MVP refreshes on a 6-second timer
+(`infra/home_feed.rs::DEFAULT_REFRESH_PERIOD`). The backlog item under
+`plan/15-backlog.md` §8.2 promotes this to a proper `eth_subscribe("newHeads")`
+subscription so the latest block / base fee / gas oracle update within one
+block of it being sealed. The work lands in three cohesive layers, with the
+live WebSocket client explicitly deferred until the scope fits in one commit.
+
+### 12.1 Domain
+
+- `NewHead { chain: Chain, number: BlockNumber }` — the only field both
+  observers actually care about. Timestamps and parent hashes stay on the
+  existing `NetworkStatus` / `GasSnapshot` view models, which are still the
+  source of truth for card rendering.
+- No new error variants; transport issues still surface as
+  `DomainError::ProviderUnavailable`.
+
+### 12.2 Port
+
+New trait under `src/application/ports/new_heads_stream.rs`:
+
+```rust
+pub trait NewHeadsStreamPort: Send + Sync {
+    async fn subscribe(
+        &self,
+        chain: Chain,
+    ) -> Result<UnboundedReceiver<NewHead>, DomainError>;
+}
+```
+
+The stream is "best-effort": the receiver side drops when the upstream
+connection fails, which is the signal for the dispatcher to flip the
+`ConnectionStatus` to `Disconnected { reconnect_scheduled: true }` and
+fall back to polling via the existing `home_feed` refresher.
+
+### 12.3 Use case glue
+
+`HomeSession` gains a single new method:
+
+```rust
+pub async fn on_new_head_event(&mut self, head: NewHead) -> Result<(), DomainError>
+```
+
+which is equivalent to `refresh()` but records the last head number so the
+card can surface "last head: 21 345 679 (2s ago)" when we extend the layout
+later. MVP just refreshes.
+
+### 12.4 Adapter (deferred)
+
+The real adapter lives in `src/adapters/rpc/new_heads.rs` and targets the
+Alchemy WebSocket endpoint
+`wss://{subdomain}.g.alchemy.com/v2/{api_key}`. It sends
+`{"method": "eth_subscribe", "params": ["newHeads"]}` and translates each
+incoming `newHeads` notification into a `NewHead` domain value. Because
+`wiremock` cannot stand in for a WebSocket server, the adapter will rely on
+an `async_trait`-free port backed by `tokio-tungstenite`; its own tests will
+either be skipped until a WS test harness lands, or use an in-process
+`tokio::net::TcpListener` echoing a canned JSON-RPC frame.
+
+Until that adapter ships, `infra/mod.rs` wires a noop
+`NewHeadsStream::Disabled` so polling remains the live behaviour. A
+`TODO(plan/1-home.md §12.4)` comment points at this section.
+
+### 12.5 Dispatcher wiring
+
+`infra/home_feed.rs` grows a `start_with_stream(session, stream, period)`
+variant that `select!`s between the WS stream and the timer tick:
+
+- WS delivers a `NewHead` → call `session.on_new_head_event(head)` →
+  publish the view.
+- WS stream drops → mark the session disconnected (`on_connection_drop`),
+  publish, and keep the timer running so the screen still refreshes.
+- Timer fires → call `session.refresh()` as today (belt-and-suspenders:
+  even while the WS is live, a low-frequency poll detects stale state
+  when the provider silently pauses the stream).
+
+### 12.6 BDD coverage
+
+- `home.feature` already has the "Connection drop shows degraded state"
+  scenario; §7 adds "Connection drop keeps last-known snapshots visible".
+- A new scenario "New head event updates the Home view" drives a
+  `StubNewHeadsStreamPort::push_head(...)` event through the session and
+  asserts the view-model's `latest_block` changes without calling
+  `on_new_head()` directly.
+
+### 12.7 Tests and stubs
+
+- `tests/support/stubs.rs` gains `StubNewHeadsStreamPort` with
+  `push_head(chain, BlockNumber)` / `set_broken(bool)`. The stub stores
+  outbound `UnboundedSender<NewHead>`s and broadcasts to all current
+  subscribers.
+- `tests/functional/observe_new_heads.rs` covers:
+  - `it_emits_on_push_head` (happy path).
+  - `it_surfaces_provider_unavailable_when_broken`.
+- `tests/functional/home_session.rs` gains
+  `it_refreshes_on_new_head_event` that pushes a `NewHead`, calls
+  `on_new_head_event`, and asserts the view model was refreshed from the
+  (re-primed) network stub.
+
+### 12.8 Acceptance
+
+- Port, stub and one happy-path scenario land in the same branch.
+- The real Alchemy WS adapter lands in a follow-up branch referenced from
+  `plan/15-backlog.md` §8.2 and §13 of this plan.
+- Polling via `home_feed::start` remains the default entry point until the
+  adapter ships; the refreshing behaviour from §11 stays unchanged for
+  users.
+
+## 13. Follow-up
+
+- `src/adapters/rpc/new_heads.rs` — real Alchemy WebSocket adapter. Uses
+  `tokio-tungstenite`; test harness TBD (see §12.4).
+- "Last head age" badge on the Network card (requires an injected `Clock`
+  port, tracked under `plan/15-backlog.md` §8.12).
+- Remove the 6s polling fallback once the WS adapter has proven stable
+  across the supported chains.

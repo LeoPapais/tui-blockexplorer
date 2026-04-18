@@ -13,7 +13,7 @@ use crate::{
         ports::{ChainRegistryPort, GasOraclePort, NetworkStatusPort},
         use_cases::{observe_gas_oracle, observe_network_status, switch_chain},
     },
-    domain::{Chain, DomainError, GasSnapshot, NetworkStatus},
+    domain::{Chain, DomainError, GasSnapshot, NetworkStatus, NewHead},
 };
 
 /// High-level connection state surfaced on the Home header.
@@ -116,6 +116,20 @@ where
     /// Currently equivalent to [`HomeSession::refresh`]; kept separate
     /// because future work may coalesce head-triggered refreshes.
     pub async fn on_new_head(&mut self) -> Result<(), DomainError> {
+        self.refresh().await
+    }
+
+    /// Called when a live `newHeads` event is delivered by the
+    /// WebSocket subscription. Ignores events from other chains (can
+    /// happen when a chain switch races a still-draining WS stream)
+    /// and otherwise drives a full [`HomeSession::refresh`] to pick up
+    /// the new base-fee and block-time average.
+    ///
+    /// See `plan/1-home.md` section 12.3.
+    pub async fn on_new_head_event(&mut self, head: NewHead) -> Result<(), DomainError> {
+        if head.chain != self.state.chain {
+            return Ok(());
+        }
         self.refresh().await
     }
 

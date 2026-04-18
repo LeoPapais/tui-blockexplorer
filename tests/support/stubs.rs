@@ -17,16 +17,16 @@ use blockexplorer_tui::{
         ports::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
             ChainRegistryPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-            EventLogPort, GasOraclePort, NetworkStatusPort, PendingTxStreamPort, PortfolioPort,
-            PricesPort, ProxyDetectionPort, SignatureDirectoryPort, SignatureHit, StoragePort,
-            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
-            TxSimulationPort, TxTracePort,
+            EventLogPort, GasOraclePort, NetworkStatusPort, NewHeadsStreamPort,
+            PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
+            SignatureDirectoryPort, SignatureHit, StoragePort, TokenReaderPort, TokenSearchPort,
+            TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
-        DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, PendingTx,
+        DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, NewHead, PendingTx,
         PendingTxEvent, PendingTxFilter, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
         StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
         TransferCursor, TransferPage, TxHash, TxSummary, Wei,
@@ -203,6 +203,64 @@ impl GasOraclePort for StubGasOraclePort {
             .get(&chain)
             .cloned()
             .ok_or(DomainError::NotFound)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: NewHeadsStreamPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct NewHeadsState {
+    senders: Vec<UnboundedSender<NewHead>>,
+    broken: bool,
+}
+
+/// Fan-out stub for the `newHeads` WebSocket subscription. Each call to
+/// [`NewHeadsStreamPort::subscribe`] produces a fresh receiver; calling
+/// [`StubNewHeadsStreamPort::push_head`] broadcasts the event to every
+/// live subscriber. [`Self::set_broken`] flips subsequent `subscribe`
+/// calls to return `DomainError::ProviderUnavailable`, mirroring the
+/// behaviour of the real Alchemy WS adapter when it fails to connect.
+#[derive(Default, Clone)]
+pub struct StubNewHeadsStreamPort {
+    inner: Arc<Mutex<NewHeadsState>>,
+}
+
+impl StubNewHeadsStreamPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Deliver a `NewHead` event to every live subscriber. Drops
+    /// senders whose receiver has been closed.
+    pub fn push_head(&self, head: NewHead) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.senders.retain(|s| s.send(head).is_ok());
+    }
+
+    pub fn set_broken(&self, broken: bool) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.broken = broken;
+    }
+
+    /// Drop every currently-held sender, simulating the upstream
+    /// connection vanishing without an explicit error.
+    pub fn disconnect_all(&self) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.senders.clear();
+    }
+}
+
+impl NewHeadsStreamPort for StubNewHeadsStreamPort {
+    async fn subscribe(&self, _chain: Chain) -> Result<UnboundedReceiver<NewHead>, DomainError> {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        if state.broken {
+            return Err(DomainError::ProviderUnavailable);
+        }
+        let (tx, rx) = unbounded_channel();
+        state.senders.push(tx);
+        Ok(rx)
     }
 }
 

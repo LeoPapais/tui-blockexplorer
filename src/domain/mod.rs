@@ -37,7 +37,7 @@ pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, S
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
-pub use network_status::{GasSnapshot, NetworkStatus};
+pub use network_status::{GasSnapshot, NetworkStatus, NewHead};
 pub use portfolio::TokenHolding;
 pub use price::{PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenPrice};
 pub use search::{AddressKind, ResolvedEntity};

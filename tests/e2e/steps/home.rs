@@ -8,11 +8,13 @@
 //! the same code paths the UI adapter will use.
 
 use blockexplorer_tui::{
-    application::{ConnectionStatus, HomeSession},
-    domain::Chain,
+    adapters::ui::home,
+    application::{ConnectionStatus, HomeSession, HomeViewModel, use_cases::observe_new_heads},
+    domain::{BlockNumber, Chain, NewHead},
 };
 use cucumber::{given, then, when};
 use pretty_assertions::assert_eq;
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 use crate::support::stubs::{GasSnapshotFixture, NetworkStatusFixture};
 use crate::world::AppWorld;
@@ -182,6 +184,45 @@ async fn subscription_drops(world: &mut AppWorld) {
     session.on_connection_drop();
 }
 
+#[when(regex = r#"^a new head is received from the "newHeads" subscription$"#)]
+async fn new_head_received(world: &mut AppWorld) {
+    // Subscribe via the stub port, push a head with the "next head"
+    // number and drive it through HomeSession::on_new_head_event. The
+    // network / gas stubs are re-primed with the "next head" fixtures
+    // so the refresh picks up the new values, matching the contract
+    // described in plan/1-home.md §12.3.
+    let chain = world.active_chain.expect("active chain must be set");
+    let mut rx = futures_lite_block_on(async {
+        observe_new_heads::run(&world.new_heads_stub, chain)
+            .await
+            .expect("subscribe ok")
+    });
+
+    world.network_stub.set_snapshot(NetworkStatusFixture::load(
+        "home__network_status__ethereum_next_head.json",
+    ));
+    world.gas_stub.set_snapshot(GasSnapshotFixture::load(
+        "home__gas_snapshot__ethereum_next_head.json",
+    ));
+
+    let head = NewHead {
+        chain,
+        number: BlockNumber::new(21_345_679),
+    };
+    world.new_heads_stub.push_head(head);
+
+    let received = rx.try_recv().expect("head must land in the channel");
+    assert_eq!(received, head);
+
+    let session = world.home.as_mut().expect("session must exist");
+    futures_lite_block_on(async {
+        session
+            .on_new_head_event(received)
+            .await
+            .expect("refresh ok");
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Then
 // ---------------------------------------------------------------------------
@@ -263,4 +304,105 @@ async fn app_schedules_reconnect(world: &mut AppWorld) {
         }
         ConnectionStatus::Connected => panic!("expected disconnected state"),
     }
+}
+
+#[then(regex = r#"^the header shows a "reconnecting" hint$"#)]
+async fn header_shows_reconnecting_hint(world: &mut AppWorld) {
+    let buffer = render_home(world);
+    assert!(
+        buffer_contains(&buffer, "reconnecting"),
+        "the rendered frame must display the reconnecting hint"
+    );
+}
+
+#[then("the Network card still renders the last-known latest block")]
+async fn network_card_renders_last_known_block(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    let network = view
+        .network
+        .as_ref()
+        .expect("last-known network snapshot must survive the drop");
+    let buffer = render_home(world);
+    let rendered = format_u64(network.latest_block.value());
+    assert!(
+        buffer_contains(&buffer, &rendered),
+        "the Network card must still show {rendered} while reconnecting"
+    );
+}
+
+#[then("the Gas Tracker card still renders the last-known slow, average and fast gwei")]
+async fn gas_card_renders_last_known_tiers(world: &mut AppWorld) {
+    let view = world.home.as_ref().expect("session").view();
+    let gas = view
+        .gas
+        .as_ref()
+        .expect("last-known gas snapshot must survive the drop");
+    let buffer = render_home(world);
+    assert!(
+        buffer_contains(&buffer, "Slow"),
+        "the Gas Tracker card must still render the Slow tier"
+    );
+    assert!(
+        buffer_contains(&buffer, "Avg"),
+        "the Gas Tracker card must still render the Avg tier"
+    );
+    assert!(
+        buffer_contains(&buffer, "Fast"),
+        "the Gas Tracker card must still render the Fast tier"
+    );
+
+    let slow = gas.slow.value().to_string();
+    let avg = gas.average.value().to_string();
+    let fast = gas.fast.value().to_string();
+    assert!(
+        buffer_contains(&buffer, &slow)
+            && buffer_contains(&buffer, &avg)
+            && buffer_contains(&buffer, &fast),
+        "all three gwei values ({slow}, {avg}, {fast}) must still render"
+    );
+}
+
+fn render_home(world: &AppWorld) -> Buffer {
+    let view: HomeViewModel = world
+        .home
+        .as_ref()
+        .expect("session must exist before rendering")
+        .view()
+        .clone();
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| home::render(frame, frame.area(), &view))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
+    let mut row = String::new();
+    for y in 0..buffer.area.height {
+        row.clear();
+        for x in 0..buffer.area.width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if row.contains(needle) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Mirrors `home::format_u64` (private). Keeps the step definitions
+/// independent from UI internals while still asserting on the same
+/// formatted output the user sees.
+fn format_u64(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, byte) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(*byte as char);
+    }
+    out
 }

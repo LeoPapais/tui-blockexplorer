@@ -12,7 +12,7 @@ mod block_feed;
 pub mod config;
 mod contract_feed;
 mod gas_feed;
-mod home_feed;
+pub mod home_feed;
 mod mempool_feed;
 mod runtime;
 pub mod search_feed;

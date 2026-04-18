@@ -29,3 +29,16 @@ Feature: Home screen
     When the "newHeads" subscription drops
     Then the header shows a "disconnected" badge
     And the app schedules a reconnect
+
+  Scenario: Connection drop keeps last-known snapshots visible
+    Given the Home screen is rendered
+    When the "newHeads" subscription drops
+    Then the header shows a "reconnecting" hint
+    And the Network card still renders the last-known latest block
+    And the Gas Tracker card still renders the last-known slow, average and fast gwei
+
+  Scenario: New head event updates the Home view
+    Given the Home screen is rendered
+    When a new head is received from the "newHeads" subscription
+    Then the Network card updates the latest block number
+    And the Gas Tracker card recomputes its values
