@@ -192,7 +192,8 @@ fn live_contract_detail_screen(
     let detector = build_proxy_detector(rpc.clone(), etherscan_key.as_deref());
     let contract_reader = AlchemyContractReader::new(rpc.clone());
     let event_log = AlchemyEventLog::new(rpc.clone());
-    let storage = AlchemyStorage::new(rpc);
+    let storage = AlchemyStorage::new(rpc.clone());
+    let network_status = AlchemyNetworkStatusAdapter::new(rpc);
 
     let source = etherscan_key
         .and_then(|key| EtherscanClient::with_default_http(key).ok())
@@ -209,6 +210,7 @@ fn live_contract_detail_screen(
         contract_reader,
         event_log,
         storage,
+        network_status,
         sender,
     ));
     Box::new(ContractDetailScreen::loading(chain, address, feed))

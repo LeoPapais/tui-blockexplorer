@@ -60,6 +60,23 @@ Feature: Contract detail
     And the user switches to the Events tab
     Then once loaded, the Events tab lists 2 events
 
+  Scenario: Events tab paginates backwards with "n"
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events tab
+    And the user presses "n" on the Events tab
+    Then once reloaded, the Events tab window moved backwards by 5000 blocks
+
+  Scenario: Events tab returns to the newest window with "N"
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens ContractDetail with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events tab
+    And the user presses "n" on the Events tab
+    And the user presses "N" on the Events tab
+    Then once reloaded, the Events tab page offset is 0
+
   Scenario: Storage tab reads the requested slot
     Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
     And the storage stub returns the u128 value 42 at slot 0 for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
