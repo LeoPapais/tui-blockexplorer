@@ -4,6 +4,7 @@
 //! import other `adapters::*` modules.
 
 pub mod cache;
+pub mod clock;
 pub mod config;
 pub mod ens;
 pub mod etherscan;

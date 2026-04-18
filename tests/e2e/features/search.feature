@@ -55,3 +55,34 @@ Feature: Universal search
     When the user opens search with "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
     Then once the ERC-20 probe completes, a "token" candidate "USDC" is appended
     And the primary candidate is still "address"
+
+  Scenario: Paste an Etherscan tx URL
+    Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    When the user opens search with "https://etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    Then the primary candidate is "transaction"
+    And pressing Enter pushes the "Transaction" screen
+
+  Scenario: Paste an Etherscan address URL
+    Given the address stub classifies "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as a contract
+    When the user opens search with "https://etherscan.io/address/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then the primary candidate is "address"
+    And the candidates include a "contract" entry for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+
+  Scenario: Paste an Etherscan block URL
+    Given the stub knows block 21000000
+    When the user opens search with "https://etherscan.io/block/21000000"
+    Then the primary candidate is "block"
+    And pressing Enter pushes the "Block" screen
+
+  Scenario: Uppercase-hex input still resolves to a transaction
+    Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    When the user opens search with "0x88DF016429689C079F3B2F6AD39FA052532C56795B733DA78A91EBE6A713944B"
+    Then the primary candidate is "transaction"
+
+  Scenario: Repeated search within 60 s reuses the cache
+    Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    And the search cache is enabled with a 60 second TTL
+    When the user opens search with "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    And the user closes the search modal
+    And the user opens search with "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
+    Then the tx lookup stub was called exactly 1 time
