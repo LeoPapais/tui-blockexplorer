@@ -1,5 +1,8 @@
 //! Block-level value objects.
 
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use tiny_keccak::{Hasher, Keccak};
+
 use crate::domain::{Address, Chain, DomainError, TxHash, UnixTimestamp, Wei, tx};
 
 /// A block height. Wrapped in a newtype to avoid mixing with other `u64`
@@ -98,6 +101,13 @@ pub struct Block {
     pub size: u64,
     pub extra_data: Vec<u8>,
     pub tx_hashes: Vec<TxHash>,
+    /// Validator that sealed this block, recovered from `extraData`
+    /// when the chain uses a signer-in-extraData consensus (Polygon
+    /// PoS / Bor). `None` on chains where `miner` is already the real
+    /// author or when recovery failed.
+    ///
+    /// See `plan/15-backlog.md` section 3.5.
+    pub extra_signer: Option<Address>,
 }
 
 impl Block {
@@ -114,4 +124,56 @@ impl Block {
     pub fn id_by_hash(&self) -> BlockId {
         BlockId::Hash(self.hash)
     }
+}
+
+/// Recover the Polygon PoS validator that sealed a block.
+///
+/// On Bor-based Polygon PoS the `miner` field is the zero address and
+/// the real author is recovered by `ecrecover` over the block's seal
+/// hash, using the last 65 bytes of `extra_data` as the signature.
+/// The preceding bytes (the "vanity") are ignored.
+///
+/// The seal hash itself is keccak256 of the RLP-encoded header with
+/// the signature stripped from `extraData`; it is a responsibility of
+/// the caller. This function is pure, domain-layer math and does not
+/// reconstruct the header.
+///
+/// Returns `None` when `extra_data` is shorter than the 65-byte
+/// signature, when the signature bytes are malformed, or when the
+/// recovery id is outside the accepted range. See
+/// `plan/15-backlog.md` section 3.5.
+#[must_use]
+pub fn recover_polygon_signer(extra_data: &[u8], seal_hash: &[u8; 32]) -> Option<Address> {
+    if extra_data.len() < 65 {
+        return None;
+    }
+    let sig_bytes = &extra_data[extra_data.len() - 65..];
+    let (rs, v) = sig_bytes.split_at(64);
+    let v = v[0];
+    // Bor stores recid as 0 / 1; accept 27 / 28 for parity with
+    // go-ethereum's ecrecover helper.
+    let recid_byte = match v {
+        0 | 1 => v,
+        27 | 28 => v - 27,
+        _ => return None,
+    };
+    let signature = Signature::from_slice(rs).ok()?;
+    let recid = RecoveryId::try_from(recid_byte).ok()?;
+    let verifying_key = VerifyingKey::recover_from_prehash(seal_hash, &signature, recid).ok()?;
+    Some(address_from_verifying_key(&verifying_key))
+}
+
+fn address_from_verifying_key(vk: &VerifyingKey) -> Address {
+    let encoded = vk.to_encoded_point(false);
+    let pk = encoded.as_bytes();
+    // `to_encoded_point(false)` always returns [0x04, X (32), Y (32)].
+    debug_assert_eq!(pk.len(), 65);
+    debug_assert_eq!(pk[0], 0x04);
+    let mut hasher = Keccak::v256();
+    hasher.update(&pk[1..]);
+    let mut out = [0u8; 32];
+    hasher.finalize(&mut out);
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&out[12..]);
+    Address::from_bytes(addr)
 }

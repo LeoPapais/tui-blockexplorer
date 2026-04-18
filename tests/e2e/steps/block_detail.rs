@@ -14,6 +14,7 @@ use blockexplorer_tui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{given, then, when};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 use crate::{
     steps::search::{build_search_factory, build_stack, spawn_block_detail},
@@ -44,6 +45,7 @@ fn sample_block(number: u64, hash_hex: &str, parent_hex: &str, tx_count: usize) 
         size: 102_400,
         extra_data: vec![0x42, 0x42],
         tx_hashes,
+        extra_signer: None,
     }
 }
 
@@ -71,10 +73,7 @@ fn apply_command(stack: &mut ScreenStack, cmd: Command) {
 }
 
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
-    let cmd = stack
-        .top_mut()
-        .expect("stack non-empty")
-        .handle_key(key);
+    let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
     apply_command(stack, cmd);
 }
 
@@ -244,4 +243,125 @@ async fn block_detail_shows(world: &mut AppWorld, number: u64) {
     .await;
     let top = current_block_detail(stack);
     assert_eq!(top.current().unwrap().number.value(), number);
+}
+
+// ---------------------------------------------------------------------------
+// Polygon signer scenario (plan/15-backlog.md §3.5)
+// ---------------------------------------------------------------------------
+
+const POLYGON_BLOCK_NUMBER: u64 = 85_696_170;
+const POLYGON_SIGNER_HEX: &str = "0x00856730088a5c3191bd26eb482e45229555ce57";
+
+fn polygon_block_with_signer() -> Block {
+    Block {
+        chain: Chain::Polygon,
+        number: BlockNumber::new(POLYGON_BLOCK_NUMBER),
+        hash: BlockHash::from_hex(
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        )
+        .unwrap(),
+        parent_hash: BlockHash::from_hex(
+            "0x2222222222222222222222222222222222222222222222222222222222222222",
+        )
+        .unwrap(),
+        timestamp: UnixTimestamp::from_seconds(1_745_000_000),
+        miner: Address::from_hex("0x0000000000000000000000000000000000000000").unwrap(),
+        gas_used: 12_000_000,
+        gas_limit: 30_000_000,
+        base_fee: Some(Wei::new(40_000_000_000)),
+        size: 12_800,
+        // 32 bytes of vanity + 65 bytes of signature. Contents do not
+        // matter for this scenario — the UI reads `extra_signer` only.
+        extra_data: vec![0u8; 32 + 65],
+        tx_hashes: vec![],
+        extra_signer: Some(Address::from_hex(POLYGON_SIGNER_HEX).unwrap()),
+    }
+}
+
+fn render_block_detail_to_buffer(screen: &BlockDetailScreen) -> Buffer {
+    use blockexplorer_tui::adapters::ui::Screen as _;
+    let backend = TestBackend::new(120, 25);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| screen.render(frame, frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
+    let mut row = String::new();
+    for y in 0..buffer.area.height {
+        row.clear();
+        for x in 0..buffer.area.width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if row.contains(needle) {
+            return true;
+        }
+    }
+    false
+}
+
+#[given("a Polygon block whose miner is the zero address")]
+async fn polygon_block_with_zero_miner(world: &mut AppWorld) {
+    world.active_chain = Some(Chain::Polygon);
+    let block = polygon_block_with_signer();
+    world.block_reader_stub.insert(block.clone());
+    world.block_stub.insert(BlockSummary {
+        number: block.number,
+        hash: block.hash,
+    });
+}
+
+#[when("the user opens BlockDetail")]
+async fn user_opens_block_detail(world: &mut AppWorld) {
+    let block = polygon_block_with_signer();
+    push_block_detail_directly(world, block);
+    let stack = world.stack.as_mut().unwrap();
+    tick_until(stack, |s| current_block_detail(s).current().is_some()).await;
+}
+
+#[then("the Overview tab shows a signer row recovered from extraData")]
+async fn overview_shows_signer_row(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    let top = current_block_detail(stack);
+    assert_eq!(top.active_tab(), BlockTab::Overview);
+    let block = top.current().expect("block is loaded");
+    assert_eq!(
+        block.miner,
+        Address::from_hex("0x0000000000000000000000000000000000000000").unwrap(),
+        "precondition: miner should be the zero address"
+    );
+    assert_eq!(
+        block.extra_signer.map(|a| a.to_hex()),
+        Some(POLYGON_SIGNER_HEX.to_string()),
+        "precondition: extra_signer must be populated",
+    );
+
+    let buffer = render_block_detail_to_buffer(top);
+    assert!(
+        buffer_contains(&buffer, "Signer"),
+        "Overview buffer must contain a 'Signer' row. Buffer was:\n{}",
+        dump_buffer(&buffer),
+    );
+    // The full address is 42 chars which does not fit on a 120-wide
+    // frame trimmed to the Overview pane once borders / padding are
+    // accounted for, so we only assert on a short prefix.
+    let prefix = &POLYGON_SIGNER_HEX[..10];
+    assert!(
+        buffer_contains(&buffer, prefix),
+        "Overview buffer must show the recovered signer hex (prefix {prefix}). Buffer was:\n{}",
+        dump_buffer(&buffer),
+    );
+}
+
+fn dump_buffer(buffer: &Buffer) -> String {
+    let mut out = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            out.push_str(buffer[(x, y)].symbol());
+        }
+        out.push('\n');
+    }
+    out
 }

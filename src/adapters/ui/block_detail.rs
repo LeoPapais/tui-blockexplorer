@@ -166,15 +166,17 @@ impl Screen for BlockDetailScreen {
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(3),
+            ])
             .split(area);
 
         // Header
         let header = header_for(self.current.as_ref());
         frame.render_widget(
-            Paragraph::new(header).block(
-                RatBlock::default().borders(Borders::ALL).title("Block"),
-            ),
+            Paragraph::new(header).block(RatBlock::default().borders(Borders::ALL).title("Block")),
             chunks[0],
         );
 
@@ -185,9 +187,7 @@ impl Screen for BlockDetailScreen {
             transactions = marker(self.active_tab, BlockTab::Transactions),
         );
         frame.render_widget(
-            Paragraph::new(tabs).block(
-                RatBlock::default().borders(Borders::ALL).title("Tabs"),
-            ),
+            Paragraph::new(tabs).block(RatBlock::default().borders(Borders::ALL).title("Tabs")),
             chunks[1],
         );
 
@@ -195,9 +195,8 @@ impl Screen for BlockDetailScreen {
         match (self.current.as_ref(), self.active_tab) {
             (None, _) => {
                 frame.render_widget(
-                    Paragraph::new("Loading...").block(
-                        RatBlock::default().borders(Borders::ALL).title("Overview"),
-                    ),
+                    Paragraph::new("Loading...")
+                        .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
                     chunks[2],
                 );
             }
@@ -232,10 +231,9 @@ impl Screen for BlockDetailScreen {
                     .collect();
                 frame.render_widget(
                     List::new(items).block(
-                        RatBlock::default().borders(Borders::ALL).title(format!(
-                            "Transactions ({})",
-                            block.tx_hashes.len()
-                        )),
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .title(format!("Transactions ({})", block.tx_hashes.len())),
                     ),
                     chunks[2],
                 );
@@ -283,9 +281,7 @@ impl Screen for BlockDetailScreen {
 
         // Shift+Tab is reported as `KeyCode::Tab` + SHIFT on a few
         // terminals; handle that too.
-        if key.code == KeyCode::Tab
-            && key.modifiers.contains(KeyModifiers::SHIFT)
-        {
+        if key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT) {
             self.active_tab = self.active_tab.previous();
             return Command::None;
         }
@@ -299,8 +295,8 @@ impl Screen for BlockDetailScreen {
                     self.tx_selected = self.tx_selected.saturating_sub(1);
                 }
                 KeyCode::Down if !block.tx_hashes.is_empty() => {
-                    self.tx_selected = (self.tx_selected + 1)
-                        .min(block.tx_hashes.len().saturating_sub(1));
+                    self.tx_selected =
+                        (self.tx_selected + 1).min(block.tx_hashes.len().saturating_sub(1));
                 }
                 KeyCode::Enter => {
                     if let Some(hash) = block.tx_hashes.get(self.tx_selected).copied() {
@@ -351,11 +347,19 @@ fn overview_body(b: &Block) -> String {
         .base_fee
         .map(|w| format!("{} wei", w.value()))
         .unwrap_or_else(|| "-".to_string());
+    // Polygon PoS and other Bor-style chains leave `miner` at the zero
+    // address and publish the real validator in `extraData`. We render
+    // the recovered signer immediately below the miner row so the user
+    // sees both the raw header value and the recovered author.
+    let signer_row = match b.extra_signer {
+        Some(addr) => format!("\nSigner     {}", addr.to_hex()),
+        None => String::new(),
+    };
     format!(
         "Hash       {}\n\
 Parent     {}\n\
 Timestamp  {} (unix)\n\
-Miner      {}\n\
+Miner      {}{signer_row}\n\
 Gas used   {} / {}\n\
 Base fee   {}\n\
 Size       {} bytes\n\

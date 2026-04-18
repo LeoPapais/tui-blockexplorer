@@ -1,0 +1,18 @@
+{
+  "_comment": "Shape-only Polygon block fixture for plan/15-backlog.md §3.5. The adapter-side seal-hash RLP is intentionally deferred (see TODO in src/adapters/rpc/block_reader.rs), so this fixture only carries a valid JSON-RPC block shape; the `extra_signer` assertion is covered by the synthetic pure-function tests in tests/functional/domain_block.rs. The extraData is 32 bytes of vanity + 65 bytes of signature, consistent with Bor's layout.",
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "number": "0x51bbaea",
+    "hash": "0xc0ffee00000000000000000000000000000000000000000000000000000000ff",
+    "parentHash": "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
+    "miner": "0x0000000000000000000000000000000000000000",
+    "timestamp": "0x68030000",
+    "gasUsed": "0xb71b00",
+    "gasLimit": "0x1c9c380",
+    "baseFeePerGas": "0x9502f9000",
+    "size": "0x3200",
+    "extraData": "0xd78301000e846765746889676f312e32312e3130856c696e757800000000000000b6d3f7b4da2fcf7b47abce91ffb9b6d19d5f8b5a04a4b8cd3a38f8a5c6b4b8d61b9d2f2b6e8aabcb3b22b5a9d0f4f0f8a1c1a1a2a3a4a5a6a7a8a9aaabacadaeaf01",
+    "transactions": []
+  }
+}

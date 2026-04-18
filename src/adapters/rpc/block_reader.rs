@@ -6,12 +6,12 @@
 
 use serde::Deserialize;
 
-use super::client::{RpcClient, parse_hex_u128, parse_hex_u64};
+use super::client::{RpcClient, parse_hex_u64, parse_hex_u128};
 use crate::{
     application::ports::BlockReaderPort,
     domain::{
-        Address, Block, BlockHash, BlockId, BlockNumber, Chain, DomainError, TxHash,
-        UnixTimestamp, Wei,
+        Address, Block, BlockHash, BlockId, BlockNumber, Chain, DomainError, TxHash, UnixTimestamp,
+        Wei,
     },
 };
 
@@ -59,10 +59,7 @@ impl AlchemyBlockReader {
                 .map_err(|e| e.into_domain()),
             BlockId::Hash(h) => self
                 .client
-                .call(
-                    "eth_getBlockByHash",
-                    serde_json::json!([h.to_hex(), false]),
-                )
+                .call("eth_getBlockByHash", serde_json::json!([h.to_hex(), false]))
                 .await
                 .map_err(|e| e.into_domain()),
         }
@@ -79,9 +76,9 @@ impl AlchemyBlockReader {
         let gas_used = parse_hex_u64(&raw.gas_used).map_err(|e| e.into_domain())?;
         let gas_limit = parse_hex_u64(&raw.gas_limit).map_err(|e| e.into_domain())?;
         let base_fee = match raw.base_fee_per_gas.as_deref() {
-            Some(hex) if !hex.is_empty() => Some(Wei::new(
-                parse_hex_u128(hex).map_err(|e| e.into_domain())?,
-            )),
+            Some(hex) if !hex.is_empty() => {
+                Some(Wei::new(parse_hex_u128(hex).map_err(|e| e.into_domain())?))
+            }
             _ => None,
         };
         let size = parse_hex_u64(&raw.size).map_err(|e| e.into_domain())?;
@@ -92,6 +89,17 @@ impl AlchemyBlockReader {
             .into_iter()
             .map(|h| TxHash::from_hex(&h))
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Polygon seal-hash RLP is intentionally not reconstructed
+        // here; see plan/15-backlog.md §3.5 "Fix (cheap version)".
+        // Leaving this as None keeps the adapter honest: the pure
+        // `recover_polygon_signer` helper is shipped and can be wired
+        // up once the Bor header RLP lands. Other chains always leave
+        // `extra_signer` at None because `miner` already holds the
+        // real author.
+        // TODO(plan/15-backlog.md §3.5): reconstruct Bor seal hash and
+        // call `recover_polygon_signer` when chain == Chain::Polygon.
+        let extra_signer = None;
 
         Ok(Block {
             chain,
@@ -106,6 +114,7 @@ impl AlchemyBlockReader {
             size,
             extra_data,
             tx_hashes,
+            extra_signer,
         })
     }
 }
