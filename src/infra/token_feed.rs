@@ -4,7 +4,9 @@
 //! parallel calls:
 //!
 //! - `TokenReaderPort::get`       → overview (metadata + supply).
-//! - `PricesPort::get_single`     → spot price.
+//! - `PricesPort::get_single`     → spot-price status
+//!   (`PriceLookup::Available` / `Unsupported` — see
+//!   `plan/15-backlog.md` §3.4).
 //! - `PricesPort::get_history(D1)` → default chart window series.
 //! - `TransfersPort::get_for_contract` → recent ERC-20 transfers.
 //!
@@ -111,7 +113,7 @@ async fn run_for_address<R, P, T>(
     prices: P,
     transfers: T,
     updates_tx: &tokio::sync::mpsc::UnboundedSender<crate::domain::TokenOverview>,
-    price_tx: &tokio::sync::mpsc::UnboundedSender<Option<crate::domain::TokenPrice>>,
+    price_tx: &tokio::sync::mpsc::UnboundedSender<crate::domain::PriceLookup>,
     transfers_tx: &tokio::sync::mpsc::UnboundedSender<crate::domain::TransferPage>,
     history_tx: &tokio::sync::mpsc::UnboundedSender<crate::domain::PriceSeries>,
 ) where
@@ -133,10 +135,11 @@ async fn run_for_address<R, P, T>(
     if let Ok(Some(ov)) = ov_res {
         let _ = updates_tx.send(ov);
     }
-    // `Ok(None)` is a real "no data" signal from the Prices API: we
-    // still forward it so the UI flips from "loading" to "missing".
-    if let Ok(opt) = price_res {
-        let _ = price_tx.send(opt);
+    // Forward whatever the port returned: Available / Unsupported
+    // both flip the UI out of the "loading" state. Transport
+    // failures keep the price pending (the user can retry).
+    if let Ok(lookup) = price_res {
+        let _ = price_tx.send(lookup);
     }
     if let Ok(page) = tr_res {
         let _ = transfers_tx.send(page);
@@ -144,7 +147,6 @@ async fn run_for_address<R, P, T>(
     // Always publish a D1 series, even if it is empty — the UI
     // handles the empty case with a dedicated "no price data"
     // message instead of staying stuck in loading.
-    let series = hist_res
-        .unwrap_or_else(|_| crate::domain::PriceSeries::empty(PriceWindow::D1));
+    let series = hist_res.unwrap_or_else(|_| crate::domain::PriceSeries::empty(PriceWindow::D1));
     let _ = history_tx.send(series);
 }

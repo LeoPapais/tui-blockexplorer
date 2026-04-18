@@ -7,8 +7,7 @@ use assert_matches::assert_matches;
 use blockexplorer_tui::{
     application::use_cases::load_address_portfolio,
     domain::{
-        Address, Chain, PriceLookup, TokenHolding, TokenMetadata, TokenPrice, UnixTimestamp,
-        Wei,
+        Address, Chain, PriceLookup, TokenHolding, TokenMetadata, TokenPrice, UnixTimestamp, Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -118,6 +117,6 @@ async fn unsupported_price_still_renders_holding() {
     assert_matches!(got[0].price, PriceLookup::Available(_));
     assert_matches!(
         got[1].price,
-        PriceLookup::Unsupported { provider } if provider == "alchemy-prices",
+        PriceLookup::Unsupported { provider } if provider == "alchemy-prices"
     );
 }

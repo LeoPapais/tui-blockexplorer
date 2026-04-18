@@ -90,7 +90,9 @@ where
             // Gate: only probe ERC-20 metadata when we are sure the
             // address is a contract. EOAs fall out here with zero
             // extra RPC calls.
-            let Some(overview) = overview_clone else { continue };
+            let Some(overview) = overview_clone else {
+                continue;
+            };
             if !matches!(overview.kind, AddressKind::Contract) {
                 continue;
             }
@@ -108,8 +110,12 @@ where
                         prices_single.get_single(addr, chain),
                         prices_hist.get_history(addr, chain, PriceWindow::D1),
                     );
-                    if let Ok(opt) = price_res
-                        && token_price_tx.send(opt).is_err()
+                    // plan/15-backlog.md §3.4: the port hands back a
+                    // full PriceLookup (Available / Unsupported);
+                    // forward it unchanged so the UI flips out of
+                    // the pending state.
+                    if let Ok(lookup) = price_res
+                        && token_price_tx.send(lookup).is_err()
                     {
                         break;
                     }

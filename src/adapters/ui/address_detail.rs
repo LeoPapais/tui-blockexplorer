@@ -27,8 +27,9 @@ use crate::{
         token_detail::render_inline_token_panel,
     },
     domain::{
-        Address, AddressKind, AddressOverview, Chain, PriceSeries, PriceWindow, TokenHolding,
-        TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash,
+        Address, AddressKind, AddressOverview, Chain, PriceLookup, PriceSeries, PriceWindow,
+        TokenHolding, TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage,
+        TxHash,
     },
 };
 
@@ -51,9 +52,11 @@ pub struct AddressFeed {
     /// contract; `None` means "probed and not a token" (the feed
     /// sends `None` explicitly to flip the tri-state).
     pub token_overview_rx: UnboundedReceiver<Option<TokenOverview>>,
-    /// Spot price for the ERC-20 token. `Option<TokenPrice>` so the
-    /// UI can distinguish "no data" from "still loading".
-    pub token_price_rx: UnboundedReceiver<Option<TokenPrice>>,
+    /// Spot-price status for the ERC-20 token. See
+    /// `plan/15-backlog.md` §3.4: `PriceLookup` carries the
+    /// `Available` / `Unsupported` / `Pending` branches the UI
+    /// needs to distinguish.
+    pub token_price_rx: UnboundedReceiver<PriceLookup>,
     /// Historical series for the inline mini-chart (default window
     /// is `PriceWindow::D1`).
     pub token_series_rx: UnboundedReceiver<PriceSeries>,
@@ -65,7 +68,7 @@ pub struct AddressFeedSender {
     pub transfers_tx: UnboundedSender<TransferPage>,
     pub portfolio_tx: UnboundedSender<Vec<TokenHolding>>,
     pub token_overview_tx: UnboundedSender<Option<TokenOverview>>,
-    pub token_price_tx: UnboundedSender<Option<TokenPrice>>,
+    pub token_price_tx: UnboundedSender<PriceLookup>,
     pub token_series_tx: UnboundedSender<PriceSeries>,
     pub input_rx: UnboundedReceiver<Address>,
 }
@@ -172,11 +175,9 @@ pub struct AddressDetailScreen {
     /// Tri-state: see [`TokenProbeState`]. Controls visibility of
     /// the `AddressTab::Token` tab.
     token_probe: TokenProbeState,
-    /// Spot price for the inline Token tab. `None` + `!token_price_missing`
-    /// means "still loading"; `token_price_missing == true` means
-    /// "probed and no data".
-    token_price: Option<TokenPrice>,
-    token_price_missing: bool,
+    /// Spot-price status for the inline Token tab. See
+    /// `plan/15-backlog.md` §3.4.
+    token_price: PriceLookup,
     /// Historical series for the inline mini-chart (D1 only in MVP).
     token_series: Option<PriceSeries>,
     feed: AddressFeed,
@@ -239,8 +240,7 @@ impl AddressDetailScreen {
             transfers: None,
             holdings: None,
             token_probe: TokenProbeState::Unknown,
-            token_price: None,
-            token_price_missing: false,
+            token_price: PriceLookup::Pending,
             token_series: None,
             feed,
             active_tab: AddressTab::Overview,
@@ -281,19 +281,13 @@ impl AddressDetailScreen {
 
     fn next_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(current_idx + tabs.len() - 1) % tabs.len()]
     }
 
@@ -335,10 +329,19 @@ impl AddressDetailScreen {
         }
     }
 
-    /// Spot price for the inline Token tab, if loaded.
+    /// Spot price for the inline Token tab, if the lookup resolved
+    /// to `PriceLookup::Available`. Returns `None` for both
+    /// `Unsupported` and `Pending` to mirror the previous shape.
     #[must_use]
     pub fn token_price(&self) -> Option<&TokenPrice> {
-        self.token_price.as_ref()
+        self.token_price.as_available()
+    }
+
+    /// Full [`PriceLookup`] status for the inline Token tab. See
+    /// `plan/15-backlog.md` §3.4.
+    #[must_use]
+    pub fn token_price_lookup(&self) -> &PriceLookup {
+        &self.token_price
     }
 
     /// Historical series (D1 window) feeding the inline mini-chart.
@@ -396,17 +399,8 @@ impl AddressDetailScreen {
                 None => TokenProbeState::NotToken,
             };
         }
-        while let Ok(opt_price) = self.feed.token_price_rx.try_recv() {
-            match opt_price {
-                Some(p) => {
-                    self.token_price = Some(p);
-                    self.token_price_missing = false;
-                }
-                None => {
-                    self.token_price = None;
-                    self.token_price_missing = true;
-                }
-            }
+        while let Ok(lookup) = self.feed.token_price_rx.try_recv() {
+            self.token_price = lookup;
         }
         while let Ok(series) = self.feed.token_series_rx.try_recv() {
             self.token_series = Some(series);
@@ -414,11 +408,7 @@ impl AddressDetailScreen {
     }
 
     fn clamp_tx_selection(&mut self) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             self.tx_list_state.select(None);
             return;
@@ -481,9 +471,7 @@ impl Screen for AddressDetailScreen {
             None => "Address (loading...)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(header).block(
-                Block::default().borders(Borders::ALL).title("Address"),
-            ),
+            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Address")),
             chunks[0],
         );
 
@@ -577,22 +565,19 @@ implementation resolution, source on Etherscan once wired).",
                     addr = self.address.to_hex(),
                 );
                 frame.render_widget(
-                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
-                        Block::default().borders(Borders::ALL).title("Contract"),
-                    ),
+                    Paragraph::new(body)
+                        .wrap(Wrap { trim: false })
+                        .block(Block::default().borders(Borders::ALL).title("Contract")),
                     chunks[2],
                 );
             }
             AddressTab::Tokens => {
                 let block = Block::default().borders(Borders::ALL).title("Tokens");
                 match self.holdings.as_ref() {
-                    None => frame.render_widget(
-                        Paragraph::new("Loading tokens...").block(block),
-                        chunks[2],
-                    ),
+                    None => frame
+                        .render_widget(Paragraph::new("Loading tokens...").block(block), chunks[2]),
                     Some(holdings) if holdings.is_empty() => frame.render_widget(
-                        Paragraph::new("No ERC-20 holdings found for this address.")
-                            .block(block),
+                        Paragraph::new("No ERC-20 holdings found for this address.").block(block),
                         chunks[2],
                     ),
                     Some(holdings) => {
@@ -625,8 +610,7 @@ implementation resolution, source on Etherscan once wired).",
                         frame,
                         chunks[2],
                         ov,
-                        self.token_price.as_ref(),
-                        self.token_price_missing,
+                        &self.token_price,
                         self.token_series.as_ref(),
                         PriceWindow::D1,
                     );
@@ -661,8 +645,7 @@ implementation resolution, source on Etherscan once wired).",
 impl AddressDetailScreen {
     fn dispatch_key(&mut self, key: KeyEvent) -> Command {
         let is_back_tab = key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab
-                && key.modifiers.contains(KeyModifiers::SHIFT));
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
@@ -714,10 +697,7 @@ impl AddressDetailScreen {
                 self.select_delta(-1);
                 Command::None
             }
-            (
-                AddressTab::Transactions | AddressTab::Tokens,
-                KeyCode::Down | KeyCode::Char('j'),
-            ) => {
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Down | KeyCode::Char('j')) => {
                 self.select_delta(1);
                 Command::None
             }

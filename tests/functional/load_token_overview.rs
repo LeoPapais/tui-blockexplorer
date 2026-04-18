@@ -39,17 +39,16 @@ async fn happy_path_returns_overview() {
         },
     );
 
-    let got =
-        load_token_overview::run(&reader, &prices, ov.metadata.address, Chain::Ethereum)
-            .await
-            .expect("ok");
+    let got = load_token_overview::run(&reader, &prices, ov.metadata.address, Chain::Ethereum)
+        .await
+        .expect("ok");
 
     assert_eq!(got.metadata, ov.metadata);
     assert_eq!(got.total_supply, 35_200_000_000_000_000);
     assert_matches!(
         got.price,
         PriceLookup::Available(blockexplorer_tui::domain::TokenPrice { ref currency, value, .. })
-            if currency == "usd" && (value - 1.0001).abs() < 1e-9,
+            if currency == "usd" && (value - 1.0001).abs() < 1e-9
     );
 }
 
@@ -80,7 +79,7 @@ async fn returns_unsupported_when_prices_api_returns_404() {
             symbol: "BRLA".into(),
             name: "BRLA Token".into(),
             decimals: 18,
-            },
+        },
         total_supply: 1_000_000_000_000_000_000_000_u128,
         price: PriceLookup::Pending,
     });
@@ -92,6 +91,6 @@ async fn returns_unsupported_when_prices_api_returns_404() {
 
     assert_matches!(
         got.price,
-        PriceLookup::Unsupported { provider } if provider == "alchemy-prices",
+        PriceLookup::Unsupported { provider } if provider == "alchemy-prices"
     );
 }

@@ -36,8 +36,7 @@ async fn happy_path_returns_spot_price() {
 #[tokio::test]
 async fn unknown_token_returns_unsupported() {
     let prices = StubPricesPort::new();
-    let unknown =
-        Address::from_hex("0x0000000000000000000000000000000000000099").unwrap();
+    let unknown = Address::from_hex("0x0000000000000000000000000000000000000099").unwrap();
     prices.set_unsupported(unknown, "alchemy-prices");
 
     let got = load_token_price::run(&prices, unknown, Chain::Ethereum)
@@ -54,8 +53,7 @@ async fn no_prime_defaults_to_unsupported() {
     // the lookup is marked Unsupported with the alchemy-prices
     // provider. See plan/15-backlog.md §3.4.
     let prices = StubPricesPort::new();
-    let unknown =
-        Address::from_hex("0x000000000000000000000000000000000000dead").unwrap();
+    let unknown = Address::from_hex("0x000000000000000000000000000000000000dead").unwrap();
 
     let got = load_token_price::run(&prices, unknown, Chain::Ethereum)
         .await

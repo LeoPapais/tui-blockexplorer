@@ -16,7 +16,9 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::search_feed,
-    domain::{Address, AddressKind, Chain, ResolvedEntity, TokenMetadata, TokenOverview},
+    domain::{
+        Address, AddressKind, Chain, PriceLookup, ResolvedEntity, TokenMetadata, TokenOverview,
+    },
     infra::search_feed as feed_task,
 };
 use pretty_assertions::assert_eq;
@@ -43,7 +45,7 @@ fn usdc_overview() -> TokenOverview {
             decimals: 6,
         },
         total_supply: 0,
-        price: None,
+        price: PriceLookup::Pending,
     }
 }
 
@@ -103,10 +105,10 @@ async fn eoa_input_never_probes_token_reader() {
     assert_eq!(updates.len(), 1, "EOA must produce a single update");
     assert_eq!(reader.call_count(), 0, "EOA must not trigger a probe");
     assert!(
-        updates[0]
-            .iter()
-            .all(|c| !matches!(c, ResolvedEntity::Contract { .. }
-                                 | ResolvedEntity::Token(_))),
+        updates[0].iter().all(|c| !matches!(
+            c,
+            ResolvedEntity::Contract { .. } | ResolvedEntity::Token(_)
+        )),
         "EOA update must not include Contract/Token shortcuts",
     );
 }
@@ -126,10 +128,17 @@ async fn contract_without_metadata_probes_once_and_emits_only_base_update() {
         1,
         "no second update when the probe returns None",
     );
-    assert_eq!(reader.call_count(), 1, "contract triggers exactly one probe");
+    assert_eq!(
+        reader.call_count(),
+        1,
+        "contract triggers exactly one probe"
+    );
     let base = &updates[0];
     assert!(matches!(base.first(), Some(ResolvedEntity::Address { .. })));
-    assert!(base.iter().any(|c| matches!(c, ResolvedEntity::Contract { .. })));
+    assert!(
+        base.iter()
+            .any(|c| matches!(c, ResolvedEntity::Contract { .. }))
+    );
     assert!(
         !base.iter().any(|c| matches!(c, ResolvedEntity::Token(_))),
         "contract without ERC-20 metadata must not gain a Token row",
@@ -160,7 +169,9 @@ async fn erc20_contract_emits_two_updates_with_token_appended() {
         "Address row stays first even after the probe completes",
     );
     assert!(
-        enriched.iter().any(|c| matches!(c, ResolvedEntity::Contract { .. })),
+        enriched
+            .iter()
+            .any(|c| matches!(c, ResolvedEntity::Contract { .. })),
         "Contract shortcut remains in the enriched list",
     );
     assert!(

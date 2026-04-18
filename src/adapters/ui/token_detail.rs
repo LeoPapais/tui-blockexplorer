@@ -4,8 +4,9 @@
 //! `src/infra/token_feed.rs`:
 //!
 //! - `updates_tx`    → `TokenOverview` (metadata + totalSupply).
-//! - `price_tx`      → `Option<TokenPrice>` (spot price from the
-//!   Prices API; `None` is a legitimate "no data" response).
+//! - `price_tx`      → `PriceLookup` (spot-price status from the
+//!   Prices API; see `plan/15-backlog.md` §3.4 for the three
+//!   branches: `Available` / `Unsupported` / `Pending`).
 //! - `transfers_tx`  → `TransferPage` (ERC-20 transfers filtered by
 //!   the contract address).
 //! - `history_tx`    → `PriceSeries` (historical price for the last
@@ -26,8 +27,8 @@ use ratatui::{
     symbols,
     text::{Line, Span},
     widgets::{
-        Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, ListState,
-        Paragraph, Tabs, Wrap,
+        Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, ListState, Paragraph,
+        Tabs, Wrap,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -35,8 +36,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::{
     adapters::ui::screen::{Command, Screen},
     domain::{
-        Address, Chain, PriceSeries, PriceWindow, TokenOverview, TokenPrice, TransferAsset,
-        TransferEvent, TransferPage, TxHash,
+        Address, Chain, PriceLookup, PriceSeries, PriceWindow, TokenOverview, TokenPrice,
+        TransferAsset, TransferEvent, TransferPage, TxHash,
     },
 };
 
@@ -50,7 +51,7 @@ pub struct TokenFeed {
     pub input_tx: UnboundedSender<Address>,
     pub window_req_tx: UnboundedSender<PriceWindow>,
     pub updates_rx: UnboundedReceiver<TokenOverview>,
-    pub price_rx: UnboundedReceiver<Option<TokenPrice>>,
+    pub price_rx: UnboundedReceiver<PriceLookup>,
     pub transfers_rx: UnboundedReceiver<TransferPage>,
     pub history_rx: UnboundedReceiver<PriceSeries>,
 }
@@ -59,7 +60,7 @@ pub struct TokenFeed {
 /// `src/infra/token_feed.rs`.
 pub struct TokenFeedSender {
     pub updates_tx: UnboundedSender<TokenOverview>,
-    pub price_tx: UnboundedSender<Option<TokenPrice>>,
+    pub price_tx: UnboundedSender<PriceLookup>,
     pub transfers_tx: UnboundedSender<TransferPage>,
     pub history_tx: UnboundedSender<PriceSeries>,
     pub input_rx: UnboundedReceiver<Address>,
@@ -110,8 +111,7 @@ pub enum TokenTab {
 }
 
 impl TokenTab {
-    pub const ALL: [TokenTab; 3] =
-        [TokenTab::Overview, TokenTab::Transfers, TokenTab::Chart];
+    pub const ALL: [TokenTab; 3] = [TokenTab::Overview, TokenTab::Transfers, TokenTab::Chart];
 
     /// Number of tabs exposed by the screen. Handy for BDD loops
     /// that cycle the `Tab` key until a target tab is reached.
@@ -126,15 +126,6 @@ impl TokenTab {
     }
 }
 
-/// Tri-state price slot: the feed has not answered yet / answered
-/// with "no data" / answered with a value.
-#[derive(Debug, Clone, PartialEq)]
-enum PriceState {
-    Loading,
-    Missing,
-    Loaded(TokenPrice),
-}
-
 // ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
@@ -144,7 +135,7 @@ pub struct TokenDetailScreen {
     chain: Chain,
     address: Address,
     current: Option<TokenOverview>,
-    price: PriceState,
+    price: PriceLookup,
     transfers: Option<TransferPage>,
     series: HashMap<PriceWindow, PriceSeries>,
     active_tab: TokenTab,
@@ -186,7 +177,7 @@ impl TokenDetailScreen {
             chain,
             address,
             current: None,
-            price: PriceState::Loading,
+            price: PriceLookup::Pending,
             transfers: None,
             series: HashMap::new(),
             active_tab: TokenTab::Overview,
@@ -221,10 +212,16 @@ impl TokenDetailScreen {
 
     #[must_use]
     pub fn price(&self) -> Option<&TokenPrice> {
-        match &self.price {
-            PriceState::Loaded(p) => Some(p),
-            _ => None,
-        }
+        self.price.as_available()
+    }
+
+    /// Full [`PriceLookup`] status (available / unsupported /
+    /// pending). Used by BDD steps that need to assert on the
+    /// Unsupported branch surfaced by
+    /// `plan/15-backlog.md` §3.4.
+    #[must_use]
+    pub fn price_lookup(&self) -> &PriceLookup {
+        &self.price
     }
 
     /// Historical series for the currently selected window, if it
@@ -245,26 +242,21 @@ impl TokenDetailScreen {
 
     fn drain_feed(&mut self) {
         while let Ok(ov) = self.feed.updates_rx.try_recv() {
-            // Carry over any price already received into the
-            // overview so `TokenOverview::market_cap` stays accurate.
+            // Carry over any price already received so
+            // `TokenOverview::market_cap` stays accurate regardless
+            // of the order the metadata and price channels resolve
+            // in.
             let mut ov = ov;
-            if ov.price.is_none()
-                && let PriceState::Loaded(p) = &self.price
-            {
-                ov.price = Some(p.clone());
+            if matches!(ov.price, PriceLookup::Pending) {
+                ov.price = self.price.clone();
             }
             self.current = Some(ov);
         }
-        while let Ok(opt_price) = self.feed.price_rx.try_recv() {
-            match opt_price {
-                Some(p) => {
-                    if let Some(ov) = self.current.as_mut() {
-                        ov.price = Some(p.clone());
-                    }
-                    self.price = PriceState::Loaded(p);
-                }
-                None => self.price = PriceState::Missing,
+        while let Ok(lookup) = self.feed.price_rx.try_recv() {
+            if let Some(ov) = self.current.as_mut() {
+                ov.price = lookup.clone();
             }
+            self.price = lookup;
         }
         while let Ok(page) = self.feed.transfers_rx.try_recv() {
             self.transfers = Some(page);
@@ -276,11 +268,7 @@ impl TokenDetailScreen {
     }
 
     fn clamp_tx_selection(&mut self) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             self.tx_list_state.select(None);
             return;
@@ -290,11 +278,7 @@ impl TokenDetailScreen {
     }
 
     fn select_delta(&mut self, delta: i32) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             return;
         }
@@ -342,9 +326,8 @@ impl Screen for TokenDetailScreen {
             .split(area);
 
         frame.render_widget(
-            Paragraph::new(header_line(self.current.as_ref(), self.address)).block(
-                Block::default().borders(Borders::ALL).title("Token"),
-            ),
+            Paragraph::new(header_line(self.current.as_ref(), self.address))
+                .block(Block::default().borders(Borders::ALL).title("Token")),
             chunks[0],
         );
 
@@ -454,11 +437,7 @@ impl TokenDetailScreen {
         let body = match self.current.as_ref() {
             None => "Loading...".to_string(),
             Some(ov) => {
-                let price_cell = match &self.price {
-                    PriceState::Loading => "loading...".to_string(),
-                    PriceState::Missing => "-".to_string(),
-                    PriceState::Loaded(p) => format_price(p.value),
-                };
+                let price_cell = format_price_lookup(&self.price);
                 let market_cap_cell = ov
                     .market_cap()
                     .map(format_market_cap)
@@ -495,10 +474,7 @@ Market cap    {mcap}\n\
             .borders(Borders::ALL)
             .title("Transfers (ERC-20)");
         match self.transfers.as_ref() {
-            None => frame.render_widget(
-                Paragraph::new("Loading transfers...").block(block),
-                area,
-            ),
+            None => frame.render_widget(Paragraph::new("Loading transfers...").block(block), area),
             Some(page) if page.events.is_empty() => frame.render_widget(
                 Paragraph::new("No transfers found for this token yet.").block(block),
                 area,
@@ -527,10 +503,7 @@ Market cap    {mcap}\n\
     }
 
     fn render_chart(&self, frame: &mut Frame<'_>, area: Rect) {
-        let title = format!(
-            "Price chart ({label})",
-            label = self.active_window.label()
-        );
+        let title = format!("Price chart ({label})", label = self.active_window.label());
         let block = Block::default().borders(Borders::ALL).title(title);
 
         let series = match self.series.get(&self.active_window) {
@@ -592,10 +565,7 @@ Market cap    {mcap}\n\
 
         let x_axis = Axis::default()
             .bounds([0.0, x_max.max(1.0)])
-            .labels(vec![
-                Span::raw("older"),
-                Span::raw("now"),
-            ])
+            .labels(vec![Span::raw("older"), Span::raw("now")])
             .style(Style::default().fg(Color::DarkGray));
 
         let y_axis = Axis::default()
@@ -681,6 +651,17 @@ fn raw_to_human(raw: u128, decimals: u8) -> String {
     }
 }
 
+/// Render a [`PriceLookup`] into the string shown in the Overview
+/// price row. See `plan/15-backlog.md` §3.4 for the
+/// "(not indexed by …)" spelling.
+fn format_price_lookup(lookup: &PriceLookup) -> String {
+    match lookup {
+        PriceLookup::Available(p) => format_price(p.value),
+        PriceLookup::Unsupported { provider } => format!("(not indexed by {provider})"),
+        PriceLookup::Pending => "loading...".to_string(),
+    }
+}
+
 fn format_price(value: f64) -> String {
     if !value.is_finite() {
         return "-".to_string();
@@ -748,17 +729,16 @@ fn short_addr(s: &str) -> String {
 /// `series` (braille line). When `series` is `None` or empty a
 /// loading / empty state is drawn on the chart area instead.
 ///
-/// `price_missing` signals that the provider returned "no data"
-/// (versus the price still loading, which is represented by
-/// `price == None && !price_missing`).
-///
-/// See `plan/6-address-detail.md` section 12.4.4.
+/// `price` carries the full [`PriceLookup`] so the panel renders
+/// `loading...`, `(not indexed by alchemy-prices)` or the actual
+/// spot value depending on the provider's answer. See
+/// `plan/6-address-detail.md` section 12.4.4 and
+/// `plan/15-backlog.md` §3.4.
 pub(crate) fn render_inline_token_panel(
     frame: &mut Frame<'_>,
     area: Rect,
     overview: &TokenOverview,
-    price: Option<&TokenPrice>,
-    price_missing: bool,
+    price: &PriceLookup,
     series: Option<&PriceSeries>,
     window: PriceWindow,
 ) {
@@ -767,18 +747,14 @@ pub(crate) fn render_inline_token_panel(
         .constraints([Constraint::Length(9), Constraint::Min(3)])
         .split(area);
 
-    let price_cell = match (price, price_missing) {
-        (Some(p), _) => format_price(p.value),
-        (None, true) => "-".to_string(),
-        (None, false) => "loading...".to_string(),
-    };
+    let price_cell = format_price_lookup(price);
     // Compose a TokenOverview stitched with the price we have so
     // market_cap() can use it, without mutating the caller's copy.
     let market_cap_cell = {
         let synthesized = TokenOverview {
             metadata: overview.metadata.clone(),
             total_supply: overview.total_supply,
-            price: price.cloned(),
+            price: price.clone(),
         };
         synthesized
             .market_cap()
@@ -805,9 +781,9 @@ Market cap    {mcap}\n\
         mcap = market_cap_cell,
     );
     frame.render_widget(
-        Paragraph::new(body).wrap(Wrap { trim: false }).block(
-            Block::default().borders(Borders::ALL).title("Token"),
-        ),
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Token")),
         chunks[0],
     );
 
@@ -870,7 +846,10 @@ Market cap    {mcap}\n\
                 ])
                 .style(Style::default().fg(Color::DarkGray));
             frame.render_widget(
-                Chart::new(datasets).block(chart_block).x_axis(x_axis).y_axis(y_axis),
+                Chart::new(datasets)
+                    .block(chart_block)
+                    .x_axis(x_axis)
+                    .y_axis(y_axis),
                 chunks[1],
             );
         }
