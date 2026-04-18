@@ -174,8 +174,7 @@ impl BlockReceiptsPort for AlchemyBlockReceipts {
         id: BlockId,
         _chain: Chain,
     ) -> Result<Vec<BlockTxReceipt>, DomainError> {
-        let (full_res, receipts_res) =
-            tokio::join!(
+        let (full_res, receipts_res) = tokio::join!(
                 self.client.call::<_, Option<RawFullBlock>>(
                     Self::full_block_method(id),
                     Self::full_block_params(id),
