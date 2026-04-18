@@ -75,3 +75,35 @@ Feature: Address detail
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
     When the user opens AddressDetail with ERC-20 probe for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     Then once loaded, the tab bar does not include the Token tab
+
+  Scenario: Y copies the ENS name when the address has one
+    # See plan/6-address-detail.md §11 "Shipped" (`Y` copies ENS,
+    # falls back to hex) and plan/15-backlog.md §8.7.
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
+    And the ENS resolver knows that "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" resolves reverse to "vitalik.eth"
+    When the user opens AddressDetail with reverse ENS for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    Then once the overview is loaded, pressing Y copies "vitalik.eth"
+
+  Scenario: Y falls back to the hex address when no reverse ENS is known
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
+    When the user opens AddressDetail with reverse ENS for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    Then once the overview is loaded, pressing Y copies "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+
+  Scenario: CSV export on Portfolio tab copies a CSV
+    # plan/6-address-detail.md §11 "Shipped", plan/15-backlog.md §8.7.
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
+    And the portfolio feed knows 2 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Tokens tab
+    Then once loaded, the Tokens tab lists 2 holdings
+    When the user presses e on the Tokens tab
+    Then the clipboard sink holds a Tokens CSV with 2 data rows
+
+  Scenario: Tokens tab shows USD totals and a distribution chart
+    # plan/6-address-detail.md §11 "Shipped", plan/15-backlog.md §8.7.
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
+    And the portfolio feed knows priced holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Tokens tab
+    Then once loaded, the Tokens tab shows a USD total of "$2.00" and 1 token not priced
+    And the Tokens tab renders at least 2 distribution chart rows

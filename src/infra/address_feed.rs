@@ -18,8 +18,12 @@ use tokio::task::JoinHandle;
 
 use crate::{
     adapters::ui::AddressFeedSender,
-    application::ports::{
-        AddressReaderPort, PortfolioPort, PricesPort, TokenReaderPort, TransfersPort,
+    application::{
+        ports::{
+            AddressReaderPort, EnsResolverPort, PortfolioPort, PricesPort, TokenReaderPort,
+            TransfersPort,
+        },
+        use_cases::{load_address_overview, load_address_portfolio},
     },
     domain::{AddressKind, Chain, PriceWindow},
 };
@@ -28,14 +32,20 @@ use crate::{
 /// `token_reader` and `prices` arguments are always passed in even
 /// for EOAs: their calls are gated inside the task so the trait
 /// bounds stay uniform across the BDD and production wiring.
+///
+/// `ens` backs reverse-ENS resolution: the task calls
+/// `load_address_overview::run` which overlays the friendly name
+/// on top of the reader's result. See `plan/6-address-detail.md`
+/// §11 "Shipped".
 #[allow(clippy::too_many_arguments)]
-pub fn spawn<R, T, P, K, Pr>(
+pub fn spawn<R, T, P, K, Pr, E>(
     chain: Chain,
     reader: R,
     transfers: T,
     portfolio: P,
     token_reader: K,
     prices: Pr,
+    ens: E,
     sender: AddressFeedSender,
 ) -> JoinHandle<()>
 where
@@ -44,6 +54,7 @@ where
     P: PortfolioPort + Clone + 'static,
     K: TokenReaderPort + Clone + 'static,
     Pr: PricesPort + Clone + 'static,
+    E: EnsResolverPort + Clone + 'static,
 {
     tokio::spawn(async move {
         let AddressFeedSender {
@@ -59,17 +70,22 @@ where
             let reader = reader.clone();
             let transfers = transfers.clone();
             let portfolio = portfolio.clone();
+            let prices_for_portfolio = prices.clone();
+            let ens = ens.clone();
+            // `load_address_portfolio::run` fans out one spot-price
+            // lookup per holding so the Tokens tab can render real
+            // USD values (plan/15-backlog.md §3.4 + plan/6 §11
+            // "Shipped" — Portfolio USD totals).
             let (ov_res, tr_res, pf_res) = tokio::join!(
-                reader.get(addr, chain),
+                load_address_overview::run(&reader, &ens, addr, chain),
                 transfers.get_for_address(addr, chain, None),
-                portfolio.get_token_balances(addr, chain),
+                load_address_portfolio::run(&portfolio, &prices_for_portfolio, addr, chain),
             );
 
             // Forward the three "always" results first.
-            let overview_clone = if let Ok(Some(ov)) = ov_res.as_ref() {
-                Some(ov.clone())
-            } else {
-                None
+            let overview_clone = match ov_res.as_ref() {
+                Ok(ov) => Some(ov.clone()),
+                Err(_) => None,
             };
             if let Some(ov) = overview_clone.clone()
                 && updates_tx.send(ov).is_err()

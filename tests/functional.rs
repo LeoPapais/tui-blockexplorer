@@ -172,6 +172,18 @@ mod search_feed_cache;
 #[path = "functional/block_detail_screen_keys.rs"]
 mod block_detail_screen_keys;
 
+#[path = "functional/address_detail_screen_keys.rs"]
+mod address_detail_screen_keys;
+
+#[path = "functional/alchemy_ens_reverse.rs"]
+mod alchemy_ens_reverse;
+
+#[path = "functional/ens_reverse_cache.rs"]
+mod ens_reverse_cache;
+
+#[path = "functional/portfolio_summary.rs"]
+mod portfolio_summary;
+
 #[path = "functional/load_block_transactions.rs"]
 mod load_block_transactions;
 

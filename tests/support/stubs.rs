@@ -473,6 +473,20 @@ impl StubEnsResolverPort {
         let mut state = self.inner.lock().expect("stub lock poisoned");
         state.reverse.insert(address, name.to_string());
     }
+
+    /// Drop every forward mapping. Useful for cache tests that need
+    /// to prove the decorator returned a cached answer without
+    /// hitting the backing port.
+    pub fn clear_forward(&self) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.forward.clear();
+    }
+
+    /// Mirror of [`Self::clear_forward`] for the reverse table.
+    pub fn clear_reverse(&self) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.reverse.clear();
+    }
 }
 
 impl EnsResolverPort for StubEnsResolverPort {

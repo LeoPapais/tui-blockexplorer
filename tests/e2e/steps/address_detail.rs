@@ -436,6 +436,167 @@ async fn tab_bar_no_token(world: &mut AppWorld) {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Reverse ENS + Y / e clipboard bindings (plan/6 §11 "Shipped")
+// ---------------------------------------------------------------------------
+
+#[given(
+    regex = r#"^the ENS resolver knows that "(0x[0-9a-fA-F]{40})" resolves reverse to "([^"]+)"$"#
+)]
+async fn ens_knows_reverse(world: &mut AppWorld, addr_hex: String, name: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    world.ens_stub.set_reverse(address, &name);
+}
+
+#[when(regex = r#"^the user opens AddressDetail with reverse ENS for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn opens_address_detail_with_reverse_ens(world: &mut AppWorld, addr_hex: String) {
+    use crate::steps::search::spawn_address_detail_with_reverse_ens;
+    build_stack(world);
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let reader = world.address_reader_stub.clone();
+    let ens = world.ens_stub.clone();
+    let screen = spawn_address_detail_with_reverse_ens(Chain::Ethereum, addr, reader, ens);
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[then(regex = r#"^once the overview is loaded, pressing Y copies "([^"]+)"$"#)]
+async fn overview_loaded_then_y_copies(world: &mut AppWorld, expected: String) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).current().is_some()).await;
+    let screen = stack.top_mut().expect("stack non-empty");
+    let cmd = screen.handle_key(KeyEvent {
+        code: KeyCode::Char('Y'),
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::empty(),
+    });
+    match cmd {
+        Command::None | Command::Refresh => {}
+        other => panic!("unexpected command after Y: {other:?}"),
+    }
+    let copied = current(stack).last_copied_value().map(str::to_string);
+    assert_eq!(copied.as_deref(), Some(expected.as_str()));
+}
+
+#[when("the user presses e on the Tokens tab")]
+async fn presses_e_on_tokens(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    assert_eq!(current(stack).active_tab(), AddressTab::Tokens);
+    press_key(stack, KeyCode::Char('e'));
+}
+
+#[given(regex = r#"^the portfolio feed knows priced holdings for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn portfolio_feed_knows_priced(world: &mut AppWorld, addr_hex: String) {
+    use blockexplorer_tui::domain::{PriceLookup, TokenPrice, UnixTimestamp};
+    let address = Address::from_hex(&addr_hex).unwrap();
+    // Two priced holdings summing to $2.00 + one unsupported ⇒
+    // header must read "$2.00  (2 priced, 1 not priced)".
+    let holdings = vec![
+        TokenHolding {
+            metadata: TokenMetadata {
+                address: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
+                symbol: "USDC".into(),
+                name: "USD Coin".into(),
+                decimals: 6,
+            },
+            balance: Wei::new(1_000_000),
+            price: PriceLookup::Available(TokenPrice {
+                currency: "usd".into(),
+                value: 1.0,
+                as_of: UnixTimestamp::from_seconds(1),
+            }),
+        },
+        TokenHolding {
+            metadata: TokenMetadata {
+                address: Address::from_hex("0x0000000000000000000000000000000000000002").unwrap(),
+                symbol: "ABC".into(),
+                name: "Another".into(),
+                decimals: 18,
+            },
+            balance: Wei::new(1_000_000_000_000_000_000),
+            price: PriceLookup::Available(TokenPrice {
+                currency: "usd".into(),
+                value: 1.0,
+                as_of: UnixTimestamp::from_seconds(1),
+            }),
+        },
+        TokenHolding {
+            metadata: TokenMetadata {
+                address: Address::from_hex("0xe6a537a407488807f0bbeb0038b79004f19dddfb").unwrap(),
+                symbol: "BRLA".into(),
+                name: "BRLA Token".into(),
+                decimals: 18,
+            },
+            balance: Wei::new(5_000_000_000_000_000_000),
+            price: PriceLookup::Unsupported {
+                provider: "alchemy-prices",
+            },
+        },
+    ];
+    for h in &holdings {
+        seed_token_reader(world, &h.metadata);
+    }
+    world.portfolio_stub.set_holdings(address, holdings);
+    world.last_address = Some(address);
+}
+
+#[then(
+    regex = r#"^once loaded, the Tokens tab shows a USD total of "\$([0-9.]+)" and (\d+) token[s]? not priced$"#
+)]
+async fn tokens_tab_shows_usd_total(
+    world: &mut AppWorld,
+    expected_total: f64,
+    expected_not: usize,
+) {
+    use blockexplorer_tui::adapters::ui::address_detail::portfolio_summary;
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).holdings().is_some()).await;
+    let screen = current(stack);
+    let holdings = screen.holdings().expect("holdings loaded");
+    let summary = portfolio_summary(holdings);
+    assert!(
+        (summary.total_usd - expected_total).abs() < 1e-6,
+        "total_usd {} differs from expected {}",
+        summary.total_usd,
+        expected_total,
+    );
+    assert_eq!(summary.not_priced, expected_not);
+}
+
+#[then(regex = r#"^the Tokens tab renders at least (\d+) distribution chart rows$"#)]
+async fn tokens_tab_renders_chart(world: &mut AppWorld, expected_rows: usize) {
+    use blockexplorer_tui::adapters::ui::address_detail::{
+        portfolio_summary, render_top_distribution,
+    };
+    let stack = world.stack.as_ref().expect("stack");
+    let holdings = current(stack).holdings().expect("holdings loaded");
+    let summary = portfolio_summary(holdings);
+    let rendered = render_top_distribution(&summary, 20);
+    let row_count = rendered.lines().count();
+    assert!(
+        row_count >= expected_rows,
+        "expected at least {expected_rows} rows, got {row_count}:\n{rendered}",
+    );
+}
+
+#[then(regex = r#"^the clipboard sink holds a Tokens CSV with (\d+) data rows$"#)]
+async fn clipboard_has_tokens_csv(world: &mut AppWorld, expected_rows: usize) {
+    let stack = world.stack.as_ref().expect("stack");
+    let screen = current(stack);
+    let csv = screen
+        .last_copied_value()
+        .expect("clipboard sink must hold a CSV blob");
+    let mut lines = csv.lines();
+    let header = lines.next().expect("CSV header line");
+    assert!(
+        header.starts_with("symbol,name,contract,"),
+        "unexpected header: {header}",
+    );
+    let data_rows = lines.filter(|l| !l.is_empty()).count();
+    assert_eq!(data_rows, expected_rows);
+}
+
 #[then(regex = r#"^the inline Token overview shows symbol "([^"]+)" and price "\$([0-9.]+)"$"#)]
 async fn inline_token_shows_symbol_and_price(
     world: &mut AppWorld,

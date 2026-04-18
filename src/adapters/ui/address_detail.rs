@@ -192,6 +192,12 @@ pub struct AddressDetailScreen {
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
     open_contract: Option<OpenContractFactory>,
+    /// Latest value produced by the `y` / `Y` / `e` bindings. A real
+    /// OS clipboard adapter stays deferred (see `plan/3-block-detail.md`
+    /// §12.1 and `plan/15-backlog.md` §8.16); the field lets tests
+    /// inspect the payload without any terminal wiring. Mirrors
+    /// `BlockDetailScreen::last_copied_value`.
+    last_copied_value: Option<String>,
 }
 
 impl AddressDetailScreen {
@@ -251,6 +257,7 @@ impl AddressDetailScreen {
             open_tx,
             open_token,
             open_contract,
+            last_copied_value: None,
         }
     }
 
@@ -437,6 +444,83 @@ impl AddressDetailScreen {
         let next = (current + delta).clamp(0, len as i32 - 1);
         state.select(Some(next as usize));
     }
+
+    /// Latest value produced by the `y` / `Y` / `e` clipboard
+    /// bindings. Returns `None` until the user triggers a copy.
+    ///
+    /// Mirrors `BlockDetailScreen::last_copied_value`; an OS-backed
+    /// clipboard adapter stays deferred (see plan/15 §8.16).
+    #[must_use]
+    pub fn last_copied_value(&self) -> Option<&str> {
+        self.last_copied_value.as_deref()
+    }
+
+    /// Copy the hex address to the in-screen clipboard sink. No-op
+    /// while the overview is still loading — the address field is
+    /// populated from the initial `AddressDetailScreen::loading`
+    /// call, but we gate on the overview for symmetry with the
+    /// block-detail screen (`plan/3-block-detail.md` §12.1).
+    fn copy_address_hex(&mut self) {
+        if self.current.is_none() {
+            return;
+        }
+        self.last_copied_value = Some(self.address.to_hex());
+    }
+
+    /// Copy the ENS name when the loaded overview has one; otherwise
+    /// fall back to the hex address so the binding still feels
+    /// useful for wallets without a reverse record.
+    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
+    fn copy_ens_or_address(&mut self) {
+        let Some(ov) = self.current.as_ref() else {
+            return;
+        };
+        self.last_copied_value = Some(match ov.ens_name.as_deref() {
+            Some(name) => name.to_string(),
+            None => ov.address.to_hex(),
+        });
+    }
+
+    /// Serialise the currently-active tab into a CSV blob and land
+    /// it in `last_copied_value`. No filesystem I/O is performed —
+    /// the clipboard sink keeps the export testable end-to-end.
+    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
+    fn copy_active_as_csv(&mut self) {
+        if self.current.is_none() {
+            return;
+        }
+        let csv = match self.active_tab {
+            AddressTab::Transactions => csv_for_transfers(self.transfers.as_ref()),
+            AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
+            AddressTab::Overview | AddressTab::Token | AddressTab::Contract => {
+                csv_for_overview(self.current.as_ref())
+            }
+        };
+        self.last_copied_value = Some(csv);
+    }
+
+    // ------------------------------------------------------------------
+    // Test-only seeding helpers. The production feed populates these
+    // fields through `drain_feed`; functional tests for the key
+    // bindings use these setters to bypass the async runtime.
+    // ------------------------------------------------------------------
+
+    #[doc(hidden)]
+    pub fn set_overview_for_test(&mut self, overview: AddressOverview) {
+        self.current = Some(overview);
+    }
+
+    #[doc(hidden)]
+    pub fn set_transfers_for_test(&mut self, page: TransferPage) {
+        self.transfers = Some(page);
+        self.clamp_tx_selection();
+    }
+
+    #[doc(hidden)]
+    pub fn set_holdings_for_test(&mut self, holdings: Vec<TokenHolding>) {
+        self.holdings = Some(holdings);
+        self.clamp_token_selection();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -580,15 +664,60 @@ implementation resolution, source on Etherscan once wired).",
                 );
             }
             AddressTab::Tokens => {
-                let block = Block::default().borders(Borders::ALL).title("Tokens");
                 match self.holdings.as_ref() {
-                    None => frame
-                        .render_widget(Paragraph::new("Loading tokens...").block(block), chunks[2]),
+                    None => frame.render_widget(
+                        Paragraph::new("Loading tokens...")
+                            .block(Block::default().borders(Borders::ALL).title("Tokens")),
+                        chunks[2],
+                    ),
                     Some(holdings) if holdings.is_empty() => frame.render_widget(
-                        Paragraph::new("No ERC-20 holdings found for this address.").block(block),
+                        Paragraph::new("No ERC-20 holdings found for this address.")
+                            .block(Block::default().borders(Borders::ALL).title("Tokens")),
                         chunks[2],
                     ),
                     Some(holdings) => {
+                        // Plan/6 §11 "Shipped": Tokens tab gains a USD
+                        // total header + top-5 distribution chart. The
+                        // chart height grows with the number of priced
+                        // holdings (up to five rows) and the list eats
+                        // the remainder.
+                        let summary = portfolio_summary(holdings);
+                        let chart_rows =
+                            u16::try_from(summary.top_by_usd.len().min(5)).unwrap_or(0);
+                        let chart_block_height = if chart_rows == 0 {
+                            0
+                        } else {
+                            chart_rows + 2 // borders
+                        };
+                        let tokens_chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(3),
+                                Constraint::Length(chart_block_height),
+                                Constraint::Min(3),
+                            ])
+                            .split(chunks[2]);
+
+                        frame.render_widget(
+                            Paragraph::new(portfolio_header_line(&summary)).block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title("Portfolio USD"),
+                            ),
+                            tokens_chunks[0],
+                        );
+
+                        if chart_block_height > 0 {
+                            let bar_width =
+                                (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
+                            frame.render_widget(
+                                Paragraph::new(render_top_distribution(&summary, bar_width)).block(
+                                    Block::default().borders(Borders::ALL).title("Top 5 by USD"),
+                                ),
+                                tokens_chunks[1],
+                            );
+                        }
+
                         let items: Vec<ListItem> = holdings
                             .iter()
                             .map(|h| ListItem::new(render_token_row(h)))
@@ -596,14 +725,14 @@ implementation resolution, source on Etherscan once wired).",
                         let mut state = self.token_list_state;
                         frame.render_stateful_widget(
                             List::new(items)
-                                .block(block)
+                                .block(Block::default().borders(Borders::ALL).title("Tokens"))
                                 .highlight_style(
                                     Style::default()
                                         .add_modifier(Modifier::BOLD)
                                         .bg(Color::Indexed(238)),
                                 )
                                 .highlight_symbol("> "),
-                            chunks[2],
+                            tokens_chunks[2],
                             &mut state,
                         );
                     }
@@ -657,6 +786,25 @@ impl AddressDetailScreen {
         match (self.active_tab, key.code) {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
+
+            // Clipboard bindings — see plan/6 §3 + §11 "Shipped":
+            //   `y` copies the hex address,
+            //   `Y` copies the ENS name (falls back to hex),
+            //   `e` exports the active tab as CSV.
+            // All three feed the same `last_copied_value` sink used
+            // by snapshot tests and the future OS clipboard adapter.
+            (_, KeyCode::Char('y')) => {
+                self.copy_address_hex();
+                Command::None
+            }
+            (_, KeyCode::Char('Y')) => {
+                self.copy_ens_or_address();
+                Command::None
+            }
+            (_, KeyCode::Char('e')) => {
+                self.copy_active_as_csv();
+                Command::None
+            }
             (_, _) if is_back_tab => {
                 self.active_tab = self.prev_tab();
                 self.scroll = 0;
@@ -818,11 +966,25 @@ Tokens loaded {token_count}\n\
 }
 
 fn render_token_row(h: &TokenHolding) -> String {
+    // plan/6 §11 "Shipped": decorate the holding row with its USD
+    // value when the price lookup resolved, or a compact badge for
+    // `Unsupported` / `Pending`. Falls back silently when no price
+    // is available so narrow terminals keep the raw columns in
+    // view.
+    let price_column = match &h.price {
+        PriceLookup::Available(p) => {
+            let usd = token_usd_value(h.balance.value(), h.metadata.decimals, p.value);
+            format!("{}   @{}", format_usd(usd), format_usd(p.value))
+        }
+        PriceLookup::Unsupported { provider } => format!("(not indexed by {provider})"),
+        PriceLookup::Pending => "(price loading…)".to_string(),
+    };
     format!(
-        "{symbol:<10}  {balance:<20}  d={decimals:<2}  {contract}",
+        "{symbol:<10}  {balance:<20}  d={decimals:<2}  {price_column:<36}  {contract}",
         symbol = h.metadata.symbol,
         balance = h.balance.value(),
         decimals = h.metadata.decimals,
+        price_column = price_column,
         contract = h.metadata.address.to_hex(),
     )
 }
@@ -875,4 +1037,273 @@ fn short_addr(s: &str) -> String {
         return s.to_string();
     }
     format!("{}...{}", &s[..6], &s[s.len() - 4..])
+}
+
+// ---------------------------------------------------------------------------
+// CSV export helpers
+// ---------------------------------------------------------------------------
+//
+// See `plan/6-address-detail.md` §11 "Shipped" and
+// `plan/15-backlog.md` §8.7. The exporters are deterministic and do
+// not touch the filesystem; they feed `last_copied_value` so tests
+// can assert on the CSV body and a future clipboard adapter can
+// forward the same blob to the OS.
+
+fn csv_for_overview(overview: Option<&AddressOverview>) -> String {
+    let mut buf = String::from("address,ens,kind,balance,nonce\n");
+    if let Some(ov) = overview {
+        let kind = match ov.kind {
+            AddressKind::Eoa {
+                delegated_to: Some(_),
+            } => "eoa_delegated",
+            AddressKind::Eoa { delegated_to: None } => "eoa",
+            AddressKind::Contract => "contract",
+        };
+        let ens = ov.ens_name.as_deref().unwrap_or("");
+        buf.push_str(&format!(
+            "{addr},{ens},{kind},{bal},{nonce}\n",
+            addr = ov.address.to_hex(),
+            ens = ens,
+            kind = kind,
+            bal = ov.balance.value(),
+            nonce = ov.nonce,
+        ));
+    }
+    buf
+}
+
+fn csv_for_transfers(page: Option<&TransferPage>) -> String {
+    let mut buf = String::from("block,tx_hash,category,from,to,asset,symbol,decimals,value\n");
+    let Some(page) = page else { return buf };
+    for event in &page.events {
+        let (asset_kind, symbol, decimals) = match &event.asset {
+            TransferAsset::Native { symbol } => ("native", symbol.as_str(), String::new()),
+            TransferAsset::Erc20 {
+                symbol, decimals, ..
+            } => ("erc20", symbol.as_str(), decimals.to_string()),
+            TransferAsset::Nft { kind, .. } => match kind {
+                crate::domain::NftKind::Erc721 => ("erc721", "", String::new()),
+                crate::domain::NftKind::Erc1155 => ("erc1155", "", String::new()),
+            },
+        };
+        let to = event
+            .to
+            .map(|a| a.to_hex())
+            .unwrap_or_else(|| "0x".to_string());
+        buf.push_str(&format!(
+            "{block},{tx},{cat},{from},{to},{asset_kind},{symbol},{decimals},{value}\n",
+            block = event.block_number.value(),
+            tx = event.tx_hash.to_hex(),
+            cat = event.category.label().to_ascii_lowercase(),
+            from = event.from.to_hex(),
+            to = to,
+            asset_kind = asset_kind,
+            symbol = symbol,
+            decimals = decimals,
+            value = event.value.value(),
+        ));
+    }
+    buf
+}
+
+fn csv_for_holdings(holdings: Option<&Vec<TokenHolding>>) -> String {
+    let mut buf =
+        String::from("symbol,name,contract,decimals,balance,price_usd,price_status,value_usd\n");
+    let Some(holdings) = holdings else { return buf };
+    for h in holdings {
+        let (price_column, status, value_column) = match &h.price {
+            PriceLookup::Available(p) => {
+                let usd_value = token_usd_value(h.balance.value(), h.metadata.decimals, p.value);
+                (
+                    format_csv_number(p.value),
+                    "available".to_string(),
+                    format_csv_number(usd_value),
+                )
+            }
+            PriceLookup::Unsupported { provider } => (
+                String::new(),
+                format!("unsupported:{provider}"),
+                String::new(),
+            ),
+            PriceLookup::Pending => (String::new(), "pending".to_string(), String::new()),
+        };
+        buf.push_str(&format!(
+            "{sym},{name},{contract},{dec},{bal},{price_column},{status},{value_column}\n",
+            sym = h.metadata.symbol,
+            name = h.metadata.name,
+            contract = h.metadata.address.to_hex(),
+            dec = h.metadata.decimals,
+            bal = h.balance.value(),
+            price_column = price_column,
+            status = status,
+            value_column = value_column,
+        ));
+    }
+    buf
+}
+
+/// Compute the USD value of a holding given the raw balance, the
+/// token's decimals, and the per-token USD spot price. The balance
+/// is an unsigned 128-bit integer in the token's smallest
+/// denomination; the returned float is the sum of integer and
+/// fractional parts scaled independently so we do not lose
+/// precision on tokens with 18 decimals and balances above 2^53.
+pub fn token_usd_value(raw_balance: u128, decimals: u8, price_usd: f64) -> f64 {
+    if decimals == 0 {
+        return (raw_balance as f64) * price_usd;
+    }
+    // Clamp the divisor at 10^38 — anything above that produces
+    // infinity anyway on IEEE-754 doubles.
+    let power = u32::from(decimals.min(38));
+    let divisor = 10f64.powi(power as i32);
+    (raw_balance as f64) / divisor * price_usd
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio summary (Tokens tab header + distribution chart)
+// ---------------------------------------------------------------------------
+//
+// Pure aggregation over a `&[TokenHolding]`. `Unsupported` and
+// `Pending` holdings are counted as "not priced" and contribute
+// nothing to `total_usd`; only `Available` entries land in the
+// `top_by_usd` list. See `plan/6-address-detail.md` §11 "Shipped".
+
+/// One row of the top-5 distribution table shown on the Tokens tab.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortfolioTopEntry {
+    pub symbol: String,
+    pub usd_value: f64,
+}
+
+/// Aggregate figures used by the Tokens tab header, empty-state
+/// badge and top-5 bar chart.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortfolioSummary {
+    /// Sum of USD values across every `PriceLookup::Available`
+    /// holding in the input.
+    pub total_usd: f64,
+    /// Count of holdings with a resolved price.
+    pub priced: usize,
+    /// Count of holdings flagged as `Unsupported` or `Pending`.
+    pub not_priced: usize,
+    /// Up to five rows ordered by USD value descending.
+    pub top_by_usd: Vec<PortfolioTopEntry>,
+}
+
+/// Derive a [`PortfolioSummary`] from a slice of holdings. Pure
+/// function, no I/O. Keeps the Tokens tab render path free of
+/// per-frame allocation for the summary.
+#[must_use]
+pub fn portfolio_summary(holdings: &[TokenHolding]) -> PortfolioSummary {
+    let mut total = 0.0f64;
+    let mut priced = 0usize;
+    let mut not_priced = 0usize;
+    let mut ranked: Vec<PortfolioTopEntry> = Vec::new();
+
+    for h in holdings {
+        match &h.price {
+            PriceLookup::Available(p) => {
+                let usd = token_usd_value(h.balance.value(), h.metadata.decimals, p.value);
+                if usd.is_finite() {
+                    total += usd;
+                }
+                priced += 1;
+                ranked.push(PortfolioTopEntry {
+                    symbol: h.metadata.symbol.clone(),
+                    usd_value: usd,
+                });
+            }
+            PriceLookup::Unsupported { .. } | PriceLookup::Pending => {
+                not_priced += 1;
+            }
+        }
+    }
+    // Descending USD value. `total_cmp` avoids NaN ambiguity.
+    ranked.sort_by(|a, b| b.usd_value.total_cmp(&a.usd_value));
+    ranked.truncate(5);
+
+    PortfolioSummary {
+        total_usd: total,
+        priced,
+        not_priced,
+        top_by_usd: ranked,
+    }
+}
+
+fn portfolio_header_line(summary: &PortfolioSummary) -> String {
+    let total = format_usd(summary.total_usd);
+    if summary.not_priced == 0 {
+        format!("Σ USD {total}  ({priced} priced)", priced = summary.priced)
+    } else {
+        format!(
+            "Σ USD {total}  ({priced} priced, {not} not priced)",
+            priced = summary.priced,
+            not = summary.not_priced,
+        )
+    }
+}
+
+fn format_usd(v: f64) -> String {
+    if !v.is_finite() {
+        return "$?".to_string();
+    }
+    format!("${v:.2}")
+}
+
+/// Render the top-5 distribution as `symbol ████ $value` rows in a
+/// deterministic, terminal-friendly format. `width` is the maximum
+/// number of glyphs used for the bar; the longest bar always equals
+/// `width` so tests can assert on relative widths.
+pub fn render_top_distribution(summary: &PortfolioSummary, width: usize) -> String {
+    if summary.top_by_usd.is_empty() {
+        return "(no priced holdings yet)".to_string();
+    }
+    let max_symbol_len = summary
+        .top_by_usd
+        .iter()
+        .map(|e| e.symbol.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(3);
+    let max_value = summary
+        .top_by_usd
+        .iter()
+        .map(|e| e.usd_value)
+        .fold(0.0f64, f64::max);
+    let mut out = String::new();
+    for entry in &summary.top_by_usd {
+        let share = if max_value > 0.0 {
+            (entry.usd_value / max_value).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let bar_len = ((share * width as f64).round() as usize).min(width);
+        let bar: String = std::iter::repeat_n('█', bar_len).collect();
+        let pad: String = std::iter::repeat_n(' ', width - bar_len).collect();
+        out.push_str(&format!(
+            "{symbol:<sym_w$}  {bar}{pad}  {value}\n",
+            symbol = entry.symbol,
+            bar = bar,
+            pad = pad,
+            value = format_usd(entry.usd_value),
+            sym_w = max_symbol_len,
+        ));
+    }
+    out.trim_end_matches('\n').to_string()
+}
+
+/// Format a float with at most 6 significant decimals and strip
+/// trailing zeros. Keeps CSV output compact without pulling in a
+/// dedicated formatting crate.
+fn format_csv_number(v: f64) -> String {
+    if !v.is_finite() {
+        return String::new();
+    }
+    let formatted = format!("{v:.6}");
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

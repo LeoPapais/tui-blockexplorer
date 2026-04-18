@@ -1,8 +1,10 @@
 # 6 — Address Detail
 
 Status: **done** — MVP Overview + Transactions + Tokens tabs are
-live, and the Contract tab appears dynamically when the loaded
-address has bytecode. Activity classification, CSV export and
+live, the Contract tab appears dynamically when the loaded address
+has bytecode, and the April-2026 follow-up (plan/15-backlog.md
+§8.7) added reverse-ENS, `Y` copy, `e` CSV export, and portfolio
+USD totals + chart. Activity classification and
 approvals-with-revoke stay deferred; see section 13.
 
 Account dossier. Active tabs in MVP: Overview, Transactions, Tokens, Activity, and
@@ -187,8 +189,37 @@ classified one for reading.
 
 - NFTs tab: ownership grid, collections, floor prices, rarity. Will live in a future
 `plan/11-nfts.md`.
-- Approvals panel with "revoke" action.
+- WONT DO: Approvals panel with "revoke" action.
 - Charts of historical balance.
+
+**Shipped (April 2026, branch `probe/8.7-address-detail-followups`,
+`plan/15-backlog.md` §8.7).** The four non-WONT-DO follow-ups of
+this screen landed in a single slice:
+
+- `Y` copies the ENS name when the loaded overview has one and falls
+  back to the hex address otherwise. Pattern mirrors
+  `BlockDetailScreen::last_copied_value` (plan/3 §12.1 / §8.4).
+- Reverse ENS resolution flows through a real
+  `AlchemyEnsResolver::reverse` implementation: namehash
+  `<lower_hex>.addr.reverse`, `resolver(node)` on the ENS Registry,
+  `name(node)` on the resolver, and a forward-resolve confirmation
+  per `.cursor/rules/external-apis.mdc`. Results are cached with a
+  5-minute TTL via `CachedEnsResolver`, a thin decorator over
+  `EnsResolverPort` backed by the shared `TtlCache`. The
+  `load_address_overview` use case now composes
+  `AddressReaderPort` with `EnsResolverPort` so the Overview
+  shows the reverse name without a second round-trip from the UI.
+- `e` copies the currently-active tab to the clipboard sink as a
+  CSV blob (Transactions, Tokens, Portfolio-with-prices, or a
+  minimal Overview summary). No filesystem I/O is introduced; the
+  body lands in `last_copied_value` next to the `y` / `Y`
+  bindings so tests can assert on it deterministically.
+- Portfolio USD totals + top-5 holdings chart: the Tokens tab
+  gains a header row (`Σ USD` + "(N tokens not priced)" badge
+  derived from `PriceLookup::Unsupported` / `Pending`) and a
+  compact bar chart over the top-5 holdings by USD value. The
+  USD column joins the existing list rows when a holding has a
+  `PriceLookup::Available(_)` result.
 
 ## 12. Implementation plan
 
@@ -387,14 +418,16 @@ on pessimistic behaviour (via scenarios that never reach
 - Activity classification (Send / Receive / Approval / Swap / Mint
 / Burn / ContractCreation / Other) — needs the full ABI decoder
 and heuristics over the transfers + logs stream.
-- CSV export (`e` binding) of the currently-filtered transfers.
 - Category filter modal (`f` binding) — the Transactions tab
 currently merges every category; filtering UI lands later.
-- Portfolio USD pricing / holdings charts (plan-6 tokens tab
-stays raw-balance only; the single-token inline view in 12.4.4
-does get price + mini-chart but the aggregated portfolio does
-not yet).
 - Approvals list with "revoke" action.
 - Historical balance chart.
 - NFTs tab.
+
+**Promoted in April 2026 (see §11 "Shipped" block):**
+
+- Reverse-ENS resolution (`Y` copy + Overview badge).
+- CSV export on `e` (active-tab snapshot into the clipboard sink).
+- Portfolio USD totals + top-5 holdings bar chart on the Tokens tab
+(the single-token mini-chart from §12.4.4 stays as before).
 
