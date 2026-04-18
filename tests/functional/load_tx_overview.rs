@@ -6,8 +6,8 @@ use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
-        Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo, ProxyKind, StateDiff,
-        Transaction, TxHash, TxStatus, TxType, Wei,
+        CallKind, CallNode, Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo,
+        ProxyKind, StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use pretty_assertions::assert_eq;
@@ -390,6 +390,57 @@ async fn state_diff_becomes_unsupported_on_feature_unavailable() {
     assert!(matches!(view.state_diff, LoadStatus::Unsupported));
 }
 
+// Plan 12.6.5 — `load_call_tree` populates the Internal tab status.
+#[tokio::test]
+async fn call_tree_becomes_loaded_when_tracer_returns_a_tree() {
+    let tracer = StubTxTracePort::new();
+    let tx = base_tx("0xca11016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ca");
+    let child_to = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+    let tree = CallNode {
+        kind: CallKind::Call,
+        from: tx.from,
+        to: tx.to,
+        value: Wei::new(0),
+        input: Vec::new(),
+        output: Vec::new(),
+        gas_used: 52_341,
+        error: None,
+        children: vec![CallNode {
+            kind: CallKind::Staticcall,
+            from: tx.to.unwrap(),
+            to: Some(child_to),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 128,
+            error: None,
+            children: Vec::new(),
+        }],
+    };
+    tracer.set_call_tree(tx.hash, tree);
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_call_tree(&tracer, &mut view, Chain::Ethereum).await;
+    match view.call_tree {
+        LoadStatus::Loaded(root) => {
+            assert_eq!(root.frame_count(), 2);
+            assert_eq!(root.kind, CallKind::Call);
+            assert_eq!(root.children[0].kind, CallKind::Staticcall);
+        }
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+    assert_eq!(tracer.call_tree_count(), 1);
+}
+
+#[tokio::test]
+async fn call_tree_becomes_unsupported_on_feature_unavailable() {
+    let tracer = StubTxTracePort::new();
+    tracer.mark_unsupported();
+    let tx = base_tx("0xdedf016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394de");
+    let mut view = TxView::bare(tx);
+    load_tx_overview::load_call_tree(&tracer, &mut view, Chain::Ethereum).await;
+    assert!(matches!(view.call_tree, LoadStatus::Unsupported));
+}
+
 #[tokio::test]
 async fn missing_tx_returns_not_found() {
     let reader = StubTxReaderPort::new();
@@ -412,12 +463,7 @@ async fn missing_tx_returns_not_found() {
 // split instead of the "first N positional args are indexed"
 // heuristic used for signature-directory hits.
 
-fn log_with_topic_and_data(
-    address: Address,
-    topic0: [u8; 32],
-    extra_topics: Vec<[u8; 32]>,
-    data: Vec<u8>,
-) -> LogEntry {
+fn log_with_topic_and_data(address: Address, topic0: [u8; 32], extra_topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {
     let mut topics = vec![topic0];
     topics.extend(extra_topics);
     LogEntry {
@@ -654,10 +700,7 @@ async fn logs_directory_hit_leaves_parsed_none() {
 
     let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
     assert_eq!(sig.signature, "Transfer(address,address,uint256)");
-    assert!(
-        sig.parsed.is_none(),
-        "directory hits cannot report indexed flags"
-    );
+    assert!(sig.parsed.is_none(), "directory hits cannot report indexed flags");
 }
 
 // ---------------------------------------------------------------------------
