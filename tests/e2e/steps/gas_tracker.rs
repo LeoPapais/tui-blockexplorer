@@ -19,9 +19,7 @@ fn current(stack: &ScreenStack) -> &GasTrackerScreen {
         .expect("top of stack must be a GasTrackerScreen")
 }
 
-#[given(
-    regex = r#"^the gas stub snapshot has slow (\d+) average (\d+) fast (\d+)$"#
-)]
+#[given(regex = r#"^the gas stub snapshot has slow (\d+) average (\d+) fast (\d+)$"#)]
 async fn gas_stub_snapshot(world: &mut AppWorld, slow: u128, average: u128, fast: u128) {
     let chain = *world.active_chain.get_or_insert(Chain::Ethereum);
     let snapshot = GasSnapshot {
@@ -48,15 +46,8 @@ async fn opens_gas_tracker(world: &mut AppWorld) {
     stack.push(Box::new(screen));
 }
 
-#[then(
-    regex = r#"^the Gas Tracker shows slow (\d+) average (\d+) fast (\d+)$"#
-)]
-async fn shows_tiers(
-    world: &mut AppWorld,
-    slow: u128,
-    average: u128,
-    fast: u128,
-) {
+#[then(regex = r#"^the Gas Tracker shows slow (\d+) average (\d+) fast (\d+)$"#)]
+async fn shows_tiers(world: &mut AppWorld, slow: u128, average: u128, fast: u128) {
     let stack = world.stack.as_ref().expect("stack");
     let g = current(stack).current().expect("primed");
     assert_eq!(g.slow.value(), slow);

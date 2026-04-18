@@ -104,10 +104,7 @@ impl PortfolioPort for AlchemyPortfolio {
                 let addr_hex = addr.to_hex();
                 tokio::spawn(async move {
                     client
-                        .call::<_, RawMetadata>(
-                            "alchemy_getTokenMetadata",
-                            json!([addr_hex]),
-                        )
+                        .call::<_, RawMetadata>("alchemy_getTokenMetadata", json!([addr_hex]))
                         .await
                 })
             })

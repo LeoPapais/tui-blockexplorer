@@ -45,10 +45,10 @@ async fn selector_lookup_returns_none_on_empty_results() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/signatures"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("sourcify__signatures__empty.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("sourcify__signatures__empty.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -65,12 +65,10 @@ async fn event_topic_lookup_returns_signature() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/event-signatures"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("sourcify__event_signatures__transfer.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("sourcify__event_signatures__transfer.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

@@ -55,7 +55,9 @@ impl Chain {
             "polygon" => Ok(Chain::Polygon),
             "optimism" => Ok(Chain::Optimism),
             "arbitrum" => Ok(Chain::Arbitrum),
-            other => Err(DomainError::InvalidInput(format!("unknown chain slug: {other}"))),
+            other => Err(DomainError::InvalidInput(format!(
+                "unknown chain slug: {other}"
+            ))),
         }
     }
 
@@ -98,8 +100,7 @@ mod tests {
     #[test]
     fn slug_roundtrip_holds_for_every_variant() {
         for chain in Chain::all() {
-            let roundtripped =
-                Chain::from_slug(chain.slug()).expect("known slug must parse");
+            let roundtripped = Chain::from_slug(chain.slug()).expect("known slug must parse");
             assert_eq!(*chain, roundtripped);
         }
     }

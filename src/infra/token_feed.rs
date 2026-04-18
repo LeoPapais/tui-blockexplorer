@@ -144,7 +144,6 @@ async fn run_for_address<R, P, T>(
     // Always publish a D1 series, even if it is empty — the UI
     // handles the empty case with a dedicated "no price data"
     // message instead of staying stuck in loading.
-    let series = hist_res
-        .unwrap_or_else(|_| crate::domain::PriceSeries::empty(PriceWindow::D1));
+    let series = hist_res.unwrap_or_else(|_| crate::domain::PriceSeries::empty(PriceWindow::D1));
     let _ = history_tx.send(series);
 }

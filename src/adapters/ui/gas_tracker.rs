@@ -73,9 +73,8 @@ impl Screen for GasTrackerScreen {
             .split(area);
 
         frame.render_widget(
-            Paragraph::new("Gas Tracker").block(
-                Block::default().borders(Borders::ALL).title("Header"),
-            ),
+            Paragraph::new("Gas Tracker")
+                .block(Block::default().borders(Borders::ALL).title("Header")),
             chunks[0],
         );
 

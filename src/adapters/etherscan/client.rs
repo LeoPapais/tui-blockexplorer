@@ -64,8 +64,8 @@ impl EtherscanClient {
     /// base URL and a 10-second timeout.
     pub fn with_default_http(api_key: String) -> Result<Self, EtherscanError> {
         let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
-        let url = Url::parse("https://api.etherscan.io/v2/api")
-            .expect("static Etherscan URL must parse");
+        let url =
+            Url::parse("https://api.etherscan.io/v2/api").expect("static Etherscan URL must parse");
         Ok(Self::new(url, api_key, http))
     }
 

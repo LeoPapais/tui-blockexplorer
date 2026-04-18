@@ -64,8 +64,14 @@ impl ContractReaderPort for AlchemyContractReader {
                 decode_outputs(&function.outputs, &bytes)
             }
             Err(RpcError::Rpc { code: 3, message })
-            | Err(RpcError::Rpc { code: -32000, message })
-            | Err(RpcError::Rpc { code: -32015, message }) => {
+            | Err(RpcError::Rpc {
+                code: -32000,
+                message,
+            })
+            | Err(RpcError::Rpc {
+                code: -32015,
+                message,
+            }) => {
                 // Nodes return revert data with a variety of codes;
                 // the message usually contains either the raw
                 // "revert <reason>" string or just the error text.
@@ -210,9 +216,7 @@ fn decode_outputs(
                 let start = offset + 32;
                 let end = start + length;
                 if end > data.len() {
-                    return Err(DomainError::Internal(
-                        "dynamic payload overflow".into(),
-                    ));
+                    return Err(DomainError::Internal("dynamic payload overflow".into()));
                 }
                 if matches!(param.kind, AbiParamType::String) {
                     let text = String::from_utf8_lossy(&data[start..end]).into_owned();

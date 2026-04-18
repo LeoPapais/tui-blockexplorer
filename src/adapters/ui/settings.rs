@@ -51,9 +51,8 @@ impl Screen for SettingsScreen {
             .split(area);
 
         frame.render_widget(
-            Paragraph::new("Settings").block(
-                Block::default().borders(Borders::ALL).title("Header"),
-            ),
+            Paragraph::new("Settings")
+                .block(Block::default().borders(Borders::ALL).title("Header")),
             chunks[0],
         );
 

@@ -18,18 +18,14 @@ use crate::{
     application::{
         TxView,
         ports::{
-            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort,
-            TxTracePort,
+            ContractSourcePort, SignatureDirectoryPort, TxReaderPort, TxSimulationPort, TxTracePort,
         },
         use_cases::load_tx_overview,
     },
     domain::Chain,
 };
 
-fn send_or_break(
-    tx: &tokio::sync::mpsc::UnboundedSender<TxView>,
-    view: TxView,
-) -> bool {
+fn send_or_break(tx: &tokio::sync::mpsc::UnboundedSender<TxView>, view: TxView) -> bool {
     tx.send(view).is_ok()
 }
 

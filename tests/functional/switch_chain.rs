@@ -22,8 +22,8 @@ fn accepts_a_chain_present_in_the_registry() {
 fn rejects_a_chain_missing_from_the_registry() {
     let registry = StubChainRegistry::new(vec![Chain::Ethereum], Chain::Ethereum);
 
-    let err = switch_chain::run(&registry, Chain::Base)
-        .expect_err("disabled chain must be rejected");
+    let err =
+        switch_chain::run(&registry, Chain::Base).expect_err("disabled chain must be rejected");
 
     assert!(matches!(err, DomainError::FeatureUnavailable));
 }

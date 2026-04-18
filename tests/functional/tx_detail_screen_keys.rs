@@ -36,9 +36,7 @@ fn sample_tx() -> Transaction {
         ),
         tx_index: Some(3),
         from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
-        to: Some(
-            Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
-        ),
+        to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
         value: Wei::new(0),
         gas_price: Wei::new(14_000_000_000),
         gas_used: Some(52_341),
@@ -105,7 +103,10 @@ fn y_copies_the_selected_overview_row_value() {
     let mut screen = loaded_screen(sample_tx());
     let first_value = screen.overview_selected_copy_value().unwrap();
     screen.handle_key(key(KeyCode::Char('y')));
-    assert_eq!(screen.last_copied_value().as_deref(), Some(first_value.as_str()));
+    assert_eq!(
+        screen.last_copied_value().as_deref(),
+        Some(first_value.as_str())
+    );
 }
 
 #[test]

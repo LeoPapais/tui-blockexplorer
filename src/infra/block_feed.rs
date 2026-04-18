@@ -6,9 +6,7 @@
 
 use tokio::task::JoinHandle;
 
-use crate::{
-    adapters::ui::BlockFeedSender, application::ports::BlockReaderPort, domain::Chain,
-};
+use crate::{adapters::ui::BlockFeedSender, application::ports::BlockReaderPort, domain::Chain};
 
 pub fn spawn<R>(chain: Chain, reader: R, sender: BlockFeedSender) -> JoinHandle<()>
 where

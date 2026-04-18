@@ -36,12 +36,11 @@ pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
 pub use mempool::{MempoolScreen, OpenPendingTxFactory};
 pub use screen::{Command, Screen, ScreenStack};
 pub use search::{
-    DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen,
-    search_feed,
+    DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen, search_feed,
 };
 pub use settings::{AppConfigSnapshot, SettingsScreen};
 pub use token_detail::{
-    OpenTxFactory as TokenOpenTxFactory, TokenDetailScreen, TokenFeed, TokenFeedSender,
-    TokenTab, token_feed,
+    OpenTxFactory as TokenOpenTxFactory, TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab,
+    token_feed,
 };
 pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};

@@ -28,18 +28,19 @@ async fn happy_path_by_number_returns_full_block() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockByNumber"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getBlockByNumber__21345678_full.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByNumber__21345678_full.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let reader = reader_for(&server.uri());
     let block = reader
-        .get(BlockId::Number(BlockNumber::new(21_322_062)), Chain::Ethereum)
+        .get(
+            BlockId::Number(BlockNumber::new(21_322_062)),
+            Chain::Ethereum,
+        )
         .await
         .expect("ok")
         .expect("found");
@@ -66,12 +67,10 @@ async fn happy_path_by_hash_returns_full_block() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockByHash"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getBlockByNumber__21345678_full.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByNumber__21345678_full.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -98,18 +97,19 @@ async fn null_result_returns_none() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockByNumber"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getBlockByNumber__not_found.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByNumber__not_found.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     let reader = reader_for(&server.uri());
     let got = reader
-        .get(BlockId::Number(BlockNumber::new(99_999_999)), Chain::Ethereum)
+        .get(
+            BlockId::Number(BlockNumber::new(99_999_999)),
+            Chain::Ethereum,
+        )
         .await
         .expect("ok");
     assert!(got.is_none());

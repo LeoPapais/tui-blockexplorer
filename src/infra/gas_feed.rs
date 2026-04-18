@@ -7,18 +7,11 @@ use std::time::Duration;
 
 use tokio::task::JoinHandle;
 
-use crate::{
-    adapters::ui::GasFeedSender, application::ports::GasOraclePort, domain::Chain,
-};
+use crate::{adapters::ui::GasFeedSender, application::ports::GasOraclePort, domain::Chain};
 
 pub const DEFAULT_REFRESH_PERIOD: Duration = Duration::from_secs(6);
 
-pub fn spawn<O>(
-    chain: Chain,
-    oracle: O,
-    sender: GasFeedSender,
-    period: Duration,
-) -> JoinHandle<()>
+pub fn spawn<O>(chain: Chain, oracle: O, sender: GasFeedSender, period: Duration) -> JoinHandle<()>
 where
     O: GasOraclePort + 'static,
 {

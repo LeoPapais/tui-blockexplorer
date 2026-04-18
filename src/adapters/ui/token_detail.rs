@@ -26,8 +26,8 @@ use ratatui::{
     symbols,
     text::{Line, Span},
     widgets::{
-        Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, ListState,
-        Paragraph, Tabs, Wrap,
+        Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, ListState, Paragraph,
+        Tabs, Wrap,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -110,8 +110,7 @@ pub enum TokenTab {
 }
 
 impl TokenTab {
-    pub const ALL: [TokenTab; 3] =
-        [TokenTab::Overview, TokenTab::Transfers, TokenTab::Chart];
+    pub const ALL: [TokenTab; 3] = [TokenTab::Overview, TokenTab::Transfers, TokenTab::Chart];
 
     /// Number of tabs exposed by the screen. Handy for BDD loops
     /// that cycle the `Tab` key until a target tab is reached.
@@ -276,11 +275,7 @@ impl TokenDetailScreen {
     }
 
     fn clamp_tx_selection(&mut self) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             self.tx_list_state.select(None);
             return;
@@ -290,11 +285,7 @@ impl TokenDetailScreen {
     }
 
     fn select_delta(&mut self, delta: i32) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
         if len == 0 {
             return;
         }
@@ -342,9 +333,8 @@ impl Screen for TokenDetailScreen {
             .split(area);
 
         frame.render_widget(
-            Paragraph::new(header_line(self.current.as_ref(), self.address)).block(
-                Block::default().borders(Borders::ALL).title("Token"),
-            ),
+            Paragraph::new(header_line(self.current.as_ref(), self.address))
+                .block(Block::default().borders(Borders::ALL).title("Token")),
             chunks[0],
         );
 
@@ -495,10 +485,7 @@ Market cap    {mcap}\n\
             .borders(Borders::ALL)
             .title("Transfers (ERC-20)");
         match self.transfers.as_ref() {
-            None => frame.render_widget(
-                Paragraph::new("Loading transfers...").block(block),
-                area,
-            ),
+            None => frame.render_widget(Paragraph::new("Loading transfers...").block(block), area),
             Some(page) if page.events.is_empty() => frame.render_widget(
                 Paragraph::new("No transfers found for this token yet.").block(block),
                 area,
@@ -527,10 +514,7 @@ Market cap    {mcap}\n\
     }
 
     fn render_chart(&self, frame: &mut Frame<'_>, area: Rect) {
-        let title = format!(
-            "Price chart ({label})",
-            label = self.active_window.label()
-        );
+        let title = format!("Price chart ({label})", label = self.active_window.label());
         let block = Block::default().borders(Borders::ALL).title(title);
 
         let series = match self.series.get(&self.active_window) {
@@ -592,10 +576,7 @@ Market cap    {mcap}\n\
 
         let x_axis = Axis::default()
             .bounds([0.0, x_max.max(1.0)])
-            .labels(vec![
-                Span::raw("older"),
-                Span::raw("now"),
-            ])
+            .labels(vec![Span::raw("older"), Span::raw("now")])
             .style(Style::default().fg(Color::DarkGray));
 
         let y_axis = Axis::default()
@@ -805,9 +786,9 @@ Market cap    {mcap}\n\
         mcap = market_cap_cell,
     );
     frame.render_widget(
-        Paragraph::new(body).wrap(Wrap { trim: false }).block(
-            Block::default().borders(Borders::ALL).title("Token"),
-        ),
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Token")),
         chunks[0],
     );
 
@@ -870,7 +851,10 @@ Market cap    {mcap}\n\
                 ])
                 .style(Style::default().fg(Color::DarkGray));
             frame.render_widget(
-                Chart::new(datasets).block(chart_block).x_axis(x_axis).y_axis(y_axis),
+                Chart::new(datasets)
+                    .block(chart_block)
+                    .x_axis(x_axis)
+                    .y_axis(y_axis),
                 chunks[1],
             );
         }

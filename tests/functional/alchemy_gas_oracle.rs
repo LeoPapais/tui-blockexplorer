@@ -17,10 +17,7 @@ use wiremock::{
 use crate::support::fixture_loader::load_text;
 
 fn adapter_for(url: &str) -> AlchemyGasOracleAdapter {
-    let client = RpcClient::new(
-        Url::parse(url).unwrap(),
-        reqwest::Client::new(),
-    );
+    let client = RpcClient::new(Url::parse(url).unwrap(), reqwest::Client::new());
     AlchemyGasOracleAdapter::new(client)
 }
 
@@ -29,12 +26,10 @@ async fn happy_path_returns_tiered_snapshot() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_feeHistory"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_feeHistory__ethereum_20_blocks.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_feeHistory__ethereum_20_blocks.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
@@ -55,10 +50,10 @@ async fn unsupported_method_maps_to_feature_unavailable() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_feeHistory"})))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("rpc__error__method_not_found.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__error__method_not_found.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        Command, ContractDetailScreen, ContractFeedSender, ContractTab, ScreenStack,
-        contract_feed,
+        Command, ContractDetailScreen, ContractFeedSender, ContractTab, ScreenStack, contract_feed,
     },
     application::{
         ports::{
@@ -17,8 +16,7 @@ use blockexplorer_tui::{
         use_cases::load_contract_overview,
     },
     domain::{
-        Address, Chain, ContractSource, DecodedValue, LogEntry, ProxyInfo, ProxyKind,
-        SourceFile,
+        Address, Chain, ContractSource, DecodedValue, LogEntry, ProxyInfo, ProxyKind, SourceFile,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -58,11 +56,7 @@ where
 #[given(
     regex = r#"^the proxy detector reports EIP-1967 implementation "(0x[0-9a-fA-F]{40})" for "(0x[0-9a-fA-F]{40})"$"#
 )]
-async fn proxy_reports_impl(
-    world: &mut AppWorld,
-    impl_hex: String,
-    proxy_hex: String,
-) {
+async fn proxy_reports_impl(world: &mut AppWorld, impl_hex: String, proxy_hex: String) {
     let impl_addr = Address::from_hex(&impl_hex).unwrap();
     let proxy_addr = Address::from_hex(&proxy_hex).unwrap();
     world.proxy_detector_stub.set(
@@ -93,9 +87,7 @@ async fn no_proxy(world: &mut AppWorld) {
     assert!(ov.proxy.is_none());
 }
 
-#[then(
-    regex = r#"^once the contract is loaded, the proxy points at "(0x[0-9a-fA-F]{40})"$"#
-)]
+#[then(regex = r#"^once the contract is loaded, the proxy points at "(0x[0-9a-fA-F]{40})"$"#)]
 async fn proxy_points_at(world: &mut AppWorld, expected_hex: String) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
@@ -136,7 +128,9 @@ fn sample_source() -> ContractSource {
 )]
 async fn stub_has_verified_single_file(world: &mut AppWorld, addr_hex: String) {
     let addr = Address::from_hex(&addr_hex).unwrap();
-    world.contract_source_stub.insert_source(addr, sample_source());
+    world
+        .contract_source_stub
+        .insert_source(addr, sample_source());
 }
 
 #[when(regex = r#"^the user opens ContractDetail with source for "(0x[0-9a-fA-F]{40})"$"#)]
@@ -401,7 +395,10 @@ async fn read_tab_shows_uint(world: &mut AppWorld, expected: u128) {
 #[then(regex = r#"^once executed, the Read tab reports a revert with "([^"]+)"$"#)]
 async fn read_tab_reports_revert(world: &mut AppWorld, expected_reason: String) {
     let stack = world.stack.as_mut().expect("stack");
-    tick_until(stack, |s| current(s).last_result_is_error_containing(&expected_reason)).await;
+    tick_until(stack, |s| {
+        current(s).last_result_is_error_containing(&expected_reason)
+    })
+    .await;
     assert!(current(stack).last_result_is_error_containing(&expected_reason));
 }
 
@@ -409,17 +406,14 @@ async fn read_tab_reports_revert(world: &mut AppWorld, expected_reason: String) 
 // Events / Storage tabs (plan 7 section 12.4.3)
 // ---------------------------------------------------------------------------
 
-#[given(
-    regex = r#"^the event log stub has (\d+) Transfer events for "(0x[0-9a-fA-F]{40})"$"#
-)]
+#[given(regex = r#"^the event log stub has (\d+) Transfer events for "(0x[0-9a-fA-F]{40})"$"#)]
 async fn event_log_stub_has_transfers(world: &mut AppWorld, count: u32, addr_hex: String) {
     let addr = Address::from_hex(&addr_hex).unwrap();
-    let topic: [u8; 32] = hex::decode(
-        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
     let logs: Vec<LogEntry> = (0..count as usize)
         .map(|_| LogEntry {
             address: addr,

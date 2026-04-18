@@ -1,0 +1,8 @@
+{
+  "chain": "polygon",
+  "slow_gwei": 30,
+  "average_gwei": 50,
+  "fast_gwei": 80,
+  "base_fee_gwei": 30,
+  "trend_gwei": [30, 35, 40, 45, 50, 55, 50, 45, 40, 45, 50, 55, 60, 55, 50, 45, 40, 45, 50, 55]
+}

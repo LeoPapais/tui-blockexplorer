@@ -5,8 +5,8 @@
 use blockexplorer_tui::{
     application::use_cases::load_address_transfers,
     domain::{
-        Address, BlockNumber, Chain, TransferAsset, TransferCategory, TransferEvent,
-        TransferPage, TxHash, Wei,
+        Address, BlockNumber, Chain, TransferAsset, TransferCategory, TransferEvent, TransferPage,
+        TxHash, Wei,
     },
 };
 use pretty_assertions::assert_eq;

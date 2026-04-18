@@ -30,8 +30,7 @@ fn balance_of() -> AbiFunction {
 #[tokio::test]
 async fn executes_a_view_function_and_returns_decoded_values() {
     let reader = StubContractReaderPort::new();
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
     let function = balance_of();
     reader.set_result(
         contract,
@@ -56,8 +55,7 @@ async fn executes_a_view_function_and_returns_decoded_values() {
 #[tokio::test]
 async fn surfaces_revert_reason_on_execution_revert() {
     let reader = StubContractReaderPort::new();
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
     let function = balance_of();
     reader.set_revert(contract, &function.signature(), "InsufficientBalance()");
 
@@ -83,8 +81,7 @@ async fn surfaces_revert_reason_on_execution_revert() {
 #[tokio::test]
 async fn rejects_non_read_only_functions_upfront() {
     let reader = StubContractReaderPort::new();
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
     let mut function = balance_of();
     function.is_read_only = false;
 
@@ -104,8 +101,7 @@ async fn rejects_non_read_only_functions_upfront() {
 #[tokio::test]
 async fn rejects_arg_count_mismatch() {
     let reader = StubContractReaderPort::new();
-    let contract =
-        Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
     let function = balance_of();
 
     let err = invoke_read_function::run(

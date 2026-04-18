@@ -30,9 +30,7 @@ impl AlchemyBlockLookup {
     fn raw_to_summary(raw: Option<RawBlock>) -> Result<Option<BlockSummary>, DomainError> {
         let Some(raw) = raw else { return Ok(None) };
         Ok(Some(BlockSummary {
-            number: BlockNumber::new(
-                parse_hex_u64(&raw.number).map_err(|e| e.into_domain())?,
-            ),
+            number: BlockNumber::new(parse_hex_u64(&raw.number).map_err(|e| e.into_domain())?),
             hash: BlockHash::from_hex(&raw.hash)?,
         }))
     }
@@ -46,7 +44,10 @@ impl BlockLookupPort for AlchemyBlockLookup {
     ) -> Result<Option<BlockSummary>, DomainError> {
         let raw: Option<RawBlock> = self
             .client
-            .call("eth_getBlockByHash", serde_json::json!([hash.to_hex(), false]))
+            .call(
+                "eth_getBlockByHash",
+                serde_json::json!([hash.to_hex(), false]),
+            )
             .await
             .map_err(|e| e.into_domain())?;
         Self::raw_to_summary(raw)

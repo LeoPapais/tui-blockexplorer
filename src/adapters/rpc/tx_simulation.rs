@@ -69,7 +69,10 @@ impl TxSimulationPort for AlchemySimulation {
         }
         tx_object.insert("value".into(), json!(format!("0x{:x}", tx.value.value())));
         if !tx.input.is_empty() {
-            tx_object.insert("data".into(), json!(format!("0x{}", hex::encode(&tx.input))));
+            tx_object.insert(
+                "data".into(),
+                json!(format!("0x{}", hex::encode(&tx.input))),
+            );
         }
         tx_object.insert("gas".into(), json!(format!("0x{:x}", tx.gas_limit)));
 

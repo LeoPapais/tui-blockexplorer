@@ -19,8 +19,7 @@ use crate::{
     application::ports::BlockRange,
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, BlockNumber, Chain, ContractOverview,
-        ContractSource, DecodedValue, DomainError, LogEntry, SourceFile,
-        parse_abi_functions,
+        ContractSource, DecodedValue, DomainError, LogEntry, SourceFile, parse_abi_functions,
     },
 };
 
@@ -330,12 +329,8 @@ impl ContractDetailScreen {
             self.reset_args_for_current_fn();
         }
         while let Ok(result) = self.feed.read_rx.try_recv() {
-            self.last_result = Some(
-                result.map_err(|e| domain_error_message(&e)),
-            );
-            self.last_result_for = self
-                .selected_function()
-                .map(|f| f.signature());
+            self.last_result = Some(result.map_err(|e| domain_error_message(&e)));
+            self.last_result_for = self.selected_function().map(|f| f.signature());
         }
         while let Ok(result) = self.feed.events_rx.try_recv() {
             self.events = Some(result.map_err(|e| domain_error_message(&e)));
@@ -405,18 +400,12 @@ impl ContractDetailScreen {
                     "true" | "1" => AbiValue::Bool(true),
                     "false" | "0" => AbiValue::Bool(false),
                     other => {
-                        return Err(format!(
-                            "{}: expected true/false, got {other}",
-                            param.name
-                        ));
+                        return Err(format!("{}: expected true/false, got {other}", param.name));
                     }
                 },
                 AbiParamType::String => AbiValue::String(raw.to_string()),
                 other => {
-                    return Err(format!(
-                        "{}: unsupported input type {other:?}",
-                        param.name
-                    ));
+                    return Err(format!("{}: unsupported input type {other:?}", param.name));
                 }
             };
             values.push(value);
@@ -425,11 +414,7 @@ impl ContractDetailScreen {
     }
 
     fn clamp_file_selection(&mut self) {
-        let len = self
-            .source
-            .as_ref()
-            .map(|s| s.files.len())
-            .unwrap_or(0);
+        let len = self.source.as_ref().map(|s| s.files.len()).unwrap_or(0);
         if len == 0 {
             self.file_list_state.select(None);
             return;
@@ -439,11 +424,7 @@ impl ContractDetailScreen {
     }
 
     fn file_delta(&mut self, delta: i32) {
-        let len = self
-            .source
-            .as_ref()
-            .map(|s| s.files.len())
-            .unwrap_or(0);
+        let len = self.source.as_ref().map(|s| s.files.len()).unwrap_or(0);
         if len == 0 {
             return;
         }
@@ -475,7 +456,13 @@ impl Screen for ContractDetailScreen {
                 let verified = self
                     .source
                     .as_ref()
-                    .map(|s| if s.is_verified { "verified" } else { "unverified" })
+                    .map(|s| {
+                        if s.is_verified {
+                            "verified"
+                        } else {
+                            "unverified"
+                        }
+                    })
                     .unwrap_or("verification loading...");
                 format!(
                     "Contract {addr}  [{verified}]",
@@ -485,9 +472,7 @@ impl Screen for ContractDetailScreen {
             None => "Contract (loading...)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(header).block(
-                Block::default().borders(Borders::ALL).title("Contract"),
-            ),
+            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Contract")),
             chunks[0],
         );
 
@@ -513,11 +498,7 @@ impl Screen for ContractDetailScreen {
         // Body
         match self.active_tab {
             ContractTab::Overview => {
-                let body = overview_body(
-                    self.address,
-                    self.current.as_ref(),
-                    self.source.as_ref(),
-                );
+                let body = overview_body(self.address, self.current.as_ref(), self.source.as_ref());
                 let offset = self.bound_scroll_for(&body, chunks[2]);
                 frame.render_widget(
                     Paragraph::new(body)
@@ -553,8 +534,7 @@ impl Screen for ContractDetailScreen {
             _ => {}
         }
         let is_back_tab = key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab
-                && key.modifiers.contains(KeyModifiers::SHIFT));
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         if is_back_tab {
             self.active_tab = self.active_tab.previous();
             self.scroll = 0;
@@ -724,18 +704,13 @@ impl ContractDetailScreen {
             return;
         };
         if !function.is_executable() {
-            self.last_result = Some(Err(
-                "function has unsupported ABI input types".to_string(),
-            ));
+            self.last_result = Some(Err("function has unsupported ABI input types".to_string()));
             self.last_result_for = Some(function.signature());
             return;
         }
         match self.build_args() {
             Ok(args) => {
-                let _ = self
-                    .feed
-                    .read_tx
-                    .send(ReadRequest { function, args });
+                let _ = self.feed.read_tx.send(ReadRequest { function, args });
             }
             Err(msg) => {
                 self.last_result = Some(Err(msg));
@@ -747,9 +722,8 @@ impl ContractDetailScreen {
     fn render_read_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         if self.source.is_none() {
             frame.render_widget(
-                Paragraph::new("Loading ABI...").block(
-                    Block::default().borders(Borders::ALL).title("Read"),
-                ),
+                Paragraph::new("Loading ABI...")
+                    .block(Block::default().borders(Borders::ALL).title("Read")),
                 area,
             );
             return;
@@ -826,17 +800,13 @@ Contract may be unverified or expose only events / constructors.",
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
-                format!(
-                    "{sig}\n-> ({outputs})\n{mutability}",
-                    sig = f.signature(),
-                )
+                format!("{sig}\n-> ({outputs})\n{mutability}", sig = f.signature(),)
             }
             None => "(no function selected)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(meta_text).block(
-                Block::default().borders(Borders::ALL).title("Signature"),
-            ),
+            Paragraph::new(meta_text)
+                .block(Block::default().borders(Borders::ALL).title("Signature")),
             detail_chunks[0],
         );
 
@@ -849,16 +819,14 @@ Contract may be unverified or expose only events / constructors.",
             Some(f) if f.inputs.is_empty() => "(no arguments)".to_string(),
             Some(f) => {
                 let mut lines = Vec::with_capacity(f.inputs.len());
-                for (idx, (param, buf)) in
-                    f.inputs.iter().zip(self.arg_buffers.iter()).enumerate()
+                for (idx, (param, buf)) in f.inputs.iter().zip(self.arg_buffers.iter()).enumerate()
                 {
-                    let cursor = if matches!(self.read_focus, ReadFocus::Args)
-                        && idx == self.arg_cursor
-                    {
-                        ">"
-                    } else {
-                        " "
-                    };
+                    let cursor =
+                        if matches!(self.read_focus, ReadFocus::Args) && idx == self.arg_cursor {
+                            ">"
+                        } else {
+                            " "
+                        };
                     lines.push(format!(
                         "{cursor} {name} ({ty}) = {buf}",
                         name = if param.name.is_empty() {
@@ -905,9 +873,9 @@ Contract may be unverified or expose only events / constructors.",
             _ => "(press Enter on the arguments pane to execute)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(result_body).wrap(Wrap { trim: false }).block(
-                Block::default().borders(Borders::ALL).title("Result"),
-            ),
+            Paragraph::new(result_body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Result")),
             detail_chunks[2],
         );
     }
@@ -949,18 +917,16 @@ Contract may be unverified or expose only events / constructors.",
             KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
                 self.slot_buffer.push(c);
             }
-            KeyCode::Enter => {
-                match parse_slot(&self.slot_buffer) {
-                    Ok(slot) => {
-                        self.storage_slot_requested = Some(slot);
-                        self.storage_result = None;
-                        let _ = self.feed.storage_tx.send(StorageRequest { slot });
-                    }
-                    Err(msg) => {
-                        self.storage_result = Some(Err(msg));
-                    }
+            KeyCode::Enter => match parse_slot(&self.slot_buffer) {
+                Ok(slot) => {
+                    self.storage_slot_requested = Some(slot);
+                    self.storage_result = None;
+                    let _ = self.feed.storage_tx.send(StorageRequest { slot });
                 }
-            }
+                Err(msg) => {
+                    self.storage_result = Some(Err(msg));
+                }
+            },
             _ => {}
         }
         Command::None
@@ -1025,9 +991,7 @@ Contract may be unverified or expose only events / constructors.",
             self.slot_buffer,
         );
         frame.render_widget(
-            Paragraph::new(prompt).block(
-                Block::default().borders(Borders::ALL).title("Slot"),
-            ),
+            Paragraph::new(prompt).block(Block::default().borders(Borders::ALL).title("Slot")),
             chunks[0],
         );
 
@@ -1040,9 +1004,9 @@ Contract may be unverified or expose only events / constructors.",
             (None, Some(Ok(_))) => unreachable!(),
         };
         frame.render_widget(
-            Paragraph::new(body).wrap(Wrap { trim: false }).block(
-                Block::default().borders(Borders::ALL).title("Value"),
-            ),
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Value")),
             chunks[1],
         );
     }
@@ -1050,9 +1014,8 @@ Contract may be unverified or expose only events / constructors.",
     fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(source) = self.source.as_ref() else {
             frame.render_widget(
-                Paragraph::new("Loading source...").block(
-                    Block::default().borders(Borders::ALL).title("Source"),
-                ),
+                Paragraph::new("Loading source...")
+                    .block(Block::default().borders(Borders::ALL).title("Source")),
                 area,
             );
             return;
@@ -1194,7 +1157,8 @@ fn parse_slot(raw: &str) -> Result<[u8; 32], String> {
     if trimmed.is_empty() {
         return Err("slot input is empty".into());
     }
-    let (radix, digits) = if let Some(rest) = trimmed.strip_prefix("0x")
+    let (radix, digits) = if let Some(rest) = trimmed
+        .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
         (16, rest)
@@ -1214,7 +1178,9 @@ fn parse_slot(raw: &str) -> Result<[u8; 32], String> {
     } else {
         // Decimal: up to u128 (contracts with slots > 2^128 are rare
         // enough that we keep the code simple).
-        let n: u128 = digits.parse().map_err(|e| format!("invalid decimal: {e}"))?;
+        let n: u128 = digits
+            .parse()
+            .map_err(|e| format!("invalid decimal: {e}"))?;
         let mut bytes = [0u8; 32];
         bytes[16..].copy_from_slice(&n.to_be_bytes());
         Ok(bytes)
@@ -1261,7 +1227,10 @@ fn abi_body(source: Option<&ContractSource>) -> (String, String) {
         return ("ABI".to_string(), "Loading ABI...".to_string());
     };
     if !source.is_verified || source.abi.trim().is_empty() {
-        return ("ABI".to_string(), "No ABI available (contract unverified).".to_string());
+        return (
+            "ABI".to_string(),
+            "No ABI available (contract unverified).".to_string(),
+        );
     }
     // Best-effort pretty-print; fall back to the raw string if the
     // JSON parse fails.

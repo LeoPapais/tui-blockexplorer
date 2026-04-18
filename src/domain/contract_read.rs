@@ -35,7 +35,11 @@ impl AbiParamType {
             "bytes" => AbiParamType::Bytes,
             s if s.starts_with("uint") => {
                 let bits = s.strip_prefix("uint").unwrap_or("256");
-                let bits = if bits.is_empty() { 256 } else { bits.parse().unwrap_or(0) };
+                let bits = if bits.is_empty() {
+                    256
+                } else {
+                    bits.parse().unwrap_or(0)
+                };
                 if bits == 0 || bits % 8 != 0 || bits > 256 {
                     AbiParamType::Unsupported(raw.to_string())
                 } else {
@@ -44,7 +48,11 @@ impl AbiParamType {
             }
             s if s.starts_with("int") => {
                 let bits = s.strip_prefix("int").unwrap_or("256");
-                let bits = if bits.is_empty() { 256 } else { bits.parse().unwrap_or(0) };
+                let bits = if bits.is_empty() {
+                    256
+                } else {
+                    bits.parse().unwrap_or(0)
+                };
                 if bits == 0 || bits % 8 != 0 || bits > 256 {
                     AbiParamType::Unsupported(raw.to_string())
                 } else {

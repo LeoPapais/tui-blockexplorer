@@ -17,10 +17,7 @@ use wiremock::{
 
 use crate::support::fixture_loader::load_text;
 
-async fn server_with(
-    body_matcher: serde_json::Value,
-    fixture_path: &str,
-) -> MockServer {
+async fn server_with(body_matcher: serde_json::Value, fixture_path: &str) -> MockServer {
     let server = MockServer::start().await;
     let body = load_text(fixture_path);
     Mock::given(method("POST"))
@@ -55,10 +52,7 @@ async fn server_with_two(
 }
 
 fn adapter_for(url: &str) -> AlchemyNetworkStatusAdapter {
-    let client = RpcClient::new(
-        Url::parse(url).unwrap(),
-        reqwest::Client::new(),
-    );
+    let client = RpcClient::new(Url::parse(url).unwrap(), reqwest::Client::new());
     AlchemyNetworkStatusAdapter::new(client)
 }
 
@@ -68,32 +62,28 @@ async fn happy_path_returns_head_block_and_base_fee() {
 
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_blockNumber"})))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(load_text("rpc__eth_blockNumber__ethereum.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_blockNumber__ethereum.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockByNumber"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getBlockByNumber__ethereum_head.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByNumber__ethereum_head.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"eth_getBlockByHash"})))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__eth_getBlockByHash__ethereum_parent.json"),
-                "application/json",
-            ),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            load_text("rpc__eth_getBlockByHash__ethereum_parent.json"),
+            "application/json",
+        ))
         .mount(&server)
         .await;
 

@@ -71,10 +71,7 @@ fn apply_command(stack: &mut ScreenStack, cmd: Command) {
 }
 
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
-    let cmd = stack
-        .top_mut()
-        .expect("stack non-empty")
-        .handle_key(key);
+    let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
     apply_command(stack, cmd);
 }
 
