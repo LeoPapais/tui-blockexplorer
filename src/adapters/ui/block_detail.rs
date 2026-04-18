@@ -56,26 +56,34 @@ pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + 'static>
 pub enum BlockTab {
     Overview,
     Transactions,
+    /// Post-Shanghai withdrawals plus a placeholder for the Beacon
+    /// blob sidecars (still deferred, see
+    /// `plan/3-block-detail.md` §13).
+    BlobsAndWithdrawals,
 }
 
 impl BlockTab {
     fn next(self) -> Self {
         match self {
             BlockTab::Overview => BlockTab::Transactions,
-            BlockTab::Transactions => BlockTab::Overview,
+            BlockTab::Transactions => BlockTab::BlobsAndWithdrawals,
+            BlockTab::BlobsAndWithdrawals => BlockTab::Overview,
         }
     }
 
     fn previous(self) -> Self {
-        // Only two tabs so next == previous; kept as a distinct
-        // method so callers read cleanly.
-        self.next()
+        match self {
+            BlockTab::Overview => BlockTab::BlobsAndWithdrawals,
+            BlockTab::Transactions => BlockTab::Overview,
+            BlockTab::BlobsAndWithdrawals => BlockTab::Transactions,
+        }
     }
 
     fn label(self) -> &'static str {
         match self {
             BlockTab::Overview => "Overview",
             BlockTab::Transactions => "Transactions",
+            BlockTab::BlobsAndWithdrawals => "Blobs / Withdrawals",
         }
     }
 }
@@ -88,6 +96,12 @@ pub struct BlockDetailScreen {
     open_tx_factory: OpenTxFactory,
     active_tab: BlockTab,
     tx_selected: usize,
+    /// Last value produced by the `y` / `Y` bindings. A real
+    /// clipboard adapter is deferred — see `plan/3-block-detail.md`
+    /// §12.1 and `plan/15-backlog.md §8.16`. Tests inspect this
+    /// field directly so the binding stays testable without pulling
+    /// the OS clipboard into the UI adapter.
+    last_copied_value: Option<String>,
 }
 
 impl BlockDetailScreen {
@@ -109,6 +123,7 @@ impl BlockDetailScreen {
             open_tx_factory,
             active_tab: BlockTab::Overview,
             tx_selected: 0,
+            last_copied_value: None,
         }
     }
 
@@ -128,7 +143,44 @@ impl BlockDetailScreen {
             open_tx_factory,
             active_tab: BlockTab::Overview,
             tx_selected: 0,
+            last_copied_value: None,
         }
+    }
+
+    /// Latest value produced by the `y` / `Y` clipboard bindings.
+    /// Mirrors `TxDetailScreen::last_copied_value`. Returns `None`
+    /// before the user triggers a copy.
+    #[must_use]
+    pub fn last_copied_value(&self) -> Option<&str> {
+        self.last_copied_value.as_deref()
+    }
+
+    /// Copy the identifier most relevant to the active tab:
+    ///
+    /// - Overview: the block hash.
+    /// - Transactions: the selected transaction hash.
+    ///
+    /// No-op while the block is still loading; covered by
+    /// `plan/3-block-detail.md` §12.1.
+    fn copy_active_identifier(&mut self) {
+        let Some(block) = self.current.as_ref() else {
+            return;
+        };
+        let value = match self.active_tab {
+            BlockTab::Overview | BlockTab::BlobsAndWithdrawals => block.hash.to_hex(),
+            BlockTab::Transactions => match block.tx_hashes.get(self.tx_selected) {
+                Some(hash) => hash.to_hex(),
+                None => return,
+            },
+        };
+        self.last_copied_value = Some(value);
+    }
+
+    fn copy_block_number(&mut self) {
+        let Some(block) = self.current.as_ref() else {
+            return;
+        };
+        self.last_copied_value = Some(block.number.value().to_string());
     }
 
     #[must_use]
@@ -182,9 +234,10 @@ impl Screen for BlockDetailScreen {
 
         // Tab bar
         let tabs = format!(
-            "[ {overview} ]  [ {transactions} ]",
+            "[ {overview} ]  [ {transactions} ]  [ {blobs} ]",
             overview = marker(self.active_tab, BlockTab::Overview),
             transactions = marker(self.active_tab, BlockTab::Transactions),
+            blobs = marker(self.active_tab, BlockTab::BlobsAndWithdrawals),
         );
         frame.render_widget(
             Paragraph::new(tabs).block(RatBlock::default().borders(Borders::ALL).title("Tabs")),
@@ -238,6 +291,17 @@ impl Screen for BlockDetailScreen {
                     chunks[2],
                 );
             }
+            (Some(block), BlockTab::BlobsAndWithdrawals) => {
+                let body = blobs_and_withdrawals_body(block);
+                frame.render_widget(
+                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .title("Blobs / Withdrawals"),
+                    ),
+                    chunks[2],
+                );
+            }
         }
     }
 
@@ -274,6 +338,16 @@ impl Screen for BlockDetailScreen {
             }
             KeyCode::Left => {
                 self.active_tab = self.active_tab.previous();
+                return Command::None;
+            }
+            // `y` copies the identifier relevant to the active tab;
+            // `Y` always copies the block number. See plan/3 §12.1.
+            KeyCode::Char('y') => {
+                self.copy_active_identifier();
+                return Command::None;
+            }
+            KeyCode::Char('Y') => {
+                self.copy_block_number();
                 return Command::None;
             }
             _ => {}
@@ -376,6 +450,29 @@ Extra      0x{}",
         b.tx_hashes.len(),
         hex::encode(&b.extra_data),
     )
+}
+
+fn blobs_and_withdrawals_body(b: &Block) -> String {
+    let mut out = String::new();
+    out.push_str("Withdrawals (");
+    out.push_str(&b.withdrawals.len().to_string());
+    out.push_str(")\n");
+    if b.withdrawals.is_empty() {
+        out.push_str("  (none on this block)\n");
+    } else {
+        for w in &b.withdrawals {
+            out.push_str(&format!(
+                "  #{idx:>3}  validator {val:<7}  {addr}  {amount} gwei\n",
+                idx = w.index,
+                val = w.validator_index,
+                addr = short_hex(&w.address.to_hex()),
+                amount = format_u64(w.amount_gwei),
+            ));
+        }
+    }
+    out.push_str("\nBlobs\n");
+    out.push_str("  Beacon blob_sidecars not wired yet — see plan/3-block-detail.md §13.\n");
+    out
 }
 
 fn short_hex(s: &str) -> String {

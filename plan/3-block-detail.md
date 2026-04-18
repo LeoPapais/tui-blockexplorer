@@ -1,10 +1,10 @@
 # 3 — Block Detail
 
-Status: **done** — all three BDD scenarios in
-`tests/e2e/features/block_detail.feature` are green along with the
-functional coverage under `tests/functional/`. Blobs / Withdrawals,
-receipts, pagination and the label lookup remain deferred; see
-section 11.3.
+Status: **done (expanded)** — the MVP slice from §11 is green plus
+the five follow-ups previously tracked under §8.4 of
+`plan/15-backlog.md`. Every shipped item is described in §12.
+Whatever remains deferred (e.g. Beacon blob sidecars over the real
+Beacon host) is called out in §13.
 
 Everything about one specific block. Reached from Search or from any screen that
 links to a block (Tx overview, Address transfers). Tabs are used to keep the view
@@ -256,3 +256,254 @@ happy path by number, happy path by hash, null result maps to
 
 Acceptance: every remaining BDD scenario green, plan flipped to
 `done` in `plan/README.md`, clippy clean.
+
+## 12. Follow-ups shipped (post-MVP)
+
+The items below were queued as §8.4 of `plan/15-backlog.md`
+("deferred from plan/3 §11.3") and are now part of the shipped
+surface. Each sub-section lists the port trait, adapter target
+endpoint, use case file path, BDD scenarios, functional tests and
+fixtures that land together.
+
+### 12.1 Clipboard bindings (`y` / `Y`)
+
+`BlockDetailScreen` gains `y` / `Y` handlers that mirror the
+`plan/3 §3` keybinding table. Copying does not yet reach the OS
+clipboard (that belongs to the cross-cutting `ClipboardPort` tracked
+in `plan/15-backlog.md §8.16`); instead the screen stores the
+string in `last_copied_value: Option<String>` — identical contract
+to `TxDetailScreen`. Tests inspect the field directly.
+
+Semantics:
+
+- Overview tab, `y` → copies the block hash.
+- Transactions tab, `y` → copies the currently selected tx hash.
+- Any tab, `Y` → copies the decimal block number.
+
+Use cases touched: none — the binding is a pure UI concern.
+
+Functional tests
+(`tests/functional/block_detail_clipboard.rs`):
+
+- `y_on_overview_copies_the_block_hash`.
+- `y_on_transactions_copies_the_selected_tx_hash`.
+- `uppercase_y_copies_the_block_number`.
+
+### 12.2 Transaction categorisation (`TxCategory`)
+
+Pure domain enum introduced in `src/domain/block.rs`:
+
+```rust
+pub enum TxCategory {
+    Transfer,    // to == Some(_), input.is_empty() && value > 0
+    Deploy,      // to == None (contract creation)
+    Interaction, // otherwise (calls data, system calls, ...)
+}
+```
+
+Exposed through a pure classifier
+`TxCategory::classify(to: Option<Address>, input: &[u8], value: Wei)`
+with exhaustive unit tests in `src/domain/block.rs`. `TxCategory`
+also provides `badge()` (`"T"` / `"I"` / `"D"`) and `label()` so
+future UI renderers do not re-derive the strings.
+
+The category travels through the pipeline as a field of
+`BlockTxReceipt` (see §12.3). Rendering the badge in the
+Transactions tab is intentionally gated on the BlockFeed carrying
+`BlockTxPage` updates — see §13 "UI wiring for receipts and
+labels".
+
+### 12.3 `BlockReceiptsPort` and `load_block_transactions`
+
+Port under `src/application/ports/block_receipts.rs`:
+
+```rust
+pub trait BlockReceiptsPort: Send + Sync {
+    async fn get_receipts(
+        &self,
+        id: BlockId,
+        chain: Chain,
+    ) -> Result<Vec<BlockTxReceipt>, DomainError>;
+}
+```
+
+Adapter: `src/adapters/rpc/block_receipts.rs` —
+`AlchemyBlockReceipts` wraps `eth_getBlockReceipts`. Endpoint:
+JSON-RPC `eth_getBlockReceipts` against the Alchemy Node API.
+
+Domain shape: `BlockTxReceipt { hash, tx_index, from, to, value,
+gas_used, status, category }` (the `category` is filled in the use
+case by running `TxCategory::classify`). `BlockTxPage { items,
+next_cursor, total }` is the pagination envelope.
+
+Use case:
+`src/application/use_cases/load_block_transactions.rs::run(...)`:
+
+- Inputs: `BlockReceiptsPort`, the already-loaded `Block`, a
+  `Cursor { offset, page_size }`, and a
+  `tokio_util::sync::CancellationToken`.
+- Fetches the full receipts vector for the block once (Alchemy
+  returns them all in one JSON-RPC call; no batching needed).
+- Slices them into a page according to the cursor.
+- Returns early when the cancellation token is triggered, so
+  switching blocks cancels an in-flight page load.
+- Never issues network calls when the offset is beyond the tail.
+
+BDD: the pagination + badge rendering scenario is deferred until
+the BlockFeed refactor described in §13 so the UI can observe
+`BlockTxPage` updates. The domain / adapter / use-case layers are
+covered end-to-end by the functional tests below.
+
+Functional tests
+(`tests/functional/load_block_transactions.rs`):
+
+- `returns_the_first_page_when_offset_is_zero`.
+- `slices_the_next_page_using_the_cursor`.
+- `returns_empty_page_beyond_the_tail`.
+- `categorises_rows_using_to_and_input`.
+- `maps_failed_receipts_to_failed_status`.
+- `returns_early_when_cancellation_token_is_triggered`.
+- `propagates_domain_error_from_port`.
+
+Fixtures:
+
+- `rpc__eth_getBlockReceipts__21345678.json` (happy path, two
+  transactions mirroring the block-reader fixture).
+- `rpc__eth_getBlockReceipts__rate_limit.json` (HTTP 429 body used
+  by adapter error tests).
+
+### 12.4 `LabelPort` (validator / fee-recipient names)
+
+Purpose: turn a raw address into a human label (e.g.
+`Lido: Validator 7`, `Coinbase`, `0xPolygonSigner`) so the
+Overview tab can render `Miner   0xab…cd  (Coinbase)` and the
+Polygon signer row from `plan/15-backlog.md §3.5` grows a name
+next to the recovered address.
+
+Port: `src/application/ports/label.rs`:
+
+```rust
+pub trait LabelPort: Send + Sync {
+    async fn label_for(
+        &self,
+        address: Address,
+        chain: Chain,
+    ) -> Result<Option<Label>, DomainError>;
+}
+```
+
+Domain: `src/domain/label.rs`:
+
+```rust
+pub struct Label {
+    pub name: String,
+    pub source: LabelSource, // Etherscan { contract_name } | WellKnown
+}
+```
+
+Adapters:
+
+- `src/adapters/etherscan/label.rs::EtherscanLabel` — wraps
+  `contract/getsourcecode` and maps `ContractName` onto
+  `Label { name, source: Etherscan }`. Endpoint:
+  `https://api.etherscan.io/v2/api?module=contract&action=getsourcecode`.
+- `src/adapters/labels/well_known.rs::WellKnownLabels` — tiny
+  checked-in table keyed by `(chain, address)`. Bootstraps Polygon
+  mainnet with a handful of validator signers so §3.5 renders a
+  readable row out of the box.
+- `src/adapters/labels/composite.rs::CompositeLabels` — tries
+  well-known first, falls back to the Etherscan adapter. Mirrors
+  `CompositeSignatureDirectory`.
+
+Use case: `load_block_overview` is reshaped to return a
+`BlockOverview { block, miner_label, signer_label }` view-model.
+Missing labels stay `None`; label-port errors are non-fatal.
+
+BDD: the labelled-signer scenario lands with the BlockFeed
+refactor tracked in §13. The existing
+`Scenario: Polygon block shows extraData signer` stays green (raw
+signer row) in the meantime; the domain / adapter / use-case
+layers of the label lookup are covered by the functional tests
+below.
+
+Functional tests
+(`tests/functional/load_block_overview.rs` — extend) +
+`tests/functional/label_composite.rs`:
+
+- `uses_the_well_known_table_first`.
+- `falls_back_to_etherscan_when_well_known_is_empty`.
+- `returns_none_when_both_sources_return_none`.
+- `label_port_error_does_not_break_overview_load`.
+
+Fixtures:
+
+- `etherscan__getsourcecode__label_coinbase_hot_wallet.json`.
+- `etherscan__getsourcecode__label_unverified.json` (used to
+  assert graceful degradation).
+
+### 12.5 `load_block_withdrawals` (post-Shanghai)
+
+Domain: `Block` grows a `withdrawals: Vec<Withdrawal>` field where
+`Withdrawal { index, validator_index, address, amount_gwei }`. The
+Alchemy block reader parses the `withdrawals` RPC array onto that
+vector.
+
+Use case:
+`src/application/use_cases/load_block_withdrawals.rs::run(block)` —
+pure passthrough returning the slice so the screen can paginate and
+render without re-calling the reader.
+
+Beacon `blob_sidecars` stays deferred (see §13). The "Blobs /
+Withdrawals" tab ships with:
+
+- a top block showing the withdrawals.
+- a bottom block showing the count of blob-carrying transactions
+  inferred from `TxType::Blob` in the receipts page, plus a
+  disclaimer "blob sidecar sizes require the Beacon API —
+  deferred, see plan/3 §13".
+
+BDD: `tests/e2e/features/block_detail.feature` —
+`Scenario: Blobs / Withdrawals tab renders withdrawals` opens the
+tab and asserts on a validator-index row.
+
+Functional tests
+(`tests/functional/load_block_withdrawals.rs`):
+
+- `returns_the_parsed_withdrawals_verbatim`.
+- `empty_block_returns_an_empty_vec`.
+
+Fixtures:
+
+- `rpc__eth_getBlockByNumber__with_withdrawals.json` — Shanghai-era
+  block carrying withdrawals.
+
+## 13. Still deferred
+
+- **UI wiring for receipts and labels.** Domain types, ports,
+  adapters and use cases for `BlockReceiptsPort` +
+  `load_block_transactions` (§12.3) and `LabelPort` +
+  `run_with_labels` (§12.4) have all shipped and are exercised
+  end-to-end by the functional tests. Rendering the category
+  badge in the Transactions tab and the miner / signer label in
+  the Overview tab requires refactoring `BlockFeed` so the
+  resolver task emits a richer `BlockOverviewUpdate { block,
+  miner_label, signer_label, tx_page }` envelope. Promoting this
+  work mechanically unblocks the
+  `Scenario: Paginate transactions tab` and
+  `Scenario: Polygon block shows labelled signer` BDD slots that
+  §12.3 and §12.4 reserved.
+- Beacon blob sidecars (`/v1/beacon/blob_sidecars/{id}`). Separate
+  host, different credential (beacon node / Alchemy Beacon API),
+  non-trivial retry semantics. The Blobs half of the
+  Blobs / Withdrawals tab renders a clearly-marked placeholder
+  until a `BeaconApiPort` lands.
+- `eth_blobBaseFee` on the block header. Same tab as sidecars; no
+  adapter wired yet.
+- Reconstructing the Bor seal hash inside `AlchemyBlockReader` so
+  the Polygon signer row recovers live (see
+  `plan/15-backlog.md §3.5`). The pure recoverer + the label row
+  are in place; only the RLP reconstruction is outstanding.
+- Real OS clipboard wiring for `y` / `Y`. Today the screen stores
+  the last yanked value so functional tests can inspect it; the
+  cross-cutting `ClipboardPort` (see `plan/15-backlog.md §8.16`)
+  will promote that field into an `arboard` call.

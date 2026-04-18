@@ -11,7 +11,7 @@ use crate::{
     application::ports::BlockReaderPort,
     domain::{
         Address, Block, BlockHash, BlockId, BlockNumber, Chain, DomainError, TxHash, UnixTimestamp,
-        Wei,
+        Wei, Withdrawal,
     },
 };
 
@@ -34,6 +34,17 @@ struct RawBlock {
     extra_data: String,
     #[serde(default)]
     transactions: Vec<String>,
+    #[serde(default)]
+    withdrawals: Vec<RawWithdrawal>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawWithdrawal {
+    index: String,
+    #[serde(rename = "validatorIndex")]
+    validator_index: String,
+    address: String,
+    amount: String,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +101,12 @@ impl AlchemyBlockReader {
             .map(|h| TxHash::from_hex(&h))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let withdrawals = raw
+            .withdrawals
+            .into_iter()
+            .map(raw_withdrawal_to_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Polygon seal-hash RLP is intentionally not reconstructed
         // here; see plan/15-backlog.md §3.5 "Fix (cheap version)".
         // Leaving this as None keeps the adapter honest: the pure
@@ -115,8 +132,22 @@ impl AlchemyBlockReader {
             extra_data,
             tx_hashes,
             extra_signer,
+            withdrawals,
         })
     }
+}
+
+fn raw_withdrawal_to_domain(raw: RawWithdrawal) -> Result<Withdrawal, DomainError> {
+    let index = parse_hex_u64(&raw.index).map_err(|e| e.into_domain())?;
+    let validator_index = parse_hex_u64(&raw.validator_index).map_err(|e| e.into_domain())?;
+    let address = Address::from_hex(&raw.address)?;
+    let amount_gwei = parse_hex_u64(&raw.amount).map_err(|e| e.into_domain())?;
+    Ok(Withdrawal {
+        index,
+        validator_index,
+        address,
+        amount_gwei,
+    })
 }
 
 impl BlockReaderPort for AlchemyBlockReader {

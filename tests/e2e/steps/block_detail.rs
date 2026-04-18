@@ -9,7 +9,7 @@ use blockexplorer_tui::{
     adapters::ui::{BlockDetailScreen, BlockTab, Command, ScreenStack},
     domain::{
         Address, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain, TxHash,
-        UnixTimestamp, Wei,
+        UnixTimestamp, Wei, Withdrawal,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -46,6 +46,7 @@ fn sample_block(number: u64, hash_hex: &str, parent_hex: &str, tx_count: usize) 
         extra_data: vec![0x42, 0x42],
         tx_hashes,
         extra_signer: None,
+        withdrawals: Vec::new(),
     }
 }
 
@@ -275,6 +276,7 @@ fn polygon_block_with_signer() -> Block {
         extra_data: vec![0u8; 32 + 65],
         tx_hashes: vec![],
         extra_signer: Some(Address::from_hex(POLYGON_SIGNER_HEX).unwrap()),
+        withdrawals: Vec::new(),
     }
 }
 
@@ -315,7 +317,10 @@ async fn polygon_block_with_zero_miner(world: &mut AppWorld) {
 
 #[when("the user opens BlockDetail")]
 async fn user_opens_block_detail(world: &mut AppWorld) {
-    let block = polygon_block_with_signer();
+    let block = world
+        .pending_block_detail
+        .clone()
+        .unwrap_or_else(polygon_block_with_signer);
     push_block_detail_directly(world, block);
     let stack = world.stack.as_mut().unwrap();
     tick_until(stack, |s| current_block_detail(s).current().is_some()).await;
@@ -364,4 +369,89 @@ fn dump_buffer(buffer: &Buffer) -> String {
         out.push('\n');
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Blobs / Withdrawals scenario (plan/3 §12.5)
+// ---------------------------------------------------------------------------
+
+const WITHDRAWAL_BLOCK_NUMBER: u64 = 21_345_679;
+const WITHDRAWAL_VALIDATOR_INDEX: u64 = 1337;
+
+fn block_with_withdrawals() -> Block {
+    let mut block = sample_block(
+        WITHDRAWAL_BLOCK_NUMBER,
+        "0xaabb000000000000000000000000000000000000000000000000000000000000",
+        &default_parent_hex(),
+        0,
+    );
+    block.withdrawals = vec![
+        Withdrawal {
+            index: 42,
+            validator_index: WITHDRAWAL_VALIDATOR_INDEX,
+            address: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            amount_gwei: 987_654_321,
+        },
+        Withdrawal {
+            index: 43,
+            validator_index: 1338,
+            address: Address::from_hex("0x5abc0e99dfc7ba2c9da42f8dc91ec4128a89e919").unwrap(),
+            amount_gwei: 1_000,
+        },
+    ];
+    block
+}
+
+#[given("a post-Shanghai block with two withdrawals")]
+async fn post_shanghai_block(world: &mut AppWorld) {
+    world.active_chain = Some(Chain::Ethereum);
+    let block = block_with_withdrawals();
+    world.block_reader_stub.insert(block.clone());
+    world.block_stub.insert(BlockSummary {
+        number: block.number,
+        hash: block.hash,
+    });
+    world.pending_block_detail = Some(block);
+}
+
+#[when("the user switches to the Blobs and Withdrawals tab")]
+async fn switch_to_blobs_tab(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Overview -> Transactions -> Blobs / Withdrawals.
+    press(stack, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    press(stack, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let top = current_block_detail(stack);
+    assert_eq!(top.active_tab(), BlockTab::BlobsAndWithdrawals);
+}
+
+#[then("the tab lists the withdrawal count and the first validator index")]
+async fn tab_lists_withdrawal(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    let top = current_block_detail(stack);
+    let buffer = render_block_detail_to_buffer(top);
+    assert!(
+        buffer_contains(&buffer, "Withdrawals (2)"),
+        "buffer must include the withdrawal count. Buffer:\n{}",
+        dump_buffer(&buffer)
+    );
+    assert!(
+        buffer_contains(
+            &buffer,
+            &format!("validator {}", WITHDRAWAL_VALIDATOR_INDEX)
+        ),
+        "buffer must carry the first validator index. Buffer:\n{}",
+        dump_buffer(&buffer)
+    );
+}
+
+#[then("the tab includes the Beacon blob-sidecars placeholder")]
+async fn tab_includes_blob_placeholder(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack");
+    let top = current_block_detail(stack);
+    let buffer = render_block_detail_to_buffer(top);
+    assert!(
+        buffer_contains(&buffer, "Beacon blob_sidecars not wired yet"),
+        "buffer must include the deferred-blobs placeholder. Buffer:\n{}",
+        dump_buffer(&buffer)
+    );
 }

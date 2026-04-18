@@ -17,20 +17,20 @@ use blockexplorer_tui::{
         SignatureSource,
         ports::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-            ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-            EventLogPort, GasOraclePort, NetworkStatusPort, NewHeadsStreamPort,
-            PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
+            BlockReceiptsPort, ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort,
+            EnsResolverPort, EventLogPort, GasOraclePort, LabelPort, NetworkStatusPort,
+            NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
             SignatureDirectoryPort, SignatureHit, StoragePort, TokenReaderPort, TokenSearchPort,
             TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
-        BlockHash, BlockId, BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource,
-        DecodedValue, DomainError, GasSnapshot, Gwei, LogEntry, NetworkStatus, NewHead, PendingTx,
-        PendingTxEvent, PendingTxFilter, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
-        StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
-        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
+        BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, Chain, ContractAbi,
+        ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
+        NetworkStatus, NewHead, PendingTx, PendingTxEvent, PendingTxFilter, PriceLookup,
+        PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview,
+        TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use serde::Deserialize;
@@ -583,6 +583,127 @@ impl BlockReaderPort for StubBlockReaderPort {
             BlockId::Hash(h) => state.by_hash.get(&h).cloned(),
         };
         Ok(value)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: BlockReceiptsPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct BlockReceiptsState {
+    by_number: HashMap<BlockNumber, Vec<BlockTxReceipt>>,
+    by_hash: HashMap<BlockHash, Vec<BlockTxReceipt>>,
+    forced_error: Option<DomainError>,
+    /// Count of `get_transactions` invocations, used by cancellation
+    /// / pagination tests to assert the port was only hit once.
+    call_count: usize,
+}
+
+#[derive(Default, Clone)]
+pub struct StubBlockReceiptsPort {
+    inner: Arc<Mutex<BlockReceiptsState>>,
+}
+
+impl StubBlockReceiptsPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Prime the stub with a vector of rows addressable by number.
+    pub fn set_by_number(&self, number: BlockNumber, rows: Vec<BlockTxReceipt>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_number.insert(number, rows);
+    }
+
+    /// Prime the stub with a vector of rows addressable by hash.
+    pub fn set_by_hash(&self, hash: BlockHash, rows: Vec<BlockTxReceipt>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_hash.insert(hash, rows);
+    }
+
+    /// Prime the stub to bubble up `err` on the next call.
+    pub fn fail_with(&self, err: DomainError) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.forced_error = Some(err);
+    }
+
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: LabelPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct LabelState {
+    by_address: HashMap<Address, Label>,
+    /// When set, the next `label_for` call returns the stored
+    /// [`DomainError`] instead of consulting the table.
+    forced_error: Option<DomainError>,
+    call_count: usize,
+}
+
+#[derive(Default, Clone)]
+pub struct StubLabelPort {
+    inner: Arc<Mutex<LabelState>>,
+}
+
+impl StubLabelPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_label(&self, address: Address, label: Label) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, label);
+    }
+
+    pub fn fail_with(&self, err: DomainError) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.forced_error = Some(err);
+    }
+
+    pub fn call_count(&self) -> usize {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count
+    }
+}
+
+impl LabelPort for StubLabelPort {
+    async fn label_for(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<Label>, DomainError> {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count += 1;
+        if let Some(err) = state.forced_error.take() {
+            return Err(err);
+        }
+        Ok(state.by_address.get(&address).cloned())
+    }
+}
+
+impl BlockReceiptsPort for StubBlockReceiptsPort {
+    async fn get_transactions(
+        &self,
+        id: BlockId,
+        _chain: Chain,
+    ) -> Result<Vec<BlockTxReceipt>, DomainError> {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.call_count += 1;
+        if let Some(err) = state.forced_error.take() {
+            return Err(err);
+        }
+        let rows = match id {
+            BlockId::Number(n) => state.by_number.get(&n).cloned(),
+            BlockId::Hash(h) => state.by_hash.get(&h).cloned(),
+        };
+        Ok(rows.unwrap_or_default())
     }
 }
 

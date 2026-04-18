@@ -159,3 +159,21 @@ mod etherscan_token_search;
 
 #[path = "functional/search_feed_cache.rs"]
 mod search_feed_cache;
+
+#[path = "functional/block_detail_screen_keys.rs"]
+mod block_detail_screen_keys;
+
+#[path = "functional/load_block_transactions.rs"]
+mod load_block_transactions;
+
+#[path = "functional/alchemy_block_receipts.rs"]
+mod alchemy_block_receipts;
+
+#[path = "functional/label_composite.rs"]
+mod label_composite;
+
+#[path = "functional/etherscan_label.rs"]
+mod etherscan_label;
+
+#[path = "functional/load_block_withdrawals.rs"]
+mod load_block_withdrawals;

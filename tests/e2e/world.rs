@@ -128,6 +128,13 @@ pub struct AppWorld {
     /// scenarios keep it `None`; the repeat-within-TTL scenario sets
     /// it via a Given step. See `plan/2-search.md` §12.4.
     pub search_cache: Option<SearchCache<FrozenClock>>,
+
+    /// Block used by the "user opens BlockDetail" step across
+    /// scenarios that pre-seed their own block shape (Polygon
+    /// signer, Blobs / Withdrawals, ...). When `None` the step
+    /// falls back to its hard-coded Polygon fixture so existing
+    /// scenarios keep passing. See `plan/3-block-detail.md` §12.5.
+    pub pending_block_detail: Option<blockexplorer_tui::domain::Block>,
 }
 
 impl fmt::Debug for AppWorld {
