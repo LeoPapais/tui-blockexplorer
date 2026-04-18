@@ -28,6 +28,12 @@ Feature: Transaction detail
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the Overview tab shows status "pending"
 
+  Scenario: Pressing s on a pending tx refetches asset changes
+    Given the tx reader knows tx "0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a" is pending
+    When the user opens TxDetail for hash "0xbeef016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944a"
+    And once the transaction is loaded, the user presses "s"
+    Then the tx detail screen has observed 1 re-simulation
+
   Scenario: Overview decodes the method via ABI
     Given the tx reader knows tx "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa" was successful
     And the contract source knows the ABI of "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
@@ -84,3 +90,18 @@ Feature: Transaction detail
     When the user opens TxDetail with full enrichment for hash "0xd3d3016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d3"
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the State Changes tab lists 1 address
+
+  Scenario: Internal tab shows call tree
+    Given the tx reader knows tx "0xca1e016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ca" was successful
+    And the tracer exposes a call tree with one staticcall child
+    When the user opens TxDetail with full enrichment for hash "0xca1e016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ca"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the Internal tab renders 2 call frames
+
+  Scenario: Overview renders before trace finishes
+    Given the tx reader knows tx "0xfade016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa" was successful
+    And the tracer is slow
+    And the simulator is slow
+    When the user opens TxDetail with full enrichment for hash "0xfade016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394fa"
+    Then a "Transaction" screen is on top
+    And the Overview tab loads before the tracer stub has been called

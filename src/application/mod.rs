@@ -11,5 +11,6 @@ pub mod use_cases;
 pub use cancel::CancelFlag;
 pub use home::{ConnectionStatus, HomeSession, HomeViewModel};
 pub use tx_view::{
-    DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
+    DecodedLog, DecodedMethod, DecodedSignature, EventAbi, EventParamAbi, LoadStatus,
+    SignatureSource, TxView,
 };

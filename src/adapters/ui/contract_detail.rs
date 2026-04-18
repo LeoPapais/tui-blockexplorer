@@ -15,7 +15,10 @@ use ratatui::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
+    adapters::ui::{
+        screen::{Command, Screen},
+        scroll::ScrollState,
+    },
     application::ports::BlockRange,
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, BlockNumber, Chain, ContractOverview,
@@ -186,12 +189,12 @@ pub struct ContractDetailScreen {
     source: Option<ContractSource>,
     feed: ContractFeed,
     active_tab: ContractTab,
-    scroll: u16,
-    /// Upper bound on `scroll` for the currently active paragraph,
-    /// refreshed on every render. Used by `handle_key` to clamp the
-    /// scroll offset so screens never show blank rows past the end
-    /// of their content (plan 13.3).
-    scroll_cap: std::cell::Cell<u16>,
+    /// Bounded scroll shared by every tab whose body is rendered as
+    /// a single `Paragraph` (plan 13.3, 12.6.6). The render path
+    /// calls `set_dimensions` on every frame so `handle_key` can
+    /// clamp the offset against the up-to-date content and
+    /// viewport sizes.
+    scroll: std::cell::Cell<ScrollState>,
     file_list_state: ListState,
     /// Read tab state.
     functions: Vec<AbiFunction>,
@@ -234,8 +237,7 @@ impl ContractDetailScreen {
             source: None,
             feed,
             active_tab: ContractTab::Overview,
-            scroll: 0,
-            scroll_cap: std::cell::Cell::new(0),
+            scroll: std::cell::Cell::new(ScrollState::new()),
             file_list_state,
             functions: Vec::new(),
             function_list_state,
@@ -431,7 +433,17 @@ impl ContractDetailScreen {
         let current = self.file_list_state.selected().unwrap_or(0) as i32;
         let next = (current + delta).clamp(0, len as i32 - 1);
         self.file_list_state.select(Some(next as usize));
-        self.scroll = 0;
+        self.with_scroll(|s| s.reset());
+    }
+
+    /// Mutate the inner [`ScrollState`] through the `Cell` without
+    /// needing a `&mut self` borrow. Mirrors the helper in
+    /// `TxDetailScreen`; used by both the render path (to refresh
+    /// dimensions) and `handle_key` (to clamp the offset).
+    fn with_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.scroll.get();
+        f(&mut s);
+        self.scroll.set(s);
     }
 }
 
@@ -537,16 +549,16 @@ impl Screen for ContractDetailScreen {
             || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         if is_back_tab {
             self.active_tab = self.active_tab.previous();
-            self.scroll = 0;
+            self.with_scroll(|s| s.reset());
             return Command::None;
         }
         if key.code == KeyCode::Tab {
             self.active_tab = self.active_tab.next();
-            self.scroll = 0;
+            self.with_scroll(|s| s.reset());
             return Command::None;
         }
 
-        let cmd = match self.active_tab {
+        match self.active_tab {
             ContractTab::Source => self.handle_source_key(key),
             ContractTab::Read => self.handle_read_key(key),
             ContractTab::Events => self.handle_events_key(key),
@@ -554,35 +566,48 @@ impl Screen for ContractDetailScreen {
             ContractTab::Overview | ContractTab::Abi => {
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
-                        self.scroll = self.scroll.saturating_sub(1);
+                        self.with_scroll(|s| {
+                            s.scroll_by(-1);
+                        });
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        self.scroll = self.scroll.saturating_add(1);
+                        self.with_scroll(|s| {
+                            s.scroll_by(1);
+                        });
                     }
                     KeyCode::Left => {
                         self.active_tab = self.active_tab.previous();
-                        self.scroll = 0;
+                        self.with_scroll(|s| s.reset());
                     }
                     KeyCode::Right => {
                         self.active_tab = self.active_tab.next();
-                        self.scroll = 0;
+                        self.with_scroll(|s| s.reset());
                     }
-                    KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-                    KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-                    KeyCode::Home => self.scroll = 0,
-                    KeyCode::End => self.scroll = u16::MAX,
+                    KeyCode::PageUp => {
+                        self.with_scroll(|s| {
+                            s.page_up();
+                        });
+                    }
+                    KeyCode::PageDown => {
+                        self.with_scroll(|s| {
+                            s.page_down();
+                        });
+                    }
+                    KeyCode::Home => {
+                        self.with_scroll(|s| {
+                            s.home();
+                        });
+                    }
+                    KeyCode::End => {
+                        self.with_scroll(|s| {
+                            s.end();
+                        });
+                    }
                     _ => {}
                 }
                 Command::None
             }
-        };
-        // Clamp to the upper bound measured during the previous
-        // render (plan 13.3). This runs regardless of which tab
-        // handler mutated `self.scroll`, so `End` / `PageDown` stop
-        // exactly at the last visible row instead of scrolling into
-        // the void.
-        self.scroll = self.scroll.min(self.scroll_cap.get());
-        cmd
+        }
     }
 
     fn tick(&mut self) -> Command {
@@ -620,12 +645,36 @@ impl ContractDetailScreen {
             KeyCode::Down => {
                 self.file_delta(1);
             }
-            KeyCode::Char('k') => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Char('j') => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Home => self.scroll = 0,
-            KeyCode::End => self.scroll = u16::MAX,
+            KeyCode::Char('k') => {
+                self.with_scroll(|s| {
+                    s.scroll_by(-1);
+                });
+            }
+            KeyCode::Char('j') => {
+                self.with_scroll(|s| {
+                    s.scroll_by(1);
+                });
+            }
+            KeyCode::PageUp => {
+                self.with_scroll(|s| {
+                    s.page_up();
+                });
+            }
+            KeyCode::PageDown => {
+                self.with_scroll(|s| {
+                    s.page_down();
+                });
+            }
+            KeyCode::Home => {
+                self.with_scroll(|s| {
+                    s.home();
+                });
+            }
+            KeyCode::End => {
+                self.with_scroll(|s| {
+                    s.end();
+                });
+            }
             _ => {}
         }
         Command::None
@@ -893,15 +942,35 @@ Contract may be unverified or expose only events / constructors.",
                 let _ = self.feed.events_tx.send(EventsRequest { range });
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.scroll = self.scroll.saturating_sub(1);
+                self.with_scroll(|s| {
+                    s.scroll_by(-1);
+                });
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.scroll = self.scroll.saturating_add(1);
+                self.with_scroll(|s| {
+                    s.scroll_by(1);
+                });
             }
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Home => self.scroll = 0,
-            KeyCode::End => self.scroll = u16::MAX,
+            KeyCode::PageUp => {
+                self.with_scroll(|s| {
+                    s.page_up();
+                });
+            }
+            KeyCode::PageDown => {
+                self.with_scroll(|s| {
+                    s.page_down();
+                });
+            }
+            KeyCode::Home => {
+                self.with_scroll(|s| {
+                    s.home();
+                });
+            }
+            KeyCode::End => {
+                self.with_scroll(|s| {
+                    s.end();
+                });
+            }
             _ => {}
         }
         Command::None
@@ -1075,15 +1144,14 @@ once a decompiler integration lands (see plan/7 section 13).",
         );
     }
 
-    /// Compute a clamped scroll offset for the current body and
-    /// cache the new cap so `handle_key` can prevent further
-    /// over-scrolling on the next key press (plan 13.3).
+    /// Refresh the scroll-state dimensions for the currently-
+    /// rendered body and return the clamped offset to feed into
+    /// `Paragraph::scroll((offset, 0))`. Plan 13.3 and 12.6.6.
     fn bound_scroll_for(&self, body: &str, area: Rect) -> u16 {
         let content_lines = body.lines().count() as u16;
         let viewport = area.height.saturating_sub(2);
-        let cap = content_lines.saturating_sub(viewport);
-        self.scroll_cap.set(cap);
-        self.scroll.min(cap)
+        self.with_scroll(|s| s.set_dimensions(content_lines, viewport));
+        self.scroll.get().offset()
     }
 }
 

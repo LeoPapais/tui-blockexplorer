@@ -1,0 +1,25 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "type": "CALL",
+    "from": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "value": "0x0",
+    "gas": "0x13880",
+    "gasUsed": "0x7fff",
+    "input": "0xa9059cbb000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000000000000000000000000000000000000000003e8",
+    "output": "0x",
+    "calls": [
+      {
+        "type": "STATICCALL",
+        "from": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "to": "0x2222222222222222222222222222222222222222",
+        "gas": "0x1000",
+        "gasUsed": "0x100",
+        "input": "0xfeed",
+        "output": "0x"
+      }
+    ]
+  }
+}

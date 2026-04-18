@@ -13,8 +13,8 @@ use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, BlockHash, BlockNumber,
-        Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind, StateDiff, Transaction,
-        TxHash, TxStatus, TxType, Wei,
+        CallKind, CallNode, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind,
+        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -220,6 +220,84 @@ async fn tracer_unsupported(world: &mut AppWorld) {
     world.tx_trace_stub.mark_unsupported();
 }
 
+#[given("the tracer is slow")]
+async fn tracer_is_slow(world: &mut AppWorld) {
+    world
+        .tx_trace_stub
+        .set_delay(std::time::Duration::from_millis(500));
+}
+
+#[given("the simulator is slow")]
+async fn simulator_is_slow(world: &mut AppWorld) {
+    world
+        .tx_simulation_stub
+        .set_delay(std::time::Duration::from_millis(500));
+}
+
+#[then("the Overview tab loads before the tracer stub has been called")]
+async fn overview_loads_before_tracer(world: &mut AppWorld) {
+    // The spawn_full task delivers the base view first, then awaits
+    // sim / tracer. We drain the channel until the base view lands
+    // and assert the tracer stub is still untouched.
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current_tx_detail(s).current().is_some()).await;
+    // The tracer is delayed by 500ms, so if the base view lands,
+    // the tracer stub has not yet been invoked.
+    assert_eq!(
+        world.tx_trace_stub.call_count(),
+        0,
+        "tracer must not be called before the base view is delivered"
+    );
+}
+
+#[given("the tracer exposes a call tree with one staticcall child")]
+async fn tracer_exposes_call_tree(world: &mut AppWorld) {
+    let hash = last_tx_hash(world);
+    let from = Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap();
+    let to = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let child_to = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+    let tree = CallNode {
+        kind: CallKind::Call,
+        from,
+        to: Some(to),
+        value: Wei::new(0),
+        input: Vec::new(),
+        output: Vec::new(),
+        gas_used: 52_341,
+        error: None,
+        children: vec![CallNode {
+            kind: CallKind::Staticcall,
+            from: to,
+            to: Some(child_to),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 128,
+            error: None,
+            children: Vec::new(),
+        }],
+    };
+    world.tx_trace_stub.set_call_tree(hash, tree);
+}
+
+#[then(regex = r"^once the transaction is loaded, the Internal tab renders (\d+) call frames$")]
+async fn internal_tab_renders_n_frames(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        matches!(
+            current_tx_detail(s).current().map(|v| &v.call_tree),
+            Some(LoadStatus::Loaded(_)) | Some(LoadStatus::Unsupported)
+        )
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view = screen.current().expect("loaded");
+    match &view.call_tree {
+        LoadStatus::Loaded(root) => assert_eq!(root.frame_count(), expected as usize),
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
 #[given(regex = r"^the tracer reports a balance diff for the sender$")]
 async fn tracer_has_balance_diff(world: &mut AppWorld) {
     let hash = last_tx_hash(world);
@@ -348,6 +426,11 @@ fn spawn_tx_detail_with_full_enrichment(
     tracer: crate::support::stubs::StubTxTracePort,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     let (feed, sender) = tx_feed();
+    // Mirror `infra::tx_feed::spawn_full`: send the base view
+    // (reader + ABI + signature directory) before awaiting the
+    // slow sim / trace calls. That's what `plan/4-tx-detail.md`
+    // section 12.6.1 asserts: the Overview tab must not wait on
+    // trace/debug methods.
     tokio::spawn(async move {
         let blockexplorer_tui::adapters::ui::TxFeedSender {
             updates_tx,
@@ -366,8 +449,33 @@ fn spawn_tx_detail_with_full_enrichment(
             else {
                 continue;
             };
-            load_tx_overview::load_asset_changes(&sim, &mut view, chain).await;
-            load_tx_overview::load_state_diff(&tracer, &mut view, chain).await;
+            // Deliver the base view first.
+            if updates_tx.send(view.clone()).is_err() {
+                break;
+            }
+            // Then run the heavier enrichments concurrently.
+            let sim = sim.clone();
+            let tracer = tracer.clone();
+            let mut v_sim = view.clone();
+            let mut v_trace = view.clone();
+            let mut v_call_tree = view.clone();
+            let (a, s, c) = tokio::join!(
+                async {
+                    load_tx_overview::load_asset_changes(&sim, &mut v_sim, chain).await;
+                    v_sim.asset_changes
+                },
+                async {
+                    load_tx_overview::load_state_diff(&tracer, &mut v_trace, chain).await;
+                    v_trace.state_diff
+                },
+                async {
+                    load_tx_overview::load_call_tree(&tracer, &mut v_call_tree, chain).await;
+                    v_call_tree.call_tree
+                },
+            );
+            view.asset_changes = a;
+            view.state_diff = s;
+            view.call_tree = c;
             if updates_tx.send(view).is_err() {
                 break;
             }
@@ -636,6 +744,26 @@ fn spawn_tx_detail_with_composite(
         }
     });
     Box::new(TxDetailScreen::loading(chain, hash, feed))
+}
+
+/// Wait for the view to load, then press `s`. Mirrors the helper
+/// pattern used by the Overview / Logs tab steps above.
+#[when(regex = r#"^once the transaction is loaded, the user presses "s"$"#)]
+async fn once_loaded_press_s(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current_tx_detail(s).current().is_some()).await;
+    let key = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('s'),
+        crossterm::event::KeyModifiers::NONE,
+    );
+    stack.top_mut().expect("stack non-empty").handle_key(key);
+}
+
+#[then(regex = r#"^the tx detail screen has observed (\d+) re-simulation$"#)]
+async fn tx_detail_resimulate_count(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_ref().expect("stack");
+    let screen = current_tx_detail(stack);
+    assert_eq!(screen.resimulate_count(), expected);
 }
 
 #[then(regex = r#"^once the transaction is loaded, the Logs tab decodes "([^"]+)"$"#)]

@@ -40,10 +40,10 @@ use crate::{
         screen::{Command, Screen},
         scroll::ScrollState,
     },
-    application::{DecodedLog, DecodedMethod, LoadStatus, SignatureSource, TxView},
+    application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
-        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, StateDiff,
-        TxHash, TxStatus, Wei,
+        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, CallNode, Chain, DiffChange,
+        LogEntry, StateDiff, TxHash, TxStatus, Wei,
     },
 };
 
@@ -77,15 +77,17 @@ pub fn tx_feed() -> (TxFeed, TxFeedSender) {
 pub enum TxTab {
     Overview,
     Logs,
+    Internal,
     AssetChanges,
     StateChanges,
     Raw,
 }
 
 impl TxTab {
-    const ALL: [TxTab; 5] = [
+    const ALL: [TxTab; 6] = [
         TxTab::Overview,
         TxTab::Logs,
+        TxTab::Internal,
         TxTab::AssetChanges,
         TxTab::StateChanges,
         TxTab::Raw,
@@ -105,9 +107,10 @@ impl TxTab {
         match self {
             TxTab::Overview => 0,
             TxTab::Logs => 1,
-            TxTab::AssetChanges => 2,
-            TxTab::StateChanges => 3,
-            TxTab::Raw => 4,
+            TxTab::Internal => 2,
+            TxTab::AssetChanges => 3,
+            TxTab::StateChanges => 4,
+            TxTab::Raw => 5,
         }
     }
 
@@ -115,6 +118,7 @@ impl TxTab {
         match self {
             TxTab::Overview => "Overview",
             TxTab::Logs => "Logs",
+            TxTab::Internal => "Internal",
             TxTab::AssetChanges => "Asset Changes",
             TxTab::StateChanges => "State Changes",
             TxTab::Raw => "Raw",
@@ -152,6 +156,10 @@ struct LogField {
 pub struct TxDetailScreen {
     #[allow(dead_code)]
     chain: Chain,
+    /// Hash originally requested. Kept around so `s` can re-send the
+    /// same request on the feed when the user asks to re-simulate a
+    /// pending tx (plan 12.6.3).
+    hash: TxHash,
     current: Option<TxView>,
     feed: TxFeed,
     active_tab: TxTab,
@@ -173,6 +181,10 @@ pub struct TxDetailScreen {
     /// runtime wires a clipboard adapter on top; tests inspect the
     /// field directly.
     last_copied_value: Option<String>,
+    /// Count of `s` re-simulate hits delivered to the feed. Tests
+    /// inspect it; the UI itself never surfaces the value. See
+    /// `plan/4-tx-detail.md` section 12.6.3.
+    resimulate_count: u32,
 }
 
 impl TxDetailScreen {
@@ -181,6 +193,7 @@ impl TxDetailScreen {
         let _ = feed.input_tx.send(hash);
         Self {
             chain,
+            hash,
             current: None,
             feed,
             active_tab: TxTab::Overview,
@@ -190,6 +203,7 @@ impl TxDetailScreen {
             logs_focus: LogsFocus::List,
             scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
+            resimulate_count: 0,
         }
     }
 
@@ -231,6 +245,16 @@ impl TxDetailScreen {
     #[must_use]
     pub fn last_copied_value(&self) -> Option<String> {
         self.last_copied_value.clone()
+    }
+
+    /// Number of successful `s` re-simulate keystrokes handled since
+    /// construction. Mined txs ignore `s`; pending txs increment the
+    /// counter and re-send the tx hash on the feed.
+    ///
+    /// See `plan/4-tx-detail.md` section 12.6.3.
+    #[must_use]
+    pub fn resimulate_count(&self) -> u32 {
+        self.resimulate_count
     }
 
     fn drain_feed(&mut self) {
@@ -346,10 +370,18 @@ impl Screen for TxDetailScreen {
             return Command::None;
         }
 
+        // `s` re-simulates when the tx is still pending (plan 12.6.3).
+        // Mined txs have no meaningful re-simulate semantics, so the
+        // key is a no-op for them.
+        if key.code == KeyCode::Char('s') {
+            self.resimulate();
+            return Command::None;
+        }
+
         match self.active_tab {
             TxTab::Overview => self.handle_overview_key(key),
             TxTab::Logs => self.handle_logs_key(key),
-            TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
                 self.handle_scroll_key(key);
             }
         }
@@ -487,6 +519,31 @@ impl TxDetailScreen {
         }
     }
 
+    /// Re-send the current tx hash on the feed when it is pending.
+    /// The background task re-runs the full pipeline, which refreshes
+    /// the Asset Changes / State Changes tabs against the latest
+    /// block. No-op for mined txs. See plan 12.6.3.
+    fn resimulate(&mut self) {
+        let is_pending = self
+            .current
+            .as_ref()
+            .map(|v| v.tx.is_pending())
+            .unwrap_or(false);
+        if !is_pending {
+            return;
+        }
+        if self.feed.input_tx.send(self.hash).is_ok() {
+            self.resimulate_count = self.resimulate_count.saturating_add(1);
+            // Reset enrichment status to `Pending` so the tabs show
+            // the spinner text while the fresh simulation is on its
+            // way. The next channel drain will overwrite both.
+            if let Some(view) = self.current.as_mut() {
+                view.asset_changes = LoadStatus::Pending;
+                view.state_diff = LoadStatus::Pending;
+            }
+        }
+    }
+
     fn copy_selected(&mut self) {
         let value = match self.active_tab {
             TxTab::Overview => self
@@ -500,7 +557,7 @@ impl TxDetailScreen {
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
                 }
             }),
-            TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
                 self.current.as_ref().map(|v| v.tx.hash.to_hex())
             }
         };
@@ -523,6 +580,9 @@ impl TxDetailScreen {
         match self.active_tab {
             TxTab::Overview => self.render_overview(frame, area, view),
             TxTab::Logs => self.render_logs(frame, area, view),
+            TxTab::Internal => {
+                self.render_scrollable(frame, area, "Internal", internal_body(&view.call_tree))
+            }
             TxTab::AssetChanges => self.render_scrollable(
                 frame,
                 area,
@@ -852,15 +912,21 @@ fn log_summary(idx: usize, log: &DecodedLog) -> String {
     }
 }
 
-/// Produce the field list for a log (plan 13.4).
+/// Produce the field list for a log (plan 13.4, 12.6.4).
 ///
-/// - When a signature is available (ABI or sigdb), parse the
-///   positional argument types out of the textual signature and
-///   attempt to decode topics and data words into those types
-///   (best effort: `address`, `uint*` up to `uint128`, `int*` up
-///   to `int128`, and `bool`). Anything else renders as raw hex.
-/// - Without a signature, each topic and data word shows up as
-///   its own raw-hex field so the user can still copy it.
+/// Three paths, in priority order:
+///
+/// 1. **ABI parsed** (`DecodedSignature::parsed = Some`): honour the
+///    real `indexed` flag per parameter and align `topics[1..]`
+///    onto indexed args and `data` words onto non-indexed args.
+///    This matches the event exactly even when the indexed args
+///    are not the leading positional ones (e.g. custom mixed
+///    events).
+/// 2. **Signature resolved via directory** (no `parsed`): best-
+///    effort heuristic — assume the first N positional types (as
+///    parsed from the textual signature) are the indexed ones.
+///    This matches canonical ERC20/ERC721 events in practice.
+/// 3. **No signature at all**: raw-hex per topic / data slot.
 fn log_fields(log: &DecodedLog) -> Vec<LogField> {
     let mut fields = Vec::new();
     let topic0_hex = match log.raw.topics.first() {
@@ -875,53 +941,10 @@ fn log_fields(log: &DecodedLog) -> Vec<LogField> {
                 copy_value: sig.signature.clone(),
                 raw_hint: Some(format!("topic0: {topic0_hex}")),
             });
-            let arg_types = parse_signature_args(&sig.signature);
-            // topics[1..] map onto the first types (indexed args).
-            // data words map onto the remaining types.
-            let indexed_count = log.raw.topics.len().saturating_sub(1);
-            for (i, topic) in log.raw.topics.iter().skip(1).enumerate() {
-                let ty = arg_types.get(i).map(String::as_str);
-                let (display, copy_value) = decode_word(ty, topic);
-                let raw = format!("0x{}", hex::encode(topic));
-                let label = match ty {
-                    Some(t) => format!("arg{i} ({t}, indexed)"),
-                    None => format!("topic{}", i + 1),
-                };
-                fields.push(LogField {
-                    label,
-                    display,
-                    copy_value,
-                    raw_hint: Some(format!("raw: {raw}")),
-                });
-            }
-            // Data words for non-indexed args.
-            let data_words = split_data_words(&log.raw.data);
-            for (i, word) in data_words.iter().enumerate() {
-                let ty_index = indexed_count + i;
-                let ty = arg_types.get(ty_index).map(String::as_str);
-                let (display, copy_value) = decode_word(ty, word);
-                let raw = format!("0x{}", hex::encode(word));
-                let label = match ty {
-                    Some(t) => format!("arg{ty_index} ({t})"),
-                    None => format!("data[{i}]"),
-                };
-                fields.push(LogField {
-                    label,
-                    display,
-                    copy_value,
-                    raw_hint: Some(format!("raw: {raw}")),
-                });
-            }
-            // If data is not aligned to 32 bytes, show the tail.
-            let aligned = data_words.len() * 32;
-            if aligned < log.raw.data.len() {
-                let tail = &log.raw.data[aligned..];
-                fields.push(LogField {
-                    label: "data (tail)".to_string(),
-                    display: format!("0x{}", hex::encode(tail)),
-                    copy_value: format!("0x{}", hex::encode(tail)),
-                    raw_hint: None,
-                });
+            if let Some(parsed) = sig.parsed.as_ref() {
+                push_abi_fields(&mut fields, parsed, &log.raw);
+            } else {
+                push_heuristic_fields(&mut fields, &sig.signature, &log.raw);
             }
         }
         None => {
@@ -944,6 +967,131 @@ fn log_fields(log: &DecodedLog) -> Vec<LogField> {
         }
     }
     fields
+}
+
+/// Align topics / data onto an ABI-parsed event: indexed params get
+/// `topics[1..]`, non-indexed params get consecutive data words in
+/// ABI order.
+fn push_abi_fields(fields: &mut Vec<LogField>, parsed: &EventAbi, raw: &LogEntry) {
+    let data_words = split_data_words(&raw.data);
+    let mut indexed_cursor = 0usize;
+    let mut data_cursor = 0usize;
+    for (idx, param) in parsed.params.iter().enumerate() {
+        let label_name = if param.name.is_empty() {
+            format!("arg{idx}")
+        } else {
+            param.name.clone()
+        };
+        if param.indexed {
+            // `topics[0]` is the event selector; indexed args live
+            // in `topics[1..]`.
+            let topic = raw.topics.get(1 + indexed_cursor).copied();
+            indexed_cursor += 1;
+            let (display, copy_value, raw_hex) = match topic {
+                Some(t) => {
+                    let (d, c) = decode_word(Some(param.type_.as_str()), &t);
+                    (d, c, format!("0x{}", hex::encode(t)))
+                }
+                None => ("(missing topic)".to_string(), String::new(), String::new()),
+            };
+            fields.push(LogField {
+                label: format!("{label_name} ({}, indexed)", param.type_),
+                display,
+                copy_value,
+                raw_hint: if raw_hex.is_empty() {
+                    None
+                } else {
+                    Some(format!("raw: {raw_hex}"))
+                },
+            });
+        } else {
+            let word = data_words.get(data_cursor).copied();
+            data_cursor += 1;
+            let (display, copy_value, raw_hex) = match word {
+                Some(w) => {
+                    let (d, c) = decode_word(Some(param.type_.as_str()), &w);
+                    (d, c, format!("0x{}", hex::encode(w)))
+                }
+                None => (
+                    "(missing data word)".to_string(),
+                    String::new(),
+                    String::new(),
+                ),
+            };
+            fields.push(LogField {
+                label: format!("{label_name} ({})", param.type_),
+                display,
+                copy_value,
+                raw_hint: if raw_hex.is_empty() {
+                    None
+                } else {
+                    Some(format!("raw: {raw_hex}"))
+                },
+            });
+        }
+    }
+    // Leftover data words: surface them so the user can still copy
+    // them even when the ABI shape disagrees with the payload.
+    let aligned = data_words.len() * 32;
+    if aligned < raw.data.len() {
+        let tail = &raw.data[aligned..];
+        fields.push(LogField {
+            label: "data (tail)".to_string(),
+            display: format!("0x{}", hex::encode(tail)),
+            copy_value: format!("0x{}", hex::encode(tail)),
+            raw_hint: None,
+        });
+    }
+}
+
+/// Fallback for signature-directory hits: parse positional types
+/// out of the signature text and assume the first N are indexed.
+/// Mirrors the previous behaviour of the Logs tab.
+fn push_heuristic_fields(fields: &mut Vec<LogField>, signature: &str, raw: &LogEntry) {
+    let arg_types = parse_signature_args(signature);
+    let indexed_count = raw.topics.len().saturating_sub(1);
+    for (i, topic) in raw.topics.iter().skip(1).enumerate() {
+        let ty = arg_types.get(i).map(String::as_str);
+        let (display, copy_value) = decode_word(ty, topic);
+        let raw_hex = format!("0x{}", hex::encode(topic));
+        let label = match ty {
+            Some(t) => format!("arg{i} ({t}, indexed)"),
+            None => format!("topic{}", i + 1),
+        };
+        fields.push(LogField {
+            label,
+            display,
+            copy_value,
+            raw_hint: Some(format!("raw: {raw_hex}")),
+        });
+    }
+    let data_words = split_data_words(&raw.data);
+    for (i, word) in data_words.iter().enumerate() {
+        let ty_index = indexed_count + i;
+        let ty = arg_types.get(ty_index).map(String::as_str);
+        let (display, copy_value) = decode_word(ty, word);
+        let raw_hex = format!("0x{}", hex::encode(word));
+        let label = match ty {
+            Some(t) => format!("arg{ty_index} ({t})"),
+            None => format!("data[{i}]"),
+        };
+        fields.push(LogField {
+            label,
+            display,
+            copy_value,
+            raw_hint: Some(format!("raw: {raw_hex}")),
+        });
+    }
+    let aligned = data_words.len() * 32;
+    if aligned < raw.data.len() {
+        let tail = &raw.data[aligned..];
+        fields.push(LogField {
+            label: "data (tail)".to_string(),
+            display: format!("0x{}", hex::encode(tail)),
+            copy_value: format!("0x{}", hex::encode(tail)),
+            raw_hint: None,
+        });
+    }
 }
 
 fn log_field_line(field: &LogField, selected: bool) -> Line<'static> {
@@ -1187,6 +1335,72 @@ fn short_hex(s: &str) -> String {
     format!("{}...{}", &s[..8], &s[s.len() - 4..])
 }
 
+/// Render the Internal tab body for the given call-tree status.
+/// Mirrors the status-based fallback used by the other tabs.
+/// See `plan/4-tx-detail.md` section 12.6.5.
+fn internal_body(status: &LoadStatus<CallNode>) -> String {
+    match status {
+        LoadStatus::Pending => "Fetching call tree...".to_string(),
+        LoadStatus::Unsupported => {
+            "Call tree is unavailable on this chain / tier (trace + debug namespaces disabled)."
+                .to_string()
+        }
+        LoadStatus::Failed(msg) => format!("Trace failed: {msg}"),
+        LoadStatus::Loaded(root) => render_call_tree(root),
+    }
+}
+
+fn render_call_tree(root: &CallNode) -> String {
+    let mut out = String::new();
+    render_call_node(root, "", true, &mut out);
+    out
+}
+
+/// Emit one line per node using indent + elbow glyphs, then recurse.
+/// `prefix` carries the accumulated prefix for deeper levels;
+/// `is_last` controls which elbow character to use. Plan 12.6.5
+/// deliberately keeps this dead-simple (no Unicode box drawing):
+/// ASCII is enough and keeps copy/paste readable.
+fn render_call_node(node: &CallNode, prefix: &str, is_last: bool, out: &mut String) {
+    let marker = if prefix.is_empty() {
+        ""
+    } else if is_last {
+        "`- "
+    } else {
+        "|- "
+    };
+    let to = match node.to {
+        Some(addr) => short_address(&addr),
+        None => "(create)".to_string(),
+    };
+    let error = node
+        .error
+        .as_ref()
+        .map(|e| format!(" !! {e}"))
+        .unwrap_or_default();
+    out.push_str(&format!(
+        "{prefix}{marker}{kind} -> {to}  gas={gas}{error}\n",
+        kind = node.kind.label(),
+        gas = node.gas_used,
+    ));
+    let child_prefix = if prefix.is_empty() {
+        String::new()
+    } else if is_last {
+        format!("{prefix}   ")
+    } else {
+        format!("{prefix}|  ")
+    };
+    let next_prefix = if prefix.is_empty() {
+        "   ".to_string()
+    } else {
+        child_prefix
+    };
+    for (i, child) in node.children.iter().enumerate() {
+        let last = i + 1 == node.children.len();
+        render_call_node(child, &next_prefix, last, out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1244,5 +1458,44 @@ mod tests {
         word[0] = 1;
         let (display, _) = decode_word(Some("uint256"), &word);
         assert!(display.starts_with("0x"));
+    }
+
+    #[test]
+    fn internal_body_renders_tree_with_ascii_indent() {
+        use crate::domain::{Address, CallKind, CallNode, Wei};
+        let root = CallNode {
+            kind: CallKind::Call,
+            from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            to: Some(Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap()),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 100,
+            error: None,
+            children: vec![CallNode {
+                kind: CallKind::Staticcall,
+                from: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
+                to: Some(Address::from_hex("0x1111111111111111111111111111111111111111").unwrap()),
+                value: Wei::new(0),
+                input: Vec::new(),
+                output: Vec::new(),
+                gas_used: 10,
+                error: None,
+                children: Vec::new(),
+            }],
+        };
+        let body = internal_body(&LoadStatus::Loaded(root));
+        assert!(body.contains("CALL ->"));
+        assert!(body.contains("`- STATICCALL ->"));
+    }
+
+    #[test]
+    fn internal_body_pending_message() {
+        assert!(internal_body(&LoadStatus::Pending).starts_with("Fetching call tree"));
+    }
+
+    #[test]
+    fn internal_body_unsupported_message() {
+        assert!(internal_body(&LoadStatus::Unsupported).contains("unavailable"));
     }
 }

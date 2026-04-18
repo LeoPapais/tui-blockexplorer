@@ -1,0 +1,39 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "type": "call",
+      "action": {
+        "from": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "value": "0x0",
+        "gas": "0x13880",
+        "input": "0xa9059cbb000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000000000000000000000000000000000000000003e8",
+        "callType": "call"
+      },
+      "result": {
+        "gasUsed": "0x7fff",
+        "output": "0x"
+      },
+      "traceAddress": [],
+      "subtraces": 1
+    },
+    {
+      "type": "staticcall",
+      "action": {
+        "from": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "to": "0x2222222222222222222222222222222222222222",
+        "value": "0x0",
+        "gas": "0x1000",
+        "input": "0xfeed"
+      },
+      "result": {
+        "gasUsed": "0x100",
+        "output": "0x"
+      },
+      "traceAddress": [0],
+      "subtraces": 0
+    }
+  ]
+}

@@ -78,12 +78,15 @@ where
                 break;
             }
 
-            // Run the heavier enrichments concurrently.
+            // Run the heavier enrichments concurrently: asset
+            // changes (Simulation API), state diff + call tree
+            // (Trace / Debug namespace).
             let sim_clone = sim.clone();
             let trace_clone = trace.clone();
+            let trace_call_clone = trace.clone();
             let view_for_sim = &mut view;
 
-            let (sim_status, trace_status) = tokio::join!(
+            let (sim_status, trace_status, call_tree_status) = tokio::join!(
                 async {
                     let mut v = view_for_sim.clone();
                     load_tx_overview::load_asset_changes(&sim_clone, &mut v, chain).await;
@@ -94,10 +97,16 @@ where
                     load_tx_overview::load_state_diff(&trace_clone, &mut v, chain).await;
                     v.state_diff
                 },
+                async {
+                    let mut v = view_for_sim.clone();
+                    load_tx_overview::load_call_tree(&trace_call_clone, &mut v, chain).await;
+                    v.call_tree
+                },
             );
 
             view.asset_changes = sim_status;
             view.state_diff = trace_status;
+            view.call_tree = call_tree_status;
 
             if !send_or_break(&updates_tx, view) {
                 break;
