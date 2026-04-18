@@ -93,3 +93,9 @@ mod load_address_transfers;
 
 #[path = "functional/alchemy_transfers.rs"]
 mod alchemy_transfers;
+
+#[path = "functional/load_address_portfolio.rs"]
+mod load_address_portfolio;
+
+#[path = "functional/alchemy_portfolio.rs"]
+mod alchemy_portfolio;

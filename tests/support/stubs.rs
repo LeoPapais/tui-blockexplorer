@@ -15,7 +15,7 @@ use blockexplorer_tui::{
     application::ports::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
         ChainRegistryPort, ContractSourcePort, EnsResolverPort, GasOraclePort,
-        NetworkStatusPort, PendingTxStreamPort, ProxyDetectionPort,
+        NetworkStatusPort, PendingTxStreamPort, PortfolioPort, ProxyDetectionPort,
         SignatureDirectoryPort, TokenReaderPort, TokenSearchPort, TransfersPort,
         TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
     },
@@ -23,8 +23,8 @@ use blockexplorer_tui::{
         Address, AddressKind, AddressOverview, AssetChange, Block, BlockHash, BlockId,
         BlockNumber, BlockSummary, Chain, ContractAbi, DomainError, GasSnapshot, Gwei,
         NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff,
-        TokenMetadata, TokenOverview, Transaction, TransferCursor, TransferPage, TxHash,
-        TxSummary, Wei,
+        TokenHolding, TokenMetadata, TokenOverview, Transaction, TransferCursor,
+        TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -919,6 +919,42 @@ impl TransfersPort for StubTransfersPort {
         _chain: Chain,
         _cursor: Option<TransferCursor>,
     ) -> Result<TransferPage, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned().unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: PortfolioPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct PortfolioState {
+    by_address: HashMap<Address, Vec<TokenHolding>>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubPortfolioPort {
+    inner: Arc<Mutex<PortfolioState>>,
+}
+
+impl StubPortfolioPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_holdings(&self, address: Address, holdings: Vec<TokenHolding>) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, holdings);
+    }
+}
+
+impl PortfolioPort for StubPortfolioPort {
+    async fn get_token_balances(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Vec<TokenHolding>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_address.get(&address).cloned().unwrap_or_default())
     }

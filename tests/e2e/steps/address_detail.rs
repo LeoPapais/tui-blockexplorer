@@ -8,15 +8,19 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{AddressDetailScreen, AddressTab, Command, ScreenStack},
     domain::{
-        Address, AddressKind, AddressOverview, BlockNumber, Chain, TransferAsset,
-        TransferCategory, TransferEvent, TransferPage, TxHash, Wei,
+        Address, AddressKind, AddressOverview, BlockNumber, Chain, TokenHolding,
+        TokenMetadata, TransferAsset, TransferCategory, TransferEvent, TransferPage,
+        TxHash, Wei,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use cucumber::{given, then, when};
 
 use crate::{
-    steps::search::{build_stack, spawn_address_detail, spawn_address_detail_with_transfers},
+    steps::search::{
+        build_stack, spawn_address_detail, spawn_address_detail_with_full_feeds,
+        spawn_address_detail_with_transfers,
+    },
     world::AppWorld,
 };
 
@@ -210,6 +214,103 @@ async fn opens_address_detail_with_transfers(world: &mut AppWorld, addr_hex: Str
 // "the user switches to the Transactions tab" is defined in
 // block_detail.rs and simply sends a Tab key press to whatever screen
 // is on top, so it already drives the AddressDetailScreen correctly.
+
+#[when("the user switches to the Tokens tab")]
+async fn switches_to_tokens_tab(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Tab bar cycle is Overview -> Transactions -> Tokens, so two
+    // presses land on Tokens regardless of the starting tab as long
+    // as we begin on Overview (the default).
+    press_key(stack, KeyCode::Tab);
+    press_key(stack, KeyCode::Tab);
+}
+
+#[given(regex = r#"^the portfolio feed knows (\d+) holdings for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn portfolio_feed_knows_n(world: &mut AppWorld, count: u32, addr_hex: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    let holdings: Vec<TokenHolding> = (0..count as usize)
+        .map(|i| TokenHolding {
+            metadata: TokenMetadata {
+                address: Address::from_hex(&format!(
+                    "0x{:040x}",
+                    (0x1000_0000_u64 + i as u64)
+                ))
+                .unwrap(),
+                symbol: format!("TKN{i}"),
+                name: format!("Token {i}"),
+                decimals: 18,
+            },
+            balance: Wei::new(1_000 * (i as u128 + 1)),
+        })
+        .collect();
+    // Ensure the token reader can resolve every contract so Enter on
+    // a holding can open a TokenDetail screen.
+    for h in &holdings {
+        seed_token_reader(world, &h.metadata);
+    }
+    world.portfolio_stub.set_holdings(address, holdings);
+    world.last_address = Some(address);
+}
+
+fn seed_token_reader(world: &AppWorld, metadata: &TokenMetadata) {
+    use blockexplorer_tui::domain::TokenOverview;
+    world.token_reader_stub.insert(TokenOverview {
+        metadata: metadata.clone(),
+        total_supply: 0,
+    });
+}
+
+#[when(regex = r#"^the user opens AddressDetail with full feeds for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn opens_address_detail_with_full_feeds(world: &mut AppWorld, addr_hex: String) {
+    build_stack(world);
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let reader = world.address_reader_stub.clone();
+    let transfers = world.transfers_stub.clone();
+    let portfolio = world.portfolio_stub.clone();
+    let tx_reader = world.tx_reader_stub.clone();
+    let token_reader = world.token_reader_stub.clone();
+    let screen = spawn_address_detail_with_full_feeds(
+        Chain::Ethereum,
+        addr,
+        reader,
+        transfers,
+        portfolio,
+        tx_reader,
+        token_reader,
+    );
+    let stack = world.stack.as_mut().unwrap();
+    stack.push(screen);
+}
+
+#[then(regex = r#"^once loaded, the Tokens tab lists (\d+) holdings$"#)]
+async fn tokens_tab_lists_n(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).holdings().is_some()).await;
+    let screen = current(stack);
+    assert_eq!(screen.active_tab(), AddressTab::Tokens);
+    let count = screen.holdings().map(|h| h.len()).unwrap_or(0);
+    assert_eq!(count, expected as usize);
+}
+
+#[then("once loaded, the Tokens tab reports no holdings")]
+async fn tokens_tab_empty(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).holdings().is_some()).await;
+    let screen = current(stack);
+    assert!(
+        screen
+            .holdings()
+            .map(|h| h.is_empty())
+            .unwrap_or(false)
+    );
+}
+
+#[when("the user selects the first holding and presses Enter")]
+async fn selects_first_holding_and_enter(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    press_key(stack, KeyCode::Home);
+    press_key(stack, KeyCode::Enter);
+}
 
 #[then(regex = r#"^once loaded, the Transactions tab lists (\d+) transfers$"#)]
 async fn transactions_tab_lists_n(world: &mut AppWorld, expected: u32) {

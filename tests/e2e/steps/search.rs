@@ -261,6 +261,7 @@ pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
             updates_tx,
             mut input_rx,
             transfers_tx: _,
+            portfolio_tx: _,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
@@ -298,6 +299,7 @@ pub(crate) fn spawn_address_detail_with_transfers<
         let AddressFeedSender {
             updates_tx,
             transfers_tx,
+            portfolio_tx: _,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
@@ -329,6 +331,84 @@ pub(crate) fn spawn_address_detail_with_transfers<
             address,
             feed,
             Some(open_tx),
+        ),
+    )
+}
+
+/// Address-detail spawner wired up to overview + transfers +
+/// portfolio stubs, plus an open_token factory that spawns a
+/// TokenDetail screen through the stub token reader.
+#[allow(dead_code)]
+pub(crate) fn spawn_address_detail_with_full_feeds<
+    R: AddressReaderPort + Clone + 'static,
+    T: blockexplorer_tui::application::ports::TransfersPort + Clone + 'static,
+    P: blockexplorer_tui::application::ports::PortfolioPort + Clone + 'static,
+    Tx: TxReaderPort + Clone + 'static,
+    Tok: blockexplorer_tui::application::ports::TokenReaderPort + Clone + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    transfers: T,
+    portfolio: P,
+    tx_reader: Tx,
+    token_reader: Tok,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    use blockexplorer_tui::adapters::ui::{
+        AddressFeedSender, OpenTokenFactory, address_detail::OpenTxFactory,
+    };
+    let (feed, sender) = address_feed();
+    let reader_for_task = reader.clone();
+    let transfers_for_task = transfers.clone();
+    let portfolio_for_task = portfolio.clone();
+    tokio::spawn(async move {
+        let AddressFeedSender {
+            updates_tx,
+            transfers_tx,
+            portfolio_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(addr) = input_rx.recv().await {
+            let (ov, page, holdings) = tokio::join!(
+                reader_for_task.get(addr, chain),
+                transfers_for_task.get_for_address(addr, chain, None),
+                portfolio_for_task.get_token_balances(addr, chain),
+            );
+            if let Ok(Some(ov)) = ov
+                && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+            if let Ok(page) = page
+                && transfers_tx.send(page).is_err()
+            {
+                break;
+            }
+            if let Ok(holdings) = holdings
+                && portfolio_tx.send(holdings).is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    let tx_reader_for_open = tx_reader.clone();
+    let open_tx: OpenTxFactory = Box::new(move |hash| {
+        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
+    });
+
+    let token_reader_for_open = token_reader.clone();
+    let open_token: OpenTokenFactory = Box::new(move |contract| {
+        spawn_token_detail(chain, contract, token_reader_for_open.clone())
+    });
+
+    Box::new(
+        blockexplorer_tui::adapters::ui::AddressDetailScreen::with_factories(
+            chain,
+            address,
+            feed,
+            Some(open_tx),
+            Some(open_token),
         ),
     )
 }

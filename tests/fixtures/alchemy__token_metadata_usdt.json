@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "name": "Tether USD",
+    "symbol": "USDT",
+    "decimals": 6,
+    "logo": null
+  }
+}

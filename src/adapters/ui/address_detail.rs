@@ -24,8 +24,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::{
     adapters::ui::screen::{Command, Screen},
     domain::{
-        Address, AddressKind, AddressOverview, Chain, TransferAsset, TransferEvent,
-        TransferPage, TxHash,
+        Address, AddressKind, AddressOverview, Chain, TokenHolding, TransferAsset,
+        TransferEvent, TransferPage, TxHash,
     },
 };
 
@@ -38,12 +38,14 @@ pub struct AddressFeed {
     pub input_tx: UnboundedSender<Address>,
     pub updates_rx: UnboundedReceiver<AddressOverview>,
     pub transfers_rx: UnboundedReceiver<TransferPage>,
+    pub portfolio_rx: UnboundedReceiver<Vec<TokenHolding>>,
 }
 
 /// Channel half owned by the background tasks.
 pub struct AddressFeedSender {
     pub updates_tx: UnboundedSender<AddressOverview>,
     pub transfers_tx: UnboundedSender<TransferPage>,
+    pub portfolio_tx: UnboundedSender<Vec<TokenHolding>>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -52,15 +54,18 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
     let (input_tx, input_rx) = unbounded_channel();
     let (updates_tx, updates_rx) = unbounded_channel();
     let (transfers_tx, transfers_rx) = unbounded_channel();
+    let (portfolio_tx, portfolio_rx) = unbounded_channel();
     (
         AddressFeed {
             input_tx,
             updates_rx,
             transfers_rx,
+            portfolio_rx,
         },
         AddressFeedSender {
             updates_tx,
             transfers_tx,
+            portfolio_tx,
             input_rx,
         },
     )
@@ -70,6 +75,10 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
 /// when the user presses Enter on a row.
 pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 
+/// Factory used by the Tokens tab to spawn a TokenDetail screen
+/// when the user presses Enter on a row.
+pub type OpenTokenFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
@@ -78,10 +87,15 @@ pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 pub enum AddressTab {
     Overview,
     Transactions,
+    Tokens,
 }
 
 impl AddressTab {
-    const ALL: [AddressTab; 2] = [AddressTab::Overview, AddressTab::Transactions];
+    const ALL: [AddressTab; 3] = [
+        AddressTab::Overview,
+        AddressTab::Transactions,
+        AddressTab::Tokens,
+    ];
 
     fn next(self) -> Self {
         let idx = self.index();
@@ -92,6 +106,7 @@ impl AddressTab {
         match self {
             AddressTab::Overview => 0,
             AddressTab::Transactions => 1,
+            AddressTab::Tokens => 2,
         }
     }
 
@@ -99,6 +114,7 @@ impl AddressTab {
         match self {
             AddressTab::Overview => "Overview",
             AddressTab::Transactions => "Transactions",
+            AddressTab::Tokens => "Tokens",
         }
     }
 }
@@ -112,11 +128,14 @@ pub struct AddressDetailScreen {
     chain: Chain,
     current: Option<AddressOverview>,
     transfers: Option<TransferPage>,
+    holdings: Option<Vec<TokenHolding>>,
     feed: AddressFeed,
     active_tab: AddressTab,
     scroll: u16,
-    list_state: ListState,
+    tx_list_state: ListState,
+    token_list_state: ListState,
     open_tx: Option<OpenTxFactory>,
+    open_token: Option<OpenTokenFactory>,
 }
 
 impl AddressDetailScreen {
@@ -125,7 +144,7 @@ impl AddressDetailScreen {
     /// starts fetching immediately.
     #[must_use]
     pub fn loading(chain: Chain, address: Address, feed: AddressFeed) -> Self {
-        Self::with_open_tx(chain, address, feed, None)
+        Self::with_factories(chain, address, feed, None, None)
     }
 
     /// Same as [`loading`] but wires the Transactions tab to open a
@@ -137,18 +156,36 @@ impl AddressDetailScreen {
         feed: AddressFeed,
         open_tx: Option<OpenTxFactory>,
     ) -> Self {
+        Self::with_factories(chain, address, feed, open_tx, None)
+    }
+
+    /// Fully-wired constructor: Enter on the Transactions tab opens a
+    /// TxDetail, Enter on the Tokens tab opens a TokenDetail.
+    #[must_use]
+    pub fn with_factories(
+        chain: Chain,
+        address: Address,
+        feed: AddressFeed,
+        open_tx: Option<OpenTxFactory>,
+        open_token: Option<OpenTokenFactory>,
+    ) -> Self {
         let _ = feed.input_tx.send(address);
-        let mut list_state = ListState::default();
-        list_state.select(Some(0));
+        let mut tx_list_state = ListState::default();
+        tx_list_state.select(Some(0));
+        let mut token_list_state = ListState::default();
+        token_list_state.select(Some(0));
         Self {
             chain,
             current: None,
             transfers: None,
+            holdings: None,
             feed,
             active_tab: AddressTab::Overview,
             scroll: 0,
-            list_state,
+            tx_list_state,
+            token_list_state,
             open_tx,
+            open_token,
         }
     }
 
@@ -163,15 +200,44 @@ impl AddressDetailScreen {
     }
 
     #[must_use]
+    pub fn holdings(&self) -> Option<&Vec<TokenHolding>> {
+        self.holdings.as_ref()
+    }
+
+    #[must_use]
     pub fn active_tab(&self) -> AddressTab {
         self.active_tab
     }
 
-    /// Current selection index in the Transactions list, clamped to
-    /// the available events. Returns 0 when the list is empty.
+    /// Current selection index in the active list tab, clamped to the
+    /// available rows. Returns 0 when the list is empty.
     #[must_use]
     pub fn selected(&self) -> usize {
-        self.list_state.selected().unwrap_or(0)
+        self.active_list_state().selected().unwrap_or(0)
+    }
+
+    fn active_list_state(&self) -> &ListState {
+        match self.active_tab {
+            AddressTab::Tokens => &self.token_list_state,
+            _ => &self.tx_list_state,
+        }
+    }
+
+    fn active_list_state_mut(&mut self) -> &mut ListState {
+        match self.active_tab {
+            AddressTab::Tokens => &mut self.token_list_state,
+            _ => &mut self.tx_list_state,
+        }
+    }
+
+    fn active_list_len(&self) -> usize {
+        match self.active_tab {
+            AddressTab::Transactions => {
+                self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0)
+            }
+            AddressTab::Tokens => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
+            _ => 0,
+        }
     }
 
     fn drain_feed(&mut self) {
@@ -180,36 +246,47 @@ impl AddressDetailScreen {
         }
         while let Ok(page) = self.feed.transfers_rx.try_recv() {
             self.transfers = Some(page);
-            self.clamp_selection();
+            self.clamp_tx_selection();
+        }
+        while let Ok(holdings) = self.feed.portfolio_rx.try_recv() {
+            self.holdings = Some(holdings);
+            self.clamp_token_selection();
         }
     }
 
-    fn clamp_selection(&mut self) {
+    fn clamp_tx_selection(&mut self) {
         let len = self
             .transfers
             .as_ref()
             .map(|p| p.events.len())
             .unwrap_or(0);
         if len == 0 {
-            self.list_state.select(None);
+            self.tx_list_state.select(None);
             return;
         }
-        let current = self.list_state.selected().unwrap_or(0);
-        self.list_state.select(Some(current.min(len - 1)));
+        let current = self.tx_list_state.selected().unwrap_or(0);
+        self.tx_list_state.select(Some(current.min(len - 1)));
+    }
+
+    fn clamp_token_selection(&mut self) {
+        let len = self.holdings.as_ref().map(|h| h.len()).unwrap_or(0);
+        if len == 0 {
+            self.token_list_state.select(None);
+            return;
+        }
+        let current = self.token_list_state.selected().unwrap_or(0);
+        self.token_list_state.select(Some(current.min(len - 1)));
     }
 
     fn select_delta(&mut self, delta: i32) {
-        let len = self
-            .transfers
-            .as_ref()
-            .map(|p| p.events.len())
-            .unwrap_or(0);
+        let len = self.active_list_len();
         if len == 0 {
             return;
         }
-        let current = self.list_state.selected().unwrap_or(0) as i32;
+        let state = self.active_list_state_mut();
+        let current = state.selected().unwrap_or(0) as i32;
         let next = (current + delta).clamp(0, len as i32 - 1);
-        self.list_state.select(Some(next as usize));
+        state.select(Some(next as usize));
     }
 }
 
@@ -273,7 +350,11 @@ impl Screen for AddressDetailScreen {
         // Body
         match self.active_tab {
             AddressTab::Overview => {
-                let body = overview_body(self.current.as_ref(), self.transfers.as_ref());
+                let body = overview_body(
+                    self.current.as_ref(),
+                    self.transfers.as_ref(),
+                    self.holdings.as_ref(),
+                );
                 frame.render_widget(
                     Paragraph::new(body)
                         .wrap(Wrap { trim: false })
@@ -299,7 +380,40 @@ impl Screen for AddressDetailScreen {
                             .iter()
                             .map(|event| ListItem::new(render_transfer_row(event)))
                             .collect();
-                        let mut state = self.list_state;
+                        let mut state = self.tx_list_state;
+                        frame.render_stateful_widget(
+                            List::new(items)
+                                .block(block)
+                                .highlight_style(
+                                    Style::default()
+                                        .add_modifier(Modifier::BOLD)
+                                        .bg(Color::Indexed(238)),
+                                )
+                                .highlight_symbol("> "),
+                            chunks[2],
+                            &mut state,
+                        );
+                    }
+                }
+            }
+            AddressTab::Tokens => {
+                let block = Block::default().borders(Borders::ALL).title("Tokens");
+                match self.holdings.as_ref() {
+                    None => frame.render_widget(
+                        Paragraph::new("Loading tokens...").block(block),
+                        chunks[2],
+                    ),
+                    Some(holdings) if holdings.is_empty() => frame.render_widget(
+                        Paragraph::new("No ERC-20 holdings found for this address.")
+                            .block(block),
+                        chunks[2],
+                    ),
+                    Some(holdings) => {
+                        let items: Vec<ListItem> = holdings
+                            .iter()
+                            .map(|h| ListItem::new(render_token_row(h)))
+                            .collect();
+                        let mut state = self.token_list_state;
                         frame.render_stateful_widget(
                             List::new(items)
                                 .block(block)
@@ -350,35 +464,38 @@ impl Screen for AddressDetailScreen {
                 Command::None
             }
 
-            // Transactions selection
-            (AddressTab::Transactions, KeyCode::Up | KeyCode::Char('k')) => {
+            // Shared list navigation for Transactions / Tokens.
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Up | KeyCode::Char('k')) => {
                 self.select_delta(-1);
                 Command::None
             }
-            (AddressTab::Transactions, KeyCode::Down | KeyCode::Char('j')) => {
+            (
+                AddressTab::Transactions | AddressTab::Tokens,
+                KeyCode::Down | KeyCode::Char('j'),
+            ) => {
                 self.select_delta(1);
                 Command::None
             }
-            (AddressTab::Transactions, KeyCode::PageUp) => {
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::PageUp) => {
                 self.select_delta(-10);
                 Command::None
             }
-            (AddressTab::Transactions, KeyCode::PageDown) => {
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::PageDown) => {
                 self.select_delta(10);
                 Command::None
             }
-            (AddressTab::Transactions, KeyCode::Home) => {
-                self.list_state.select(Some(0));
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Home) => {
+                self.active_list_state_mut().select(Some(0));
                 Command::None
             }
-            (AddressTab::Transactions, KeyCode::End) => {
-                if let Some(page) = self.transfers.as_ref()
-                    && !page.events.is_empty()
-                {
-                    self.list_state.select(Some(page.events.len() - 1));
+            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::End) => {
+                let len = self.active_list_len();
+                if len > 0 {
+                    self.active_list_state_mut().select(Some(len - 1));
                 }
                 Command::None
             }
+
             (AddressTab::Transactions, KeyCode::Enter) => {
                 let hash = self
                     .transfers
@@ -387,6 +504,17 @@ impl Screen for AddressDetailScreen {
                     .map(|e| e.tx_hash);
                 match (hash, self.open_tx.as_ref()) {
                     (Some(hash), Some(factory)) => Command::Push(factory(hash)),
+                    _ => Command::None,
+                }
+            }
+            (AddressTab::Tokens, KeyCode::Enter) => {
+                let contract = self
+                    .holdings
+                    .as_ref()
+                    .and_then(|h| h.get(self.selected()))
+                    .map(|h| h.metadata.address);
+                match (contract, self.open_token.as_ref()) {
+                    (Some(addr), Some(factory)) => Command::Push(factory(addr)),
                     _ => Command::None,
                 }
             }
@@ -412,7 +540,11 @@ impl Screen for AddressDetailScreen {
 // Render helpers
 // ---------------------------------------------------------------------------
 
-fn overview_body(overview: Option<&AddressOverview>, transfers: Option<&TransferPage>) -> String {
+fn overview_body(
+    overview: Option<&AddressOverview>,
+    transfers: Option<&TransferPage>,
+    holdings: Option<&Vec<TokenHolding>>,
+) -> String {
     match overview {
         None => "Loading...".to_string(),
         Some(ov) => {
@@ -424,13 +556,18 @@ fn overview_body(overview: Option<&AddressOverview>, transfers: Option<&Transfer
                 .map(|p| p.events.len())
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "loading...".to_string());
+            let token_count = holdings
+                .map(|h| h.len())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "loading...".to_string());
             format!(
-                "Address     {addr}\n\
-Kind        {kind}\n\
-Balance     {balance} wei\n\
-Nonce       {nonce}\n\
+                "Address       {addr}\n\
+Kind          {kind}\n\
+Balance       {balance} wei\n\
+Nonce         {nonce}\n\
 \n\
-Txs loaded  {tx_count}\n\
+Txs loaded    {tx_count}\n\
+Tokens loaded {token_count}\n\
 \n\
 [Tab] cycle tabs    [Enter] open selection    [Esc] back",
                 addr = ov.address.to_hex(),
@@ -438,9 +575,20 @@ Txs loaded  {tx_count}\n\
                 balance = ov.balance.value(),
                 nonce = ov.nonce,
                 tx_count = tx_count,
+                token_count = token_count,
             )
         }
     }
+}
+
+fn render_token_row(h: &TokenHolding) -> String {
+    format!(
+        "{symbol:<10}  {balance:<20}  d={decimals:<2}  {contract}",
+        symbol = h.metadata.symbol,
+        balance = h.balance.value(),
+        decimals = h.metadata.decimals,
+        contract = h.metadata.address.to_hex(),
+    )
 }
 
 fn render_transfer_row(event: &TransferEvent) -> String {

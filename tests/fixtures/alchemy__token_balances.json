@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "address": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "tokenBalances": [
+      {
+        "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "tokenBalance": "0x00000000000000000000000000000000000000000000000000000000000f4240"
+      },
+      {
+        "contractAddress": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        "tokenBalance": "0x0000000000000000000000000000000000000000000000000000000000002710"
+      },
+      {
+        "contractAddress": "0x0000000000000000000000000000000000000000",
+        "tokenBalance": "0x0"
+      }
+    ]
+  }
+}

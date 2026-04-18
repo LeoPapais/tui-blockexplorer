@@ -30,9 +30,9 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemySimulation,
-            AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
-            AlchemyTxTracer, RpcClient,
+            AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector,
+            AlchemySimulation, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup,
+            AlchemyTxReader, AlchemyTxTracer, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
@@ -91,8 +91,9 @@ fn live_tx_detail_screen(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
-/// Build a live `AddressDetailScreen` backed by address-reader +
-/// transfers tasks, and wire the Transactions tab to open TxDetail.
+/// Build a live `AddressDetailScreen` backed by address-reader,
+/// transfers and portfolio tasks, and wire the Transactions / Tokens
+/// tabs to open TxDetail / TokenDetail on Enter.
 fn live_address_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
@@ -101,10 +102,13 @@ fn live_address_detail_screen(
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
     let transfers = AlchemyTransfers::new(rpc.clone());
+    let portfolio = AlchemyPortfolio::new(rpc.clone());
     let (feed, sender) = address_feed();
-    std::mem::drop(address_feed::spawn(chain, reader, transfers, sender));
+    std::mem::drop(address_feed::spawn(
+        chain, reader, transfers, portfolio, sender,
+    ));
 
-    let rpc_for_tx = rpc;
+    let rpc_for_tx = rpc.clone();
     let etherscan_for_tx = etherscan_key;
     let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
         live_tx_detail_screen(
@@ -115,11 +119,18 @@ fn live_address_detail_screen(
         )
     });
 
-    Box::new(AddressDetailScreen::with_open_tx(
+    let rpc_for_token = rpc;
+    let open_token: crate::adapters::ui::address_detail::OpenTokenFactory =
+        Box::new(move |contract| {
+            live_token_detail_screen(chain, contract, rpc_for_token.clone())
+        });
+
+    Box::new(AddressDetailScreen::with_factories(
         chain,
         address,
         feed,
         Some(open_tx),
+        Some(open_token),
     ))
 }
 

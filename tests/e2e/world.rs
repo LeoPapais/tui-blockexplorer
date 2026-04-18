@@ -16,10 +16,10 @@ use cucumber::World;
 use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractSourcePort, StubEnsResolverPort, StubGasOraclePort,
-    StubNetworkStatusPort, StubPendingTxStreamPort, StubProxyDetectionPort,
-    StubSignatureDirectoryPort, StubTokenReaderPort, StubTokenSearchPort,
-    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort,
-    StubTxTracePort,
+    StubNetworkStatusPort, StubPendingTxStreamPort, StubPortfolioPort,
+    StubProxyDetectionPort, StubSignatureDirectoryPort, StubTokenReaderPort,
+    StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
+    StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession =
@@ -72,6 +72,9 @@ pub struct AppWorld {
 
     /// Unified transfers stub feeding the Transactions tab.
     pub transfers_stub: StubTransfersPort,
+
+    /// Portfolio stub feeding the Tokens tab on Address Detail.
+    pub portfolio_stub: StubPortfolioPort,
 
     /// Address captured by the latest "the transfers feed knows ..."
     /// step. Currently unused beyond bookkeeping but handy for

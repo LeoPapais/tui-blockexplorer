@@ -28,3 +28,19 @@ Feature: Address detail
     Then once loaded, the Transactions tab lists 2 transfers
     When the user selects the first transfer and presses Enter
     Then a "Transaction" screen is on top
+
+  Scenario: Tokens tab lists holdings and opens TokenDetail
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
+    And the portfolio feed knows 2 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Tokens tab
+    Then once loaded, the Tokens tab lists 2 holdings
+    When the user selects the first holding and presses Enter
+    Then a "Token" screen is on top
+
+  Scenario: Tokens tab empty state
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
+    And the portfolio feed knows 0 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Tokens tab
+    Then once loaded, the Tokens tab reports no holdings
