@@ -3,13 +3,14 @@
 //! See `plan/2-search.md` section 10.1.
 
 use blockexplorer_tui::{
-    application::use_cases::resolve_query::{Classification, ResolveQuery, classify},
+    application::use_cases::resolve_query::{Classification, ResolveQuery, classify, classify_input},
     domain::{
         Address, AddressKind, BlockHash, BlockNumber, BlockSummary, Chain, DomainError,
         ResolvedEntity, TokenMetadata, TxHash, TxSummary,
     },
 };
 use pretty_assertions::assert_eq;
+use rstest::rstest;
 
 use crate::support::stubs::{
     StubAddressLookupPort, StubBlockLookupPort, StubEnsResolverPort, StubTokenSearchPort,
@@ -114,6 +115,110 @@ fn classification_of_free_text() {
     assert_eq!(
         classify("usd coin"),
         Classification::FreeText("usd coin".into())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// classify_input — normalisation + URL paste (plan/2 §12.1, §12.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn classify_input_trims_surrounding_whitespace_and_quotes() {
+    let out = classify_input("  \"21345678\" ");
+    assert_eq!(out.normalised, "21345678");
+    assert_eq!(
+        out.classification,
+        Classification::BlockNumber(BlockNumber::new(21_345_678))
+    );
+}
+
+#[test]
+fn classify_input_accepts_uppercase_hex_and_lowercases_it() {
+    let upper = "0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045";
+    let out = classify_input(upper);
+    assert_eq!(out.normalised, upper.to_lowercase());
+    assert!(matches!(out.classification, Classification::Address { .. }));
+}
+
+#[test]
+fn classify_input_preserves_ticker_casing() {
+    let out = classify_input("USDC");
+    assert_eq!(out.normalised, "USDC");
+    assert_eq!(
+        out.classification,
+        Classification::TokenTicker("USDC".into()),
+    );
+}
+
+#[rstest]
+#[case(
+    "https://etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+)]
+#[case(
+    "http://www.etherscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+)]
+#[case(
+    "https://polygonscan.com/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+)]
+#[case(
+    "https://basescan.org/block/21345678",
+    "21345678",
+)]
+#[case(
+    "https://arbiscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+)]
+#[case(
+    "https://optimistic.etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+)]
+fn classify_input_unwraps_block_explorer_urls(#[case] input: &str, #[case] expected: &str) {
+    let out = classify_input(input);
+    assert_eq!(out.normalised, expected);
+}
+
+#[test]
+fn classify_input_url_to_tx_yields_hash32_classification() {
+    let out = classify_input(
+        "https://etherscan.io/tx/0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+    );
+    assert!(matches!(out.classification, Classification::Hash32 { .. }));
+}
+
+#[test]
+fn classify_input_url_to_block_yields_block_number() {
+    let out = classify_input("https://etherscan.io/block/21345678");
+    assert_eq!(
+        out.classification,
+        Classification::BlockNumber(BlockNumber::new(21_345_678)),
+    );
+}
+
+#[test]
+fn classify_input_url_to_address_yields_address() {
+    let out = classify_input(
+        "https://etherscan.io/address/0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    );
+    assert!(matches!(out.classification, Classification::Address { .. }));
+}
+
+#[test]
+fn classify_input_url_to_unknown_path_falls_through_to_free_text() {
+    let out = classify_input("https://etherscan.io/gas-tracker");
+    assert_eq!(out.normalised, "https://etherscan.io/gas-tracker");
+    assert!(matches!(out.classification, Classification::FreeText(_)));
+}
+
+#[test]
+fn classify_input_strips_single_quotes() {
+    let out = classify_input("'vitalik.eth'");
+    assert_eq!(out.normalised, "vitalik.eth");
+    assert_eq!(
+        out.classification,
+        Classification::EnsName("vitalik.eth".into()),
     );
 }
 

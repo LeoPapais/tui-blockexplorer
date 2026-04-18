@@ -82,12 +82,14 @@ where
     /// [`ResolvedEntity::NotFound`] when every plausible lookup came
     /// back empty.
     pub async fn run(&self, input: &str, chain: Chain) -> Result<Vec<ResolvedEntity>, DomainError> {
-        let normalized = input.trim();
-        if normalized.is_empty() {
+        let ClassifiedInput {
+            normalised,
+            classification,
+        } = classify_input(input);
+        if normalised.is_empty() {
             return Err(DomainError::InvalidInput("empty search input".into()));
         }
-
-        let classification = classify(normalized);
+        let normalized = normalised.as_str();
         let mut candidates = Vec::new();
 
         match classification {
@@ -177,6 +179,106 @@ pub enum Classification {
     EnsName(String),
     TokenTicker(String),
     FreeText(String),
+}
+
+/// Pair of the post-normalisation input and its classification.
+///
+/// Normalisation strips surrounding whitespace and one matching pair of
+/// quotes, then unwraps block-explorer URLs so the trailing path
+/// segment becomes the effective input. See `plan/2-search.md`
+/// sections 12.1 and 12.2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedInput {
+    pub normalised: String,
+    pub classification: Classification,
+}
+
+/// Hosts we recognise as block-explorer URLs. Keep this list in sync
+/// with `plan/2-search.md` section 12.2.
+const EXPLORER_HOSTS: &[&str] = &[
+    "etherscan.io",
+    "www.etherscan.io",
+    "sepolia.etherscan.io",
+    "optimistic.etherscan.io",
+    "polygonscan.com",
+    "www.polygonscan.com",
+    "basescan.org",
+    "www.basescan.org",
+    "arbiscan.io",
+    "www.arbiscan.io",
+];
+
+/// Normalise `raw` and classify it. See `plan/2-search.md` §12.1.
+#[must_use]
+pub fn classify_input(raw: &str) -> ClassifiedInput {
+    let trimmed = strip_wrapping_quotes(raw.trim());
+    let unwrapped = unwrap_explorer_url(trimmed).unwrap_or(trimmed);
+    let classification = classify(unwrapped);
+    // Hex inputs are canonicalised to lowercase so the TTL cache
+    // does not treat `0xDEAD…` and `0xdead…` as different keys.
+    let normalised = match &classification {
+        Classification::Hash32 { lower_hex } | Classification::Address { lower_hex } => {
+            lower_hex.clone()
+        }
+        Classification::EnsName(name) => name.clone(),
+        _ => unwrapped.to_string(),
+    };
+    ClassifiedInput {
+        normalised,
+        classification,
+    }
+}
+
+/// Peel off one pair of matching surrounding quotes. Handles ASCII
+/// single / double quotes and the Unicode curly-quote pair.
+fn strip_wrapping_quotes(input: &str) -> &str {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return input;
+    };
+    let last = chars.next_back();
+    let Some(last) = last else {
+        return input;
+    };
+    let matches = matches!(
+        (first, last),
+        ('"', '"') | ('\'', '\'') | ('\u{201C}', '\u{201D}'),
+    );
+    if matches {
+        &input[first.len_utf8()..input.len() - last.len_utf8()]
+    } else {
+        input
+    }
+}
+
+/// Recognise `https?://host/(tx|address|block)/{value}` and return the
+/// trailing value. Returns `None` for anything else.
+fn unwrap_explorer_url(input: &str) -> Option<&str> {
+    let rest = input
+        .strip_prefix("https://")
+        .or_else(|| input.strip_prefix("http://"))?;
+
+    let (host, path) = rest.split_once('/')?;
+    if !EXPLORER_HOSTS
+        .iter()
+        .any(|h| h.eq_ignore_ascii_case(host))
+    {
+        return None;
+    }
+
+    for prefix in ["tx/", "address/", "block/"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            // Trim any trailing query string / fragment / path noise.
+            let end = rest
+                .find(|c: char| c == '/' || c == '?' || c == '#')
+                .unwrap_or(rest.len());
+            let value = &rest[..end];
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// Decide which lookups to run for `input`. `input` must already be
