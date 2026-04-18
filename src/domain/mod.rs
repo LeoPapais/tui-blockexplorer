@@ -28,7 +28,7 @@ pub use address::{Address, AddressOverview};
 pub use block::{Block, BlockHash, BlockId, BlockNumber, BlockSummary};
 pub use chain::Chain;
 pub use contract::{ContractOverview, ProxyInfo, ProxyKind};
-pub use contract_source::ContractAbi;
+pub use contract_source::{ContractAbi, ContractSource, SourceFile};
 pub use errors::DomainError;
 pub use gas::{Gwei, Wei};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};

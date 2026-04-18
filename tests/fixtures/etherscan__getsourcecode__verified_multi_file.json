@@ -1,0 +1,20 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "{{\"language\":\"Solidity\",\"sources\":{\"contracts/Token.sol\":{\"content\":\"contract Token {}\"},\"contracts/Lib.sol\":{\"content\":\"library Lib {}\"}},\"settings\":{\"optimizer\":{\"enabled\":true,\"runs\":200}}}}",
+      "ABI": "[]",
+      "ContractName": "Token",
+      "CompilerVersion": "v0.8.19+commit.7dd6d404",
+      "OptimizationUsed": "1",
+      "Runs": "200",
+      "EVMVersion": "paris",
+      "LicenseType": "MIT License (MIT)",
+      "Library": "",
+      "Proxy": "1",
+      "Implementation": "0xb0b1000000000000000000000000000000000001",
+      "SwarmSource": ""
+    }
+  ]
+}

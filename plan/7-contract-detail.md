@@ -1,11 +1,10 @@
 # 7 — Contract Detail
 
-Status: **done** (MVP scope) — Overview tab with EIP-1967 proxy
-detection is live, the two BDD scenarios in
-`tests/e2e/features/contract_detail.feature` are green. Search
-routes addresses with `kind = Contract` to the new screen. Source /
-ABI / Read / Events / Storage tabs remain deferred pending the
-Etherscan adapter.
+Status: **expanded** — MVP Overview tab with EIP-1967 proxy
+detection shipped earlier; this phase adds the Source, ABI, Read,
+Events and Storage tabs so the screen matches the plan layout.
+The Write tab and decompiler integration stay deferred; see
+section 13.
 
 Inspect and read a smart contract. Tabs in MVP: Overview, Source, ABI, Read, Events,
 Storage. The Write tab is deferred because it requires a signer.
@@ -267,3 +266,114 @@ address (zero slot) and a proxy address (populated slot). Fixtures:
 
 Acceptance: plan flips to `done (MVP)`, plan/README updated,
 cargo clippy clean, all tests green.
+
+## 12.4 Expanded slices (delivered in this iteration)
+
+Three commits add the remaining tabs on top of the MVP Overview.
+
+### 12.4.1 Commit 1 — Source + ABI tabs
+
+Domain extension (`src/domain/contract_source.rs`):
+
+- `ContractSource { is_verified, contract_name, compiler_version,
+  optimizer_enabled, optimizer_runs, evm_version, license, abi,
+  files: Vec<SourceFile>, implementation: Option<Address> }`.
+- `SourceFile { path, content }`.
+- A standalone `parse_etherscan_source_envelope` helper that
+  decodes Etherscan's quirky triple-shape `SourceCode` field: a
+  raw single-file string, a single-level JSON object keyed by
+  file path, or the `{{ ... }}` double-wrapped JSON used for
+  multi-file contracts.
+
+Port extension: `ContractSourcePort` gains
+`get_source(addr, chain) -> Option<ContractSource>` alongside the
+existing `get_abi`. `EtherscanContractSource` adapter implements
+both; unverified contracts surface as `Ok(None)`.
+
+UI: `ContractDetailScreen` grows a tab bar rendered through
+`ratatui::widgets::Tabs` (stable highlight; mirrors the TxDetail
+and AddressDetail styling). Tabs introduced:
+
+- **Source**: file picker on the left (`Up`/`Down` to switch file
+  when multiple are present) + content pane on the right with
+  per-file vertical scroll. Falls back to a short hex dump of the
+  bytecode when the source is unverified.
+- **ABI**: pretty-printed ABI JSON with vertical scroll.
+
+A new `ContractSourceFeed` channel delivers the source payload as
+soon as it arrives, so Overview and proxy detection stay snappy.
+
+### 12.4.2 Commit 2 — Read tab
+
+Domain (`src/domain/contract_read.rs`):
+
+- `AbiParamType` enum covering `Uint { bits }`, `Int { bits }`,
+  `Address`, `Bool`, `String`, `Bytes`, `BytesN(usize)`. Other
+  variants (arrays, tuples, mappings) fall through as
+  `AbiParamType::Unsupported(raw: String)` so the UI can still
+  list the function with a clear reason.
+- `AbiFunction { name, signature, inputs: Vec<AbiParam>, outputs }`,
+  `AbiParam { name, kind }`.
+- `AbiValue` (inputs) and `DecodedValue` (outputs) enums with a
+  matching shape, plus `AbiValue::from_string(kind, raw)` helpers.
+
+Port `ContractReaderPort::call(address, function, args, chain)
+-> Vec<DecodedValue>`, backed by `eth_call` at `"latest"`.
+
+Adapter (`src/adapters/rpc/contract_reader.rs`): a handwritten
+minimal ABI codec. Encoding supports the head-section static types
+listed above plus `string` and `bytes` (dynamic types are written
+after the head as `offset -> length -> padded data`). Decoding
+follows the same grammar. Revert reasons are extracted from the
+standard `Error(string)` revert selector (`0x08c379a0`) and
+surface as `DomainError::ExecutionReverted { reason }`.
+
+UI: Read tab shows a two-pane layout. Left list enumerates every
+`view` / `pure` function parsed from the ABI; right pane edits
+arguments as free-text and displays the last result. Functions
+whose inputs include `Unsupported` types render but refuse
+execution with a one-line message.
+
+BDD:
+- Read tab executes `balanceOf(address)` and renders the decoded
+  u256.
+- Read tab surfaces the revert reason when `eth_call` reverts.
+
+### 12.4.3 Commit 3 — Events + Storage tabs
+
+Ports:
+
+- `EventLogPort::get_logs(address, chain, range, topic0?) ->
+  Vec<LogEntry>` — paginated by block range with a default window
+  of 5,000 blocks.
+- `StoragePort::get_at(address, chain, slot) -> [u8; 32]`.
+
+Alchemy adapters wrap `eth_getLogs` and `eth_getStorageAt`.
+
+UI:
+
+- **Events**: lists the latest N logs for the current contract;
+  topic0 decoding goes through the signature directory when the
+  ABI does not match. `PageUp` / `PageDown` walks the block
+  range.
+- **Storage**: a simple slot input (`0..`, hex or decimal) +
+  a read-out panel with the value in hex, decimal and — when the
+  first 12 bytes are zero — address format.
+
+BDD:
+- Events tab renders decoded log rows.
+- Storage tab reads the requested slot.
+
+## 13. Still deferred (post plan-7 expansion)
+
+- **Write tab**: requires a signer (hardware wallet, browser
+  extension or plaintext key) and is out of scope until we pick a
+  credential strategy.
+- **Decompiler integration** (panoramix / heimdall / etc.) for
+  unverified contracts.
+- Source file syntax highlighting (the current Source tab renders
+  plain text).
+- Storage slot mapping helpers (e.g. resolving `mapping(address
+  => uint)` slot layouts automatically).
+- Historical event streaming with "load older" pagination beyond
+  the current page.

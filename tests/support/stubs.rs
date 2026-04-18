@@ -21,10 +21,10 @@ use blockexplorer_tui::{
     },
     domain::{
         Address, AddressKind, AddressOverview, AssetChange, Block, BlockHash, BlockId,
-        BlockNumber, BlockSummary, Chain, ContractAbi, DomainError, GasSnapshot, Gwei,
-        NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff,
-        TokenHolding, TokenMetadata, TokenOverview, Transaction, TransferCursor,
-        TransferPage, TxHash, TxSummary, Wei,
+        BlockNumber, BlockSummary, Chain, ContractAbi, ContractSource, DomainError,
+        GasSnapshot, Gwei, NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter,
+        ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview, Transaction,
+        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -718,7 +718,8 @@ impl TokenReaderPort for StubTokenReaderPort {
 
 #[derive(Default)]
 struct ContractSourceState {
-    by_address: HashMap<Address, ContractAbi>,
+    abis: HashMap<Address, ContractAbi>,
+    sources: HashMap<Address, ContractSource>,
 }
 
 #[derive(Default, Clone)]
@@ -733,7 +734,12 @@ impl StubContractSourcePort {
 
     pub fn insert(&self, address: Address, abi: ContractAbi) {
         let mut state = self.inner.lock().expect("stub lock poisoned");
-        state.by_address.insert(address, abi);
+        state.abis.insert(address, abi);
+    }
+
+    pub fn insert_source(&self, address: Address, source: ContractSource) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.sources.insert(address, source);
     }
 }
 
@@ -744,7 +750,16 @@ impl ContractSourcePort for StubContractSourcePort {
         _chain: Chain,
     ) -> Result<Option<ContractAbi>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
-        Ok(state.by_address.get(&address).cloned())
+        Ok(state.abis.get(&address).cloned())
+    }
+
+    async fn get_source(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<Option<ContractSource>, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.sources.get(&address).cloned())
     }
 }
 

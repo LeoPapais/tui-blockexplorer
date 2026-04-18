@@ -212,6 +212,7 @@ pub(crate) fn spawn_contract_detail<
     tokio::spawn(async move {
         let blockexplorer_tui::adapters::ui::ContractFeedSender {
             updates_tx,
+            source_tx: _,
             mut input_rx,
         } = sender;
         while let Some(addr) = input_rx.recv().await {

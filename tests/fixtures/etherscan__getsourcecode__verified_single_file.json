@@ -1,0 +1,20 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ncontract Storage {\n  uint256 public value;\n  function set(uint256 v) external { value = v; }\n}\n",
+      "ABI": "[{\"type\":\"function\",\"name\":\"value\",\"inputs\":[],\"outputs\":[{\"type\":\"uint256\"}],\"stateMutability\":\"view\"}]",
+      "ContractName": "Storage",
+      "CompilerVersion": "v0.8.19+commit.7dd6d404",
+      "OptimizationUsed": "1",
+      "Runs": "200",
+      "EVMVersion": "paris",
+      "LicenseType": "MIT License (MIT)",
+      "Library": "",
+      "Proxy": "0",
+      "Implementation": "",
+      "SwarmSource": ""
+    }
+  ]
+}

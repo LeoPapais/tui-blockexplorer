@@ -1,0 +1,20 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "",
+      "ABI": "Contract source code not verified",
+      "ContractName": "",
+      "CompilerVersion": "",
+      "OptimizationUsed": "",
+      "Runs": "",
+      "EVMVersion": "",
+      "LicenseType": "",
+      "Library": "",
+      "Proxy": "0",
+      "Implementation": "",
+      "SwarmSource": ""
+    }
+  ]
+}

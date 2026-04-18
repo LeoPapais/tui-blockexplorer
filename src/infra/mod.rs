@@ -109,7 +109,7 @@ fn live_address_detail_screen(
     ));
 
     let rpc_for_tx = rpc.clone();
-    let etherscan_for_tx = etherscan_key;
+    let etherscan_for_tx = etherscan_key.clone();
     let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
         live_tx_detail_screen(
             chain,
@@ -126,9 +126,15 @@ fn live_address_detail_screen(
         });
 
     let rpc_for_contract = rpc;
+    let etherscan_for_contract = etherscan_key;
     let open_contract: crate::adapters::ui::address_detail::OpenContractFactory =
         Box::new(move |addr| {
-            live_contract_detail_screen(chain, addr, rpc_for_contract.clone())
+            live_contract_detail_screen(
+                chain,
+                addr,
+                rpc_for_contract.clone(),
+                etherscan_for_contract.clone(),
+            )
         });
 
     Box::new(AddressDetailScreen::with_factories(
@@ -141,17 +147,27 @@ fn live_address_detail_screen(
     ))
 }
 
-/// Build a live `ContractDetailScreen` backed by address-reader +
-/// proxy-detection tasks.
+/// Build a live `ContractDetailScreen` backed by address-reader,
+/// proxy-detection and Etherscan source tasks.
 fn live_contract_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
     rpc: RpcClient,
+    etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
     let detector = AlchemyProxyDetector::new(rpc);
+
+    let source = etherscan_key
+        .and_then(|key| EtherscanClient::with_default_http(key).ok())
+        .map(EtherscanContractSource::new)
+        .map(TxContractSource::Etherscan)
+        .unwrap_or(TxContractSource::Noop);
+
     let (feed, sender) = contract_feed();
-    std::mem::drop(contract_feed::spawn(chain, reader, detector, sender));
+    std::mem::drop(contract_feed::spawn(
+        chain, reader, detector, source, sender,
+    ));
     Box::new(ContractDetailScreen::loading(chain, address, feed))
 }
 
@@ -209,6 +225,17 @@ impl crate::application::ports::ContractSourcePort for TxContractSource {
     ) -> Result<Option<crate::domain::ContractAbi>, crate::domain::DomainError> {
         match self {
             TxContractSource::Etherscan(inner) => inner.get_abi(address, chain).await,
+            TxContractSource::Noop => Ok(None),
+        }
+    }
+
+    async fn get_source(
+        &self,
+        address: crate::domain::Address,
+        chain: Chain,
+    ) -> Result<Option<crate::domain::ContractSource>, crate::domain::DomainError> {
+        match self {
+            TxContractSource::Etherscan(inner) => inner.get_source(address, chain).await,
             TxContractSource::Noop => Ok(None),
         }
     }

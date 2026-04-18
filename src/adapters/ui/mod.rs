@@ -26,7 +26,7 @@ pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
 };
 pub use contract_detail::{
-    ContractDetailScreen, ContractFeed, ContractFeedSender, contract_feed,
+    ContractDetailScreen, ContractFeed, ContractFeedSender, ContractTab, contract_feed,
 };
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use gas_tracker::{GasFeed, GasFeedSender, GasTrackerScreen, gas_feed};
