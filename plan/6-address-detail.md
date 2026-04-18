@@ -1,10 +1,9 @@
 # 6 — Address Detail
 
-Status: **done** (MVP scope) — Overview tab is live, the two BDD
-scenarios in `tests/e2e/features/address_detail.feature` are green
-and Search opens a real AddressDetailScreen instead of the
-placeholder. Transactions / Tokens / Activity / Contract / NFTs tabs
-remain deferred (section 11).
+Status: **expanded** — MVP Overview tab shipped earlier and this
+phase adds the Transactions / Tokens / Contract tabs with real
+Alchemy-backed adapters. Activity classification, CSV export and
+approvals-with-revoke stay deferred; see section 13.
 
 Account dossier. Active tabs in MVP: Overview, Transactions, Tokens, Activity, and
 Contract (only when the address has code). The NFTs tab is documented in section 11
@@ -255,3 +254,86 @@ three canned responses per scenario. Fixtures:
 
 Acceptance: plan flipped to `done (MVP)`, clippy clean, all tests
 green.
+
+## 12.4 Expanded slices (delivered in this iteration)
+
+Three commits extend the screen with the remaining MVP-scoped tabs.
+Activity tab and CSV/approvals UX stay deferred (section 13).
+
+### 12.4.1 Commit 1 — Transactions tab
+
+Domain (`src/domain/transfers.rs`):
+
+- `TransferCategory { External, Internal, Erc20, Erc721, Erc1155 }`.
+- `TransferAsset` enum with `Native { symbol }`, `Erc20 { contract,
+  symbol, decimals }`, `Nft { contract, kind: NftKind, token_id }`.
+- `TransferEvent { chain, block_number, tx_hash, from, to: Option,
+  asset, value: Wei, category }`.
+- `TransferPage { events, next_cursor: Option<String> }`.
+
+Port `TransfersPort::get_for_address(addr, chain, cursor) ->
+TransferPage`. The adapter issues two parallel
+`alchemy_getAssetTransfers` calls (one with `fromAddress=addr`,
+one with `toAddress=addr`), merges results by block number
+descending and caps at a sensible maximum. Cursor aggregates both
+pageKeys; MVP ships without "load more" but the cursor is already
+modelled so it can be wired later.
+
+Use case `load_address_transfers` is a thin delegator that maps
+`Ok(None)` to `NotFound`.
+
+UI changes on `AddressDetailScreen`:
+- Tab cycle Overview -> Transactions (-> Tokens -> Contract after
+  commits 2 and 3) rendered through `ratatui::widgets::Tabs` so the
+  bar stays stable (mirrors the TxDetail fix).
+- Transactions tab shows a selectable list: `[category] from -> to
+  value (asset)  block  #idx`. Up/Down move the selection,
+  PageUp/PageDown page by 10, Enter opens the referenced
+  `TxDetailScreen` through the same open-tx factory the BlockDetail
+  already uses.
+
+BDD:
+- Transactions tab renders the returned transfers.
+- Enter on a transfer opens a TxDetail screen.
+
+### 12.4.2 Commit 2 — Tokens tab
+
+Domain: `TokenHolding { metadata: TokenMetadata, balance: Wei }`.
+USD pricing stays deferred.
+
+Port `PortfolioPort::get_token_balances(addr, chain) ->
+Vec<TokenHolding>`, backed by Alchemy's `alchemy_getTokenBalances`
+plus a follow-up `alchemy_getTokenMetadata` for every non-zero
+holding. The adapter caps at the top 20 non-zero holdings to keep
+the metadata fan-out bounded.
+
+UI: Tokens tab lists `symbol  balance  (contract)`. Enter opens a
+TokenDetail screen via a new open_token factory.
+
+BDD:
+- Tokens tab renders the portfolio.
+- Empty portfolio shows an empty-state message.
+
+### 12.4.3 Commit 3 — Contract tab + overview enrichment
+
+When `AddressOverview.kind == Contract` the tab bar gains a
+Contract entry. Pressing Enter on that tab pushes a
+`ContractDetailScreen` for the same address, reusing the
+existing plan-7 infrastructure. EOAs simply do not see the tab.
+
+Overview body grows a short status line summarising the loaded
+data (e.g. `Txs loaded: 42   Tokens loaded: 7`) so the Overview
+is not just a static four-line block anymore.
+
+## 13. Still deferred (post plan-6 expansion)
+
+- Activity classification (Send / Receive / Approval / Swap / Mint
+  / Burn / ContractCreation / Other) — needs the full ABI decoder
+  and heuristics over the transfers + logs stream.
+- CSV export (`e` binding) of the currently-filtered transfers.
+- Category filter modal (`f` binding) — the Transactions tab
+  currently merges every category; filtering UI lands later.
+- Token USD pricing / portfolio charts.
+- Approvals list with "revoke" action.
+- Historical balance chart.
+- NFTs tab.

@@ -9,7 +9,7 @@ use std::fmt;
 use blockexplorer_tui::{
     adapters::ui::ScreenStack,
     application::HomeSession,
-    domain::{Chain, TxHash},
+    domain::{Address, Chain, TxHash},
 };
 use cucumber::World;
 
@@ -17,8 +17,9 @@ use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractSourcePort, StubEnsResolverPort, StubGasOraclePort,
     StubNetworkStatusPort, StubPendingTxStreamPort, StubProxyDetectionPort,
-    StubSignatureDirectoryPort, StubTokenReaderPort, StubTokenSearchPort, StubTxLookupPort,
-    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubSignatureDirectoryPort, StubTokenReaderPort, StubTokenSearchPort,
+    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort,
+    StubTxTracePort,
 };
 
 pub type AppHomeSession =
@@ -68,6 +69,15 @@ pub struct AppWorld {
 
     /// Address-detail stub.
     pub address_reader_stub: StubAddressReaderPort,
+
+    /// Unified transfers stub feeding the Transactions tab.
+    pub transfers_stub: StubTransfersPort,
+
+    /// Address captured by the latest "the transfers feed knows ..."
+    /// step. Currently unused beyond bookkeeping but handy for
+    /// follow-up Givens that attach more data without repeating the
+    /// address.
+    pub last_address: Option<Address>,
 
     /// Contract-detail proxy stub.
     pub proxy_detector_stub: StubProxyDetectionPort,

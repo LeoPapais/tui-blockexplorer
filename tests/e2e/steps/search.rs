@@ -260,6 +260,7 @@ pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
         let blockexplorer_tui::adapters::ui::AddressFeedSender {
             updates_tx,
             mut input_rx,
+            transfers_tx: _,
         } = sender;
         while let Some(addr) = input_rx.recv().await {
             if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
@@ -270,6 +271,66 @@ pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
         }
     });
     Box::new(AddressDetailScreen::loading(chain, address, feed))
+}
+
+/// Address-detail spawner used by the Transactions-tab scenarios.
+/// Reuses the real [`infra::address_feed::spawn`] wiring, so the
+/// transfers stream also populates from the stub `TransfersPort`.
+/// Wires Enter-on-a-transfer to open a TxDetail screen through the
+/// supplied tx reader stub.
+#[allow(dead_code)]
+pub(crate) fn spawn_address_detail_with_transfers<
+    R: AddressReaderPort + Clone + 'static,
+    T: blockexplorer_tui::application::ports::TransfersPort + Clone + 'static,
+    Tx: TxReaderPort + Clone + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    reader: R,
+    transfers: T,
+    tx_reader: Tx,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    use blockexplorer_tui::adapters::ui::{AddressFeedSender, address_detail::OpenTxFactory};
+    let (feed, sender) = address_feed();
+    let reader_for_task = reader.clone();
+    let transfers_for_task = transfers.clone();
+    tokio::spawn(async move {
+        let AddressFeedSender {
+            updates_tx,
+            transfers_tx,
+            mut input_rx,
+        } = sender;
+        while let Some(addr) = input_rx.recv().await {
+            let (ov, page) = tokio::join!(
+                reader_for_task.get(addr, chain),
+                transfers_for_task.get_for_address(addr, chain, None),
+            );
+            if let Ok(Some(ov)) = ov
+                && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+            if let Ok(page) = page
+                && transfers_tx.send(page).is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    let tx_reader_for_open = tx_reader.clone();
+    let open_tx: OpenTxFactory = Box::new(move |hash| {
+        spawn_tx_detail(chain, hash, tx_reader_for_open.clone())
+    });
+
+    Box::new(
+        blockexplorer_tui::adapters::ui::AddressDetailScreen::with_open_tx(
+            chain,
+            address,
+            feed,
+            Some(open_tx),
+        ),
+    )
 }
 
 pub(crate) fn spawn_tx_detail<R: TxReaderPort + Clone + 'static>(

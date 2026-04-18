@@ -16,14 +16,15 @@ use blockexplorer_tui::{
         AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockReaderPort,
         ChainRegistryPort, ContractSourcePort, EnsResolverPort, GasOraclePort,
         NetworkStatusPort, PendingTxStreamPort, ProxyDetectionPort,
-        SignatureDirectoryPort, TokenReaderPort, TokenSearchPort, TxLookupPort,
-        TxReaderPort, TxSimulationPort, TxTracePort,
+        SignatureDirectoryPort, TokenReaderPort, TokenSearchPort, TransfersPort,
+        TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
     },
     domain::{
         Address, AddressKind, AddressOverview, AssetChange, Block, BlockHash, BlockId,
         BlockNumber, BlockSummary, Chain, ContractAbi, DomainError, GasSnapshot, Gwei,
         NetworkStatus, PendingTx, PendingTxEvent, PendingTxFilter, ProxyInfo, StateDiff,
-        TokenMetadata, TokenOverview, Transaction, TxHash, TxSummary, Wei,
+        TokenMetadata, TokenOverview, Transaction, TransferCursor, TransferPage, TxHash,
+        TxSummary, Wei,
     },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -883,5 +884,42 @@ impl TxTracePort for StubTxTracePort {
             return Err(DomainError::FeatureUnavailable);
         }
         Ok(state.by_hash.get(&hash).cloned().unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TransfersPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct TransfersState {
+    by_address: HashMap<Address, TransferPage>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTransfersPort {
+    inner: Arc<Mutex<TransfersState>>,
+}
+
+impl StubTransfersPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_page(&self, address: Address, page: TransferPage) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, page);
+    }
+}
+
+impl TransfersPort for StubTransfersPort {
+    async fn get_for_address(
+        &self,
+        address: Address,
+        _chain: Chain,
+        _cursor: Option<TransferCursor>,
+    ) -> Result<TransferPage, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state.by_address.get(&address).cloned().unwrap_or_default())
     }
 }

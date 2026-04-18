@@ -18,6 +18,7 @@ pub mod network_status;
 pub mod search;
 pub mod timestamp;
 pub mod token;
+pub mod transfers;
 pub mod tx;
 pub mod tx_simulation;
 pub mod tx_trace;
@@ -34,6 +35,9 @@ pub use network_status::{GasSnapshot, NetworkStatus};
 pub use search::{AddressKind, ResolvedEntity};
 pub use timestamp::UnixTimestamp;
 pub use token::{TokenMetadata, TokenOverview};
+pub use transfers::{
+    NftKind, TransferAsset, TransferCategory, TransferCursor, TransferEvent, TransferPage,
+};
 pub use tx::{LogEntry, Transaction, TxHash, TxStatus, TxSummary, TxType};
 pub use tx_simulation::{AssetChange, AssetChangeKind, AssetKind};
 pub use tx_trace::{AddressStateDiff, DiffChange, StateDiff, StorageSlotDiff};

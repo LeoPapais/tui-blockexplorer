@@ -1,30 +1,49 @@
-//! Address Detail screen (MVP: Overview tab only).
+//! Address Detail screen.
 //!
-//! See `plan/6-address-detail.md` section 12.3. Transactions / Tokens
-//! / Activity / Contract tabs wait for their respective adapters.
+//! Renders Overview + Transactions tabs today; Tokens and Contract
+//! tabs land in the follow-up commits of the plan-6 expansion
+//! (`plan/6-address-detail.md` section 12.4).
+//!
+//! Overview summarises balance + kind + nonce + ENS hint. The
+//! Transactions tab consumes a `TransferPage` fed by a background
+//! task and exposes a selectable list; pressing Enter on a row
+//! pushes a TxDetail screen through the supplied `OpenTxFactory`.
+
+use std::any::Any;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    style::{Color, Modifier, Style},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
-    domain::{Address, AddressKind, AddressOverview, Chain},
+    domain::{
+        Address, AddressKind, AddressOverview, Chain, TransferAsset, TransferEvent,
+        TransferPage, TxHash,
+    },
 };
+
+// ---------------------------------------------------------------------------
+// Channels
+// ---------------------------------------------------------------------------
 
 /// Channel half owned by the screen.
 pub struct AddressFeed {
     pub input_tx: UnboundedSender<Address>,
     pub updates_rx: UnboundedReceiver<AddressOverview>,
+    pub transfers_rx: UnboundedReceiver<TransferPage>,
 }
 
-/// Channel half owned by the resolver task.
+/// Channel half owned by the background tasks.
 pub struct AddressFeedSender {
     pub updates_tx: UnboundedSender<AddressOverview>,
+    pub transfers_tx: UnboundedSender<TransferPage>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -32,34 +51,104 @@ pub struct AddressFeedSender {
 pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
     let (input_tx, input_rx) = unbounded_channel();
     let (updates_tx, updates_rx) = unbounded_channel();
+    let (transfers_tx, transfers_rx) = unbounded_channel();
     (
         AddressFeed {
             input_tx,
             updates_rx,
+            transfers_rx,
         },
         AddressFeedSender {
             updates_tx,
+            transfers_tx,
             input_rx,
         },
     )
 }
 
+/// Factory used by the Transactions tab to spawn a TxDetail screen
+/// when the user presses Enter on a row.
+pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressTab {
+    Overview,
+    Transactions,
+}
+
+impl AddressTab {
+    const ALL: [AddressTab; 2] = [AddressTab::Overview, AddressTab::Transactions];
+
+    fn next(self) -> Self {
+        let idx = self.index();
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    fn index(self) -> usize {
+        match self {
+            AddressTab::Overview => 0,
+            AddressTab::Transactions => 1,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            AddressTab::Overview => "Overview",
+            AddressTab::Transactions => "Transactions",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
+
 pub struct AddressDetailScreen {
     #[allow(dead_code)]
     chain: Chain,
     current: Option<AddressOverview>,
+    transfers: Option<TransferPage>,
     feed: AddressFeed,
+    active_tab: AddressTab,
+    scroll: u16,
+    list_state: ListState,
+    open_tx: Option<OpenTxFactory>,
 }
 
 impl AddressDetailScreen {
-    /// Build a screen in the loading state for `address`.
+    /// Build a screen in the loading state for `address`. The address
+    /// is pushed through the input channel so the background task
+    /// starts fetching immediately.
     #[must_use]
     pub fn loading(chain: Chain, address: Address, feed: AddressFeed) -> Self {
+        Self::with_open_tx(chain, address, feed, None)
+    }
+
+    /// Same as [`loading`] but wires the Transactions tab to open a
+    /// TxDetail screen when the user hits Enter on a row.
+    #[must_use]
+    pub fn with_open_tx(
+        chain: Chain,
+        address: Address,
+        feed: AddressFeed,
+        open_tx: Option<OpenTxFactory>,
+    ) -> Self {
         let _ = feed.input_tx.send(address);
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
         Self {
             chain,
             current: None,
+            transfers: None,
             feed,
+            active_tab: AddressTab::Overview,
+            scroll: 0,
+            list_state,
+            open_tx,
         }
     }
 
@@ -68,12 +157,65 @@ impl AddressDetailScreen {
         self.current.as_ref()
     }
 
+    #[must_use]
+    pub fn transfers(&self) -> Option<&TransferPage> {
+        self.transfers.as_ref()
+    }
+
+    #[must_use]
+    pub fn active_tab(&self) -> AddressTab {
+        self.active_tab
+    }
+
+    /// Current selection index in the Transactions list, clamped to
+    /// the available events. Returns 0 when the list is empty.
+    #[must_use]
+    pub fn selected(&self) -> usize {
+        self.list_state.selected().unwrap_or(0)
+    }
+
     fn drain_feed(&mut self) {
         while let Ok(update) = self.feed.updates_rx.try_recv() {
             self.current = Some(update);
         }
+        while let Ok(page) = self.feed.transfers_rx.try_recv() {
+            self.transfers = Some(page);
+            self.clamp_selection();
+        }
+    }
+
+    fn clamp_selection(&mut self) {
+        let len = self
+            .transfers
+            .as_ref()
+            .map(|p| p.events.len())
+            .unwrap_or(0);
+        if len == 0 {
+            self.list_state.select(None);
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0);
+        self.list_state.select(Some(current.min(len - 1)));
+    }
+
+    fn select_delta(&mut self, delta: i32) {
+        let len = self
+            .transfers
+            .as_ref()
+            .map(|p| p.events.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, len as i32 - 1);
+        self.list_state.select(Some(next as usize));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Screen impl
+// ---------------------------------------------------------------------------
 
 impl Screen for AddressDetailScreen {
     fn title(&self) -> &str {
@@ -83,9 +225,14 @@ impl Screen for AddressDetailScreen {
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(3),
+            ])
             .split(area);
 
+        // Header
         let header = match self.current.as_ref() {
             Some(ov) => format!(
                 "Address {addr}{ens}",
@@ -104,42 +251,145 @@ impl Screen for AddressDetailScreen {
             chunks[0],
         );
 
-        match self.current.as_ref() {
-            Some(ov) => {
-                let kind = match ov.kind {
-                    AddressKind::Eoa => "EOA",
-                    AddressKind::Contract => "Contract",
-                };
-                let body = format!(
-                    "Address     {addr}\n\
-Kind        {kind}\n\
-Balance     {balance} wei\n\
-Nonce       {nonce}",
-                    addr = ov.address.to_hex(),
-                    kind = kind,
-                    balance = ov.balance.value(),
-                    nonce = ov.nonce,
-                );
+        // Tab bar
+        let titles: Vec<Line<'static>> = AddressTab::ALL
+            .iter()
+            .map(|t| Line::from(format!(" {} ", t.label())))
+            .collect();
+        frame.render_widget(
+            Tabs::new(titles)
+                .select(self.active_tab.index())
+                .block(Block::default().borders(Borders::ALL).title("Tabs"))
+                .divider(" ")
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238))
+                        .fg(Color::White),
+                ),
+            chunks[1],
+        );
+
+        // Body
+        match self.active_tab {
+            AddressTab::Overview => {
+                let body = overview_body(self.current.as_ref(), self.transfers.as_ref());
                 frame.render_widget(
                     Paragraph::new(body)
                         .wrap(Wrap { trim: false })
+                        .scroll((self.scroll, 0))
                         .block(Block::default().borders(Borders::ALL).title("Overview")),
-                    chunks[1],
+                    chunks[2],
                 );
             }
-            None => frame.render_widget(
-                Paragraph::new("Loading...").block(
-                    Block::default().borders(Borders::ALL).title("Overview"),
-                ),
-                chunks[1],
-            ),
+            AddressTab::Transactions => {
+                let block = Block::default().borders(Borders::ALL).title("Transactions");
+                match self.transfers.as_ref() {
+                    None => frame.render_widget(
+                        Paragraph::new("Loading transactions...").block(block),
+                        chunks[2],
+                    ),
+                    Some(page) if page.events.is_empty() => frame.render_widget(
+                        Paragraph::new("No transfers found for this address.").block(block),
+                        chunks[2],
+                    ),
+                    Some(page) => {
+                        let items: Vec<ListItem> = page
+                            .events
+                            .iter()
+                            .map(|event| ListItem::new(render_transfer_row(event)))
+                            .collect();
+                        let mut state = self.list_state;
+                        frame.render_stateful_widget(
+                            List::new(items)
+                                .block(block)
+                                .highlight_style(
+                                    Style::default()
+                                        .add_modifier(Modifier::BOLD)
+                                        .bg(Color::Indexed(238)),
+                                )
+                                .highlight_symbol("> "),
+                            chunks[2],
+                            &mut state,
+                        );
+                    }
+                }
+            }
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
-        match key.code {
-            KeyCode::Char('q') => Command::Quit,
-            KeyCode::Esc => Command::Pop,
+        match (self.active_tab, key.code) {
+            (_, KeyCode::Char('q')) => Command::Quit,
+            (_, KeyCode::Esc) => Command::Pop,
+            (_, KeyCode::Tab | KeyCode::BackTab) => {
+                self.active_tab = self.active_tab.next();
+                self.scroll = 0;
+                Command::None
+            }
+
+            // Overview scroll
+            (AddressTab::Overview, KeyCode::Up | KeyCode::Char('k')) => {
+                self.scroll = self.scroll.saturating_sub(1);
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::Down | KeyCode::Char('j')) => {
+                self.scroll = self.scroll.saturating_add(1);
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::PageUp) => {
+                self.scroll = self.scroll.saturating_sub(10);
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::PageDown) => {
+                self.scroll = self.scroll.saturating_add(10);
+                Command::None
+            }
+            (AddressTab::Overview, KeyCode::Home) => {
+                self.scroll = 0;
+                Command::None
+            }
+
+            // Transactions selection
+            (AddressTab::Transactions, KeyCode::Up | KeyCode::Char('k')) => {
+                self.select_delta(-1);
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::Down | KeyCode::Char('j')) => {
+                self.select_delta(1);
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::PageUp) => {
+                self.select_delta(-10);
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::PageDown) => {
+                self.select_delta(10);
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::Home) => {
+                self.list_state.select(Some(0));
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::End) => {
+                if let Some(page) = self.transfers.as_ref()
+                    && !page.events.is_empty()
+                {
+                    self.list_state.select(Some(page.events.len() - 1));
+                }
+                Command::None
+            }
+            (AddressTab::Transactions, KeyCode::Enter) => {
+                let hash = self
+                    .transfers
+                    .as_ref()
+                    .and_then(|p| p.events.get(self.selected()))
+                    .map(|e| e.tx_hash);
+                match (hash, self.open_tx.as_ref()) {
+                    (Some(hash), Some(factory)) => Command::Push(factory(hash)),
+                    _ => Command::None,
+                }
+            }
             _ => Command::None,
         }
     }
@@ -149,11 +399,96 @@ Nonce       {nonce}",
         Command::None
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+// ---------------------------------------------------------------------------
+// Render helpers
+// ---------------------------------------------------------------------------
+
+fn overview_body(overview: Option<&AddressOverview>, transfers: Option<&TransferPage>) -> String {
+    match overview {
+        None => "Loading...".to_string(),
+        Some(ov) => {
+            let kind = match ov.kind {
+                AddressKind::Eoa => "EOA",
+                AddressKind::Contract => "Contract",
+            };
+            let tx_count = transfers
+                .map(|p| p.events.len())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "loading...".to_string());
+            format!(
+                "Address     {addr}\n\
+Kind        {kind}\n\
+Balance     {balance} wei\n\
+Nonce       {nonce}\n\
+\n\
+Txs loaded  {tx_count}\n\
+\n\
+[Tab] cycle tabs    [Enter] open selection    [Esc] back",
+                addr = ov.address.to_hex(),
+                kind = kind,
+                balance = ov.balance.value(),
+                nonce = ov.nonce,
+                tx_count = tx_count,
+            )
+        }
+    }
+}
+
+fn render_transfer_row(event: &TransferEvent) -> String {
+    let cat = event.category.label();
+    let from = short_addr(event.from.to_hex().as_str());
+    let to = event
+        .to
+        .map(|a| short_addr(a.to_hex().as_str()))
+        .unwrap_or_else(|| "(create)".to_string());
+    let amount = format_amount(event);
+    let block = event.block_number.value();
+    format!(
+        "[{cat:>7}] #{block:<10}  {from} -> {to}  {amount}",
+        cat = cat,
+        block = block,
+        from = from,
+        to = to,
+        amount = amount,
+    )
+}
+
+fn format_amount(event: &TransferEvent) -> String {
+    let symbol = event.asset.symbol();
+    match &event.asset {
+        TransferAsset::Native { .. } => {
+            format!("{value} wei {symbol}", value = event.value.value())
+        }
+        TransferAsset::Erc20 { decimals, .. } => {
+            format!(
+                "{v} {symbol}  (raw 0x{raw:x}, d={decimals})",
+                v = event.value.value(),
+                raw = event.value.value(),
+                decimals = decimals,
+            )
+        }
+        TransferAsset::Nft { token_id, kind, .. } => {
+            let kind_label = match kind {
+                crate::domain::NftKind::Erc721 => "721",
+                crate::domain::NftKind::Erc1155 => "1155",
+            };
+            format!("{symbol} #{token_id} ({kind_label})")
+        }
+    }
+}
+
+fn short_addr(s: &str) -> String {
+    if s.len() <= 12 {
+        return s.to_string();
+    }
+    format!("{}...{}", &s[..6], &s[s.len() - 4..])
 }

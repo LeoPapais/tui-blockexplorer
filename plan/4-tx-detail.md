@@ -427,3 +427,8 @@ BDD additions:
 3. `s` re-simulate key on pending txs: the pending screen renders
    correctly but the key is bound to a no-op until the simulation
    path is extended to re-run against the latest block on demand.
+4. In the overview tab, show the function called, the parameters
+   passed, and the snippet of the implementation of the evoked
+   funtion
+5. the "asset changes" tab should show ERC20 transfers and native
+    tokens transfers.

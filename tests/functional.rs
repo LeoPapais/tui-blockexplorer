@@ -87,3 +87,9 @@ mod alchemy_tx_simulation;
 
 #[path = "functional/alchemy_tx_trace.rs"]
 mod alchemy_tx_trace;
+
+#[path = "functional/load_address_transfers.rs"]
+mod load_address_transfers;
+
+#[path = "functional/alchemy_transfers.rs"]
+mod alchemy_transfers;

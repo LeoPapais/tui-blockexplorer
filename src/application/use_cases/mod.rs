@@ -3,6 +3,7 @@
 //! Each file mirrors a use case named in a plan file under `plan/`.
 
 pub mod load_address_overview;
+pub mod load_address_transfers;
 pub mod load_block_overview;
 pub mod load_contract_overview;
 pub mod load_token_overview;

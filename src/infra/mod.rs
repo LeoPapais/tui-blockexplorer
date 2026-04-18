@@ -31,8 +31,8 @@ use crate::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup,
             AlchemyBlockReader, AlchemyEnsResolver, AlchemyGasOracleAdapter,
             AlchemyNetworkStatusAdapter, AlchemyProxyDetector, AlchemySimulation,
-            AlchemyTokenReader, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer,
-            RpcClient,
+            AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
+            AlchemyTxTracer, RpcClient,
         },
         signatures::SourcifySignatureDirectory,
         ui::{
@@ -91,17 +91,36 @@ fn live_tx_detail_screen(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
-/// Build a live `AddressDetailScreen` backed by a dedicated
-/// Alchemy address-reader task.
+/// Build a live `AddressDetailScreen` backed by address-reader +
+/// transfers tasks, and wire the Transactions tab to open TxDetail.
 fn live_address_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
     rpc: RpcClient,
+    etherscan_key: Option<String>,
 ) -> Box<dyn Screen> {
-    let reader = AlchemyAddressReader::new(rpc);
+    let reader = AlchemyAddressReader::new(rpc.clone());
+    let transfers = AlchemyTransfers::new(rpc.clone());
     let (feed, sender) = address_feed();
-    std::mem::drop(address_feed::spawn(chain, reader, sender));
-    Box::new(AddressDetailScreen::loading(chain, address, feed))
+    std::mem::drop(address_feed::spawn(chain, reader, transfers, sender));
+
+    let rpc_for_tx = rpc;
+    let etherscan_for_tx = etherscan_key;
+    let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
+        live_tx_detail_screen(
+            chain,
+            hash,
+            rpc_for_tx.clone(),
+            etherscan_for_tx.clone(),
+        )
+    });
+
+    Box::new(AddressDetailScreen::with_open_tx(
+        chain,
+        address,
+        feed,
+        Some(open_tx),
+    ))
 }
 
 /// Build a live `ContractDetailScreen` backed by address-reader +
@@ -325,9 +344,12 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                             AddressKind::Contract => {
                                 live_contract_detail_screen(chain, address, rpc.clone())
                             }
-                            AddressKind::Eoa => {
-                                live_address_detail_screen(chain, address, rpc.clone())
-                            }
+                            AddressKind::Eoa => live_address_detail_screen(
+                                chain,
+                                address,
+                                rpc.clone(),
+                                etherscan_key.clone(),
+                            ),
                         },
                         ResolvedEntity::Token(meta) => {
                             live_token_detail_screen(chain, meta.address, rpc.clone())

@@ -19,7 +19,7 @@ pub mod token_detail;
 pub mod tx_detail;
 
 pub use address_detail::{
-    AddressDetailScreen, AddressFeed, AddressFeedSender, address_feed,
+    AddressDetailScreen, AddressFeed, AddressFeedSender, AddressTab, address_feed,
 };
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,

@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "transfers": [
+      {
+        "blockNum": "0x1406f20",
+        "uniqueId": "0xccc:log:2",
+        "hash": "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc",
+        "from": "0x0000000000000000000000000000000000000077",
+        "to": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "value": 0.01,
+        "erc721TokenId": null,
+        "erc1155Metadata": null,
+        "tokenId": null,
+        "asset": "ETH",
+        "category": "external",
+        "rawContract": {
+          "value": "0x2386f26fc10000",
+          "address": null,
+          "decimal": "0x12"
+        }
+      }
+    ],
+    "pageKey": null
+  }
+}
