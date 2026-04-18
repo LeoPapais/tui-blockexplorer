@@ -52,6 +52,13 @@ offered as an additional candidate.
 | `^[A-Z]{2,10}$`                           | Token ticker (local list)     |
 | Any other non-empty string                | Token or contract name search |
 
+Normalisation is applied before classification (see section 12.1):
+
+- `trim_matches(|c| c.is_whitespace() || c == '"' || c == '\'')`.
+- Lowercase every ASCII hex body (preserves ticker casing).
+- Recognise Etherscan-style block-explorer URLs and extract the trailing
+  path segment as the effective input (see section 12.2).
+
 ## 4. Use case: `ResolveQuery`
 
 ### 4.1 Signature
@@ -162,10 +169,15 @@ Feature: Universal search
 
 ## 9. Open questions
 
-- Should we cache resolution results across opens of the modal? Yes, with a 60s TTL
-  per (chain, input). Implemented in `CacheAdapter`.
-- Should we support pasting a full URL (for example an etherscan.io link)? Out of
-  scope for MVP, easy to add as another classification rule later.
+- Should we cache resolution results across opens of the modal? **Yes, 60 s
+  TTL keyed by `(Chain, normalised_input)`. Shipped in section 12 via the
+  new `TtlCache` adapter under `src/adapters/cache/memory.rs`.**
+- Should we support pasting a full URL (for example an etherscan.io link)?
+  **Yes. `classify_input` now recognises `https?://(www\.)?(etherscan.io|
+  polygonscan.com|basescan.org|arbiscan.io|optimistic.etherscan.io|
+  sepolia.etherscan.io)/(tx|address|block)/{value}` and unwraps the path
+  segment before applying the classification table from section 3. See
+  section 12.2.**
 
 ## 10. Implementation plan
 
@@ -226,7 +238,7 @@ Tests (`tests/functional/resolve_query.rs`):
 No UI or HTTP yet. Acceptance: `cargo test --test functional resolve_query`
 green, `cargo clippy --all-targets -- -D warnings` clean.
 
-### 10.2 Slice B — Alchemy adapters
+### 10.2 Slice B — Alchemy + Etherscan adapters
 
 Extend `src/adapters/rpc/` with four new adapters sharing the existing
 `RpcClient`:
@@ -238,9 +250,33 @@ Extend `src/adapters/rpc/` with four new adapters sharing the existing
   `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e` via `eth_call`. Forward uses
   `resolver(node)` + `addr(node)`; reverse uses the reverse-resolver dance.
 
-`TokenSearchPort` stays stub-only in this slice because it depends on the
-Etherscan V2 adapter that has not been written yet (scheduled for later
-phases).
+`TokenSearchPort` is now backed by `EtherscanTokenSearch` under
+`src/adapters/etherscan/token_search.rs`:
+
+- `by_symbol(ticker, chain)` consults a static ticker table
+  (`src/adapters/etherscan/tickers.rs`) indexed by `(Chain,
+  ticker_lowercase) -> Address`. The table is seeded with the
+  top-of-mind ERC-20s per MVP chain (USDC, USDT, DAI, WETH, WBTC,
+  …). On a hit the adapter issues `contract/getsourcecode` to
+  enrich the entry with `ContractName`; `decimals` defaults to the
+  ERC-20 canonical of 6/18 depending on the curated entry. No
+  network call fires when the ticker misses the table.
+- `by_name(text, chain)` takes the same table and performs a
+  case-insensitive `contains` against the curated names, returning
+  every match. No HTTP is issued here.
+- When the query looks like an `Address`, the port delegates to
+  `contract/getsourcecode` to surface the verified contract name;
+  the result is promoted into a `TokenMetadata` only if
+  `ContractName` is present (otherwise `Vec::new()`).
+
+The curated ticker file lives under
+`src/adapters/etherscan/tickers.rs` as a `const` array — no
+secrets, no live market data. Adding / editing tokens is a code
+change by design; see `plan/15-backlog.md` §8.3.
+
+When `ETHERSCAN_API_KEY` is missing the composition root keeps
+falling back to the `NoopTokenSearch` so the ticker path simply
+returns no candidates.
 
 Tests live under `tests/functional/alchemy_{tx,block,address,ens}_lookup.rs`
 using wiremock the same way the Home adapters do. New fixtures:
@@ -370,3 +406,153 @@ alongside the other five ports. The BDD step helper in
 `tests/e2e/steps/search.rs::build_search_factory` now invokes the
 production `search_feed::spawn` directly so the BDD coverage
 exercises the same code path as live.
+
+## 12. Input hygiene and resolution cache
+
+Follow-up slice (shipped with the §8.3 backlog work — see
+`plan/15-backlog.md`). Folds together three deferred concerns:
+URL paste, input normalisation, and a TTL cache for resolved
+candidate lists.
+
+### 12.1 `classify_input` — dedicated normalisation helper
+
+`ResolveQuery::run` and `search_feed::spawn` both call a new pure
+helper `classify_input(raw: &str) -> ClassifiedInput` declared
+next to `classify` in
+`src/application/use_cases/resolve_query.rs`. The returned struct
+carries the normalised input and a `Classification` value:
+
+```rust
+pub struct ClassifiedInput {
+    pub normalised: String,
+    pub classification: Classification,
+}
+```
+
+The helper:
+
+1. Strips leading / trailing whitespace.
+2. Strips one pair of matching quotes (`"…"`, `'…'` or the
+   curly-quote pair `"…"`) from the outside.
+3. Unwraps a block-explorer URL when one is pasted (see 12.2).
+4. Lowercases the hex body of `0x…` inputs (preserves ticker
+   casing).
+5. Dispatches to the existing `classify` table for the final
+   classification.
+
+The search feed uses `classified.normalised` as the cache key so
+`0xDEAD…` and `0xdead…` share a single cache slot.
+
+### 12.2 URL paste support
+
+`classify_input` recognises paths of the shape `/tx/{value}`,
+`/address/{value}` or `/block/{value}` under the following hosts:
+
+- `etherscan.io` (+ `www.etherscan.io`, `sepolia.etherscan.io`,
+  `optimistic.etherscan.io`).
+- `polygonscan.com`, `basescan.org`, `arbiscan.io`.
+
+When the URL matches, the trailing value becomes the effective
+input before the classification table runs. Other URLs are treated
+as free text (they will fall through to `FreeText` and produce
+`NotFound`, which is acceptable).
+
+URL chain hints (`polygonscan.com` → `Chain::Polygon`, etc.) are
+**not** consumed by `ResolveQuery` — the active chain stays
+whatever the user selected in Settings. The rule is documented
+here and revisited if users ask for automatic chain switching.
+
+### 12.3 `TtlCache` adapter
+
+`src/adapters/cache/memory.rs` introduces a generic, thread-safe,
+in-memory TTL cache:
+
+```rust
+pub struct TtlCache<K, V, C: Clock = SystemClock> { ... }
+
+impl<K, V, C: Clock> TtlCache<K, V, C>
+where
+    K: Hash + Eq + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+    C: Clock + Send + Sync + 'static,
+{
+    pub fn with_ttl_and_clock(ttl: Duration, clock: C) -> Self;
+    pub fn get(&self, key: &K) -> Option<V>;
+    pub fn insert(&self, key: K, value: V);
+}
+```
+
+Internals: `tokio::sync::RwLock<HashMap<K, (V, Instant)>>`. On
+`get`, expired entries are removed opportunistically. Time comes
+from the injected `Clock` port (12.5); tests use
+`FrozenClock::advance` to step past the TTL.
+
+This adapter is cross-cutting: search uses it with
+`Key = (Chain, String)` and `Value = Vec<ResolvedEntity>`; future
+consumers (ENS 5 min, Etherscan ABI, Alchemy prices) will re-use
+the same type. Resets are a drop: `TtlCache` implements `Clone`
+(cheap `Arc` clone) so the composition root can share a single
+instance across screens.
+
+### 12.4 Search TTL cache wiring
+
+`search_feed::spawn` now accepts an optional
+`Arc<TtlCache<(Chain, String), Vec<ResolvedEntity>>>`:
+
+- On input: look up `(chain, normalised)` in the cache. On hit
+  publish a single update with the cached list and skip the
+  ERC-20 probe (the probe result, when applicable, was cached at
+  the previous run).
+- On miss: call `ResolveQuery::run`, publish the base update,
+  run the ERC-20 probe, publish the enriched update, then
+  `cache.insert((chain, normalised), enriched.clone())`. A
+  missing ERC-20 probe result caches the base list, so a repeat
+  search within 60 s still avoids the network.
+
+The cache is bypassed when `NotFound` is the only row (so a
+transient network hiccup is not sticky for the full TTL).
+
+### 12.5 `Clock` port
+
+`src/application/ports/clock.rs` declares a minimal `Clock` trait
+with a single method `now(&self) -> Instant`. Adapters:
+
+- `SystemClock` in `src/adapters/clock.rs` — `Instant::now()`.
+- `FrozenClock` in `tests/support/stubs.rs` — holds a
+  `Mutex<Instant>`; `advance(Duration)` moves it forward.
+
+This covers the deferred work listed in `plan/15-backlog.md`
+§8.12 for Clock + `FrozenClock`.
+
+### 12.6 Tests
+
+- Unit: `classify_input` rstest table under
+  `tests/functional/resolve_query.rs` — trimming, surrounding
+  quotes, uppercase hex, URL paste per supported host, garbage
+  URL falling through to FreeText.
+- Functional: `tests/functional/ttl_cache.rs` — hit within TTL,
+  expiry after `clock.advance(ttl + 1s)`, concurrent reads do
+  not deadlock, insert overwrites the timestamp.
+- BDD: `tests/e2e/features/search.feature` gets:
+  - `Scenario: Paste an Etherscan tx URL` — the trailing hash
+    resolves as a transaction.
+  - `Scenario: Paste an Etherscan address URL`.
+  - `Scenario: Paste an Etherscan block URL`.
+  - `Scenario: Repeated search within 60 s reuses the cache`
+    — asserts on a recording block-lookup stub whose
+    `call_count` stays at 1 across two searches.
+- Fixture(s):
+  - `cache__ttl_cache__hit.json`, `cache__ttl_cache__expired.json`
+    are narrative fixtures used by the rstest table for timing
+    documentation.
+  - `etherscan__getsourcecode__usdc.json` (already present) covers
+    the `EtherscanTokenSearch` happy path; a new
+    `etherscan__token_search__rate_limit.json` captures the 429
+    error case.
+
+### 12.7 Out of scope
+
+- Persistent cache on disk: remains out of scope (rules already
+  exclude persistent indexing).
+- Automatic chain switching from URL hints — parked with a note in
+  §12.2 but not shipped.
