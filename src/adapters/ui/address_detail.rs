@@ -79,6 +79,11 @@ pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 /// when the user presses Enter on a row.
 pub type OpenTokenFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
 
+/// Factory used by the Contract tab to spawn a ContractDetailScreen
+/// when the user presses Enter. Only consulted when the loaded
+/// `AddressOverview.kind` is `Contract`.
+pub type OpenContractFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
@@ -88,33 +93,17 @@ pub enum AddressTab {
     Overview,
     Transactions,
     Tokens,
+    /// Only rendered when `AddressOverview.kind` is `Contract`.
+    Contract,
 }
 
 impl AddressTab {
-    const ALL: [AddressTab; 3] = [
-        AddressTab::Overview,
-        AddressTab::Transactions,
-        AddressTab::Tokens,
-    ];
-
-    fn next(self) -> Self {
-        let idx = self.index();
-        Self::ALL[(idx + 1) % Self::ALL.len()]
-    }
-
-    fn index(self) -> usize {
-        match self {
-            AddressTab::Overview => 0,
-            AddressTab::Transactions => 1,
-            AddressTab::Tokens => 2,
-        }
-    }
-
     fn label(self) -> &'static str {
         match self {
             AddressTab::Overview => "Overview",
             AddressTab::Transactions => "Transactions",
             AddressTab::Tokens => "Tokens",
+            AddressTab::Contract => "Contract",
         }
     }
 }
@@ -126,6 +115,7 @@ impl AddressTab {
 pub struct AddressDetailScreen {
     #[allow(dead_code)]
     chain: Chain,
+    address: Address,
     current: Option<AddressOverview>,
     transfers: Option<TransferPage>,
     holdings: Option<Vec<TokenHolding>>,
@@ -136,6 +126,7 @@ pub struct AddressDetailScreen {
     token_list_state: ListState,
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
+    open_contract: Option<OpenContractFactory>,
 }
 
 impl AddressDetailScreen {
@@ -144,7 +135,7 @@ impl AddressDetailScreen {
     /// starts fetching immediately.
     #[must_use]
     pub fn loading(chain: Chain, address: Address, feed: AddressFeed) -> Self {
-        Self::with_factories(chain, address, feed, None, None)
+        Self::with_factories(chain, address, feed, None, None, None)
     }
 
     /// Same as [`loading`] but wires the Transactions tab to open a
@@ -156,11 +147,13 @@ impl AddressDetailScreen {
         feed: AddressFeed,
         open_tx: Option<OpenTxFactory>,
     ) -> Self {
-        Self::with_factories(chain, address, feed, open_tx, None)
+        Self::with_factories(chain, address, feed, open_tx, None, None)
     }
 
     /// Fully-wired constructor: Enter on the Transactions tab opens a
-    /// TxDetail, Enter on the Tokens tab opens a TokenDetail.
+    /// TxDetail, Enter on the Tokens tab opens a TokenDetail, Enter
+    /// on the Contract tab (only visible when kind == Contract) opens
+    /// a ContractDetailScreen.
     #[must_use]
     pub fn with_factories(
         chain: Chain,
@@ -168,6 +161,7 @@ impl AddressDetailScreen {
         feed: AddressFeed,
         open_tx: Option<OpenTxFactory>,
         open_token: Option<OpenTokenFactory>,
+        open_contract: Option<OpenContractFactory>,
     ) -> Self {
         let _ = feed.input_tx.send(address);
         let mut tx_list_state = ListState::default();
@@ -176,6 +170,7 @@ impl AddressDetailScreen {
         token_list_state.select(Some(0));
         Self {
             chain,
+            address,
             current: None,
             transfers: None,
             holdings: None,
@@ -186,7 +181,41 @@ impl AddressDetailScreen {
             token_list_state,
             open_tx,
             open_token,
+            open_contract,
         }
+    }
+
+    /// Tabs currently visible in the tab bar. Contract is included
+    /// only when the loaded overview reports `AddressKind::Contract`.
+    fn visible_tabs(&self) -> Vec<AddressTab> {
+        let mut tabs = vec![
+            AddressTab::Overview,
+            AddressTab::Transactions,
+            AddressTab::Tokens,
+        ];
+        if let Some(ov) = self.current.as_ref()
+            && matches!(ov.kind, AddressKind::Contract)
+        {
+            tabs.push(AddressTab::Contract);
+        }
+        tabs
+    }
+
+    fn next_tab(&self) -> AddressTab {
+        let tabs = self.visible_tabs();
+        let current_idx = tabs
+            .iter()
+            .position(|&t| t == self.active_tab)
+            .unwrap_or(0);
+        tabs[(current_idx + 1) % tabs.len()]
+    }
+
+    /// Public accessor so BDD scenarios can assert the tab bar
+    /// composition (e.g. the Contract tab only appears for contract
+    /// addresses).
+    #[must_use]
+    pub fn tabs(&self) -> Vec<AddressTab> {
+        self.visible_tabs()
     }
 
     #[must_use]
@@ -328,14 +357,20 @@ impl Screen for AddressDetailScreen {
             chunks[0],
         );
 
-        // Tab bar
-        let titles: Vec<Line<'static>> = AddressTab::ALL
+        // Tab bar — the Contract tab only shows up once the overview
+        // loads and reports `AddressKind::Contract`.
+        let tabs_visible = self.visible_tabs();
+        let titles: Vec<Line<'static>> = tabs_visible
             .iter()
             .map(|t| Line::from(format!(" {} ", t.label())))
             .collect();
+        let active_idx = tabs_visible
+            .iter()
+            .position(|&t| t == self.active_tab)
+            .unwrap_or(0);
         frame.render_widget(
             Tabs::new(titles)
-                .select(self.active_tab.index())
+                .select(active_idx)
                 .block(Block::default().borders(Borders::ALL).title("Tabs"))
                 .divider(" ")
                 .highlight_style(
@@ -396,6 +431,23 @@ impl Screen for AddressDetailScreen {
                     }
                 }
             }
+            AddressTab::Contract => {
+                let body = format!(
+                    "This address holds contract bytecode.\n\
+\n\
+Address   {addr}\n\
+\n\
+Press [Enter] to open the Contract Detail view (proxy hints,\n\
+implementation resolution, source on Etherscan once wired).",
+                    addr = self.address.to_hex(),
+                );
+                frame.render_widget(
+                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                        Block::default().borders(Borders::ALL).title("Contract"),
+                    ),
+                    chunks[2],
+                );
+            }
             AddressTab::Tokens => {
                 let block = Block::default().borders(Borders::ALL).title("Tokens");
                 match self.holdings.as_ref() {
@@ -437,7 +489,7 @@ impl Screen for AddressDetailScreen {
             (_, KeyCode::Char('q')) => Command::Quit,
             (_, KeyCode::Esc) => Command::Pop,
             (_, KeyCode::Tab | KeyCode::BackTab) => {
-                self.active_tab = self.active_tab.next();
+                self.active_tab = self.next_tab();
                 self.scroll = 0;
                 Command::None
             }
@@ -518,6 +570,10 @@ impl Screen for AddressDetailScreen {
                     _ => Command::None,
                 }
             }
+            (AddressTab::Contract, KeyCode::Enter) => match self.open_contract.as_ref() {
+                Some(factory) => Command::Push(factory(self.address)),
+                None => Command::None,
+            },
             _ => Command::None,
         }
     }

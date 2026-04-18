@@ -46,7 +46,7 @@ use crate::{
     application::{
         ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort,
     },
-    domain::{AddressKind, BlockId, Chain, PendingTxFilter, ResolvedEntity},
+    domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
 };
 use mempool_feed::EmptyPendingTxStream;
 
@@ -119,10 +119,16 @@ fn live_address_detail_screen(
         )
     });
 
-    let rpc_for_token = rpc;
+    let rpc_for_token = rpc.clone();
     let open_token: crate::adapters::ui::address_detail::OpenTokenFactory =
         Box::new(move |contract| {
             live_token_detail_screen(chain, contract, rpc_for_token.clone())
+        });
+
+    let rpc_for_contract = rpc;
+    let open_contract: crate::adapters::ui::address_detail::OpenContractFactory =
+        Box::new(move |addr| {
+            live_contract_detail_screen(chain, addr, rpc_for_contract.clone())
         });
 
     Box::new(AddressDetailScreen::with_factories(
@@ -131,6 +137,7 @@ fn live_address_detail_screen(
         feed,
         Some(open_tx),
         Some(open_token),
+        Some(open_contract),
     ))
 }
 
@@ -351,17 +358,22 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                             rpc.clone(),
                             etherscan_key.clone(),
                         ),
-                        ResolvedEntity::Address { address, kind, .. } => match kind {
-                            AddressKind::Contract => {
-                                live_contract_detail_screen(chain, address, rpc.clone())
-                            }
-                            AddressKind::Eoa => live_address_detail_screen(
+                        ResolvedEntity::Address { address, .. } => {
+                            // Always route to AddressDetail: the screen
+                            // itself detects bytecode and surfaces a
+                            // Contract tab that drills into the
+                            // ContractDetailScreen when the user asks
+                            // for it. This way wallets and contracts
+                            // share the same entry point and neither
+                            // flavour loses balance / transfers /
+                            // tokens.
+                            live_address_detail_screen(
                                 chain,
                                 address,
                                 rpc.clone(),
                                 etherscan_key.clone(),
-                            ),
-                        },
+                            )
+                        }
                         ResolvedEntity::Token(meta) => {
                             live_token_detail_screen(chain, meta.address, rpc.clone())
                         }

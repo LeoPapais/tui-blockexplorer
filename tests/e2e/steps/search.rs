@@ -409,6 +409,7 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
             feed,
             Some(open_tx),
             Some(open_token),
+            None,
         ),
     )
 }

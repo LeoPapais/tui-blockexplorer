@@ -312,6 +312,28 @@ async fn selects_first_holding_and_enter(world: &mut AppWorld) {
     press_key(stack, KeyCode::Enter);
 }
 
+#[then("once loaded, the tab bar includes the Contract tab")]
+async fn tab_bar_has_contract(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).current().is_some()).await;
+    let tabs = current(stack).tabs();
+    assert!(
+        tabs.contains(&AddressTab::Contract),
+        "Contract tab missing from {tabs:?}"
+    );
+}
+
+#[then("once loaded, the tab bar does not include the Contract tab")]
+async fn tab_bar_no_contract(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).current().is_some()).await;
+    let tabs = current(stack).tabs();
+    assert!(
+        !tabs.contains(&AddressTab::Contract),
+        "Contract tab unexpectedly present in {tabs:?}"
+    );
+}
+
 #[then(regex = r#"^once loaded, the Transactions tab lists (\d+) transfers$"#)]
 async fn transactions_tab_lists_n(world: &mut AppWorld, expected: u32) {
     let stack = world.stack.as_mut().expect("stack");

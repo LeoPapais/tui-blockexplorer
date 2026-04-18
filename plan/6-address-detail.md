@@ -1,8 +1,8 @@
 # 6 — Address Detail
 
-Status: **expanded** — MVP Overview tab shipped earlier and this
-phase adds the Transactions / Tokens / Contract tabs with real
-Alchemy-backed adapters. Activity classification, CSV export and
+Status: **done** — MVP Overview + Transactions + Tokens tabs are
+live, and the Contract tab appears dynamically when the loaded
+address has bytecode. Activity classification, CSV export and
 approvals-with-revoke stay deferred; see section 13.
 
 Account dossier. Active tabs in MVP: Overview, Transactions, Tokens, Activity, and

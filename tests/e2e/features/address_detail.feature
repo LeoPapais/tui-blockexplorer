@@ -44,3 +44,15 @@ Feature: Address detail
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     And the user switches to the Tokens tab
     Then once loaded, the Tokens tab reports no holdings
+
+  Scenario: Contract tab appears for contract addresses
+    Given the address reader knows contract "0x1d88182ff972b826f7663591c6270271644171a2" with balance 0 and nonce 1
+    And the portfolio feed knows 0 holdings for "0x1d88182ff972b826f7663591c6270271644171a2"
+    When the user opens AddressDetail with full feeds for "0x1d88182ff972b826f7663591c6270271644171a2"
+    Then once loaded, the tab bar includes the Contract tab
+
+  Scenario: Contract tab is absent for EOAs
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 0 and nonce 0
+    And the portfolio feed knows 0 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    Then once loaded, the tab bar does not include the Contract tab
