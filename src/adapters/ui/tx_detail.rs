@@ -40,10 +40,10 @@ use crate::{
         screen::{Command, Screen},
         scroll::ScrollState,
     },
-    application::{DecodedLog, DecodedMethod, LoadStatus, SignatureSource, TxView},
+    application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
-        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, StateDiff,
-        TxHash, TxStatus, Wei,
+        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, Chain, DiffChange, LogEntry,
+        StateDiff, TxHash, TxStatus, Wei,
     },
 };
 
@@ -905,15 +905,21 @@ fn log_summary(idx: usize, log: &DecodedLog) -> String {
     }
 }
 
-/// Produce the field list for a log (plan 13.4).
+/// Produce the field list for a log (plan 13.4, 12.6.4).
 ///
-/// - When a signature is available (ABI or sigdb), parse the
-///   positional argument types out of the textual signature and
-///   attempt to decode topics and data words into those types
-///   (best effort: `address`, `uint*` up to `uint128`, `int*` up
-///   to `int128`, and `bool`). Anything else renders as raw hex.
-/// - Without a signature, each topic and data word shows up as
-///   its own raw-hex field so the user can still copy it.
+/// Three paths, in priority order:
+///
+/// 1. **ABI parsed** (`DecodedSignature::parsed = Some`): honour the
+///    real `indexed` flag per parameter and align `topics[1..]`
+///    onto indexed args and `data` words onto non-indexed args.
+///    This matches the event exactly even when the indexed args
+///    are not the leading positional ones (e.g. custom mixed
+///    events).
+/// 2. **Signature resolved via directory** (no `parsed`): best-
+///    effort heuristic — assume the first N positional types (as
+///    parsed from the textual signature) are the indexed ones.
+///    This matches canonical ERC20/ERC721 events in practice.
+/// 3. **No signature at all**: raw-hex per topic / data slot.
 fn log_fields(log: &DecodedLog) -> Vec<LogField> {
     let mut fields = Vec::new();
     let topic0_hex = match log.raw.topics.first() {
@@ -928,53 +934,10 @@ fn log_fields(log: &DecodedLog) -> Vec<LogField> {
                 copy_value: sig.signature.clone(),
                 raw_hint: Some(format!("topic0: {topic0_hex}")),
             });
-            let arg_types = parse_signature_args(&sig.signature);
-            // topics[1..] map onto the first types (indexed args).
-            // data words map onto the remaining types.
-            let indexed_count = log.raw.topics.len().saturating_sub(1);
-            for (i, topic) in log.raw.topics.iter().skip(1).enumerate() {
-                let ty = arg_types.get(i).map(String::as_str);
-                let (display, copy_value) = decode_word(ty, topic);
-                let raw = format!("0x{}", hex::encode(topic));
-                let label = match ty {
-                    Some(t) => format!("arg{i} ({t}, indexed)"),
-                    None => format!("topic{}", i + 1),
-                };
-                fields.push(LogField {
-                    label,
-                    display,
-                    copy_value,
-                    raw_hint: Some(format!("raw: {raw}")),
-                });
-            }
-            // Data words for non-indexed args.
-            let data_words = split_data_words(&log.raw.data);
-            for (i, word) in data_words.iter().enumerate() {
-                let ty_index = indexed_count + i;
-                let ty = arg_types.get(ty_index).map(String::as_str);
-                let (display, copy_value) = decode_word(ty, word);
-                let raw = format!("0x{}", hex::encode(word));
-                let label = match ty {
-                    Some(t) => format!("arg{ty_index} ({t})"),
-                    None => format!("data[{i}]"),
-                };
-                fields.push(LogField {
-                    label,
-                    display,
-                    copy_value,
-                    raw_hint: Some(format!("raw: {raw}")),
-                });
-            }
-            // If data is not aligned to 32 bytes, show the tail.
-            let aligned = data_words.len() * 32;
-            if aligned < log.raw.data.len() {
-                let tail = &log.raw.data[aligned..];
-                fields.push(LogField {
-                    label: "data (tail)".to_string(),
-                    display: format!("0x{}", hex::encode(tail)),
-                    copy_value: format!("0x{}", hex::encode(tail)),
-                    raw_hint: None,
-                });
+            if let Some(parsed) = sig.parsed.as_ref() {
+                push_abi_fields(&mut fields, parsed, &log.raw);
+            } else {
+                push_heuristic_fields(&mut fields, &sig.signature, &log.raw);
             }
         }
         None => {
@@ -997,6 +960,127 @@ fn log_fields(log: &DecodedLog) -> Vec<LogField> {
         }
     }
     fields
+}
+
+/// Align topics / data onto an ABI-parsed event: indexed params get
+/// `topics[1..]`, non-indexed params get consecutive data words in
+/// ABI order.
+fn push_abi_fields(fields: &mut Vec<LogField>, parsed: &EventAbi, raw: &LogEntry) {
+    let data_words = split_data_words(&raw.data);
+    let mut indexed_cursor = 0usize;
+    let mut data_cursor = 0usize;
+    for (idx, param) in parsed.params.iter().enumerate() {
+        let label_name = if param.name.is_empty() {
+            format!("arg{idx}")
+        } else {
+            param.name.clone()
+        };
+        if param.indexed {
+            // `topics[0]` is the event selector; indexed args live
+            // in `topics[1..]`.
+            let topic = raw.topics.get(1 + indexed_cursor).copied();
+            indexed_cursor += 1;
+            let (display, copy_value, raw_hex) = match topic {
+                Some(t) => {
+                    let (d, c) = decode_word(Some(param.type_.as_str()), &t);
+                    (d, c, format!("0x{}", hex::encode(t)))
+                }
+                None => ("(missing topic)".to_string(), String::new(), String::new()),
+            };
+            fields.push(LogField {
+                label: format!("{label_name} ({}, indexed)", param.type_),
+                display,
+                copy_value,
+                raw_hint: if raw_hex.is_empty() {
+                    None
+                } else {
+                    Some(format!("raw: {raw_hex}"))
+                },
+            });
+        } else {
+            let word = data_words.get(data_cursor).copied();
+            data_cursor += 1;
+            let (display, copy_value, raw_hex) = match word {
+                Some(w) => {
+                    let (d, c) = decode_word(Some(param.type_.as_str()), &w);
+                    (d, c, format!("0x{}", hex::encode(w)))
+                }
+                None => ("(missing data word)".to_string(), String::new(), String::new()),
+            };
+            fields.push(LogField {
+                label: format!("{label_name} ({})", param.type_),
+                display,
+                copy_value,
+                raw_hint: if raw_hex.is_empty() {
+                    None
+                } else {
+                    Some(format!("raw: {raw_hex}"))
+                },
+            });
+        }
+    }
+    // Leftover data words: surface them so the user can still copy
+    // them even when the ABI shape disagrees with the payload.
+    let aligned = data_words.len() * 32;
+    if aligned < raw.data.len() {
+        let tail = &raw.data[aligned..];
+        fields.push(LogField {
+            label: "data (tail)".to_string(),
+            display: format!("0x{}", hex::encode(tail)),
+            copy_value: format!("0x{}", hex::encode(tail)),
+            raw_hint: None,
+        });
+    }
+}
+
+/// Fallback for signature-directory hits: parse positional types
+/// out of the signature text and assume the first N are indexed.
+/// Mirrors the previous behaviour of the Logs tab.
+fn push_heuristic_fields(fields: &mut Vec<LogField>, signature: &str, raw: &LogEntry) {
+    let arg_types = parse_signature_args(signature);
+    let indexed_count = raw.topics.len().saturating_sub(1);
+    for (i, topic) in raw.topics.iter().skip(1).enumerate() {
+        let ty = arg_types.get(i).map(String::as_str);
+        let (display, copy_value) = decode_word(ty, topic);
+        let raw_hex = format!("0x{}", hex::encode(topic));
+        let label = match ty {
+            Some(t) => format!("arg{i} ({t}, indexed)"),
+            None => format!("topic{}", i + 1),
+        };
+        fields.push(LogField {
+            label,
+            display,
+            copy_value,
+            raw_hint: Some(format!("raw: {raw_hex}")),
+        });
+    }
+    let data_words = split_data_words(&raw.data);
+    for (i, word) in data_words.iter().enumerate() {
+        let ty_index = indexed_count + i;
+        let ty = arg_types.get(ty_index).map(String::as_str);
+        let (display, copy_value) = decode_word(ty, word);
+        let raw_hex = format!("0x{}", hex::encode(word));
+        let label = match ty {
+            Some(t) => format!("arg{ty_index} ({t})"),
+            None => format!("data[{i}]"),
+        };
+        fields.push(LogField {
+            label,
+            display,
+            copy_value,
+            raw_hint: Some(format!("raw: {raw_hex}")),
+        });
+    }
+    let aligned = data_words.len() * 32;
+    if aligned < raw.data.len() {
+        let tail = &raw.data[aligned..];
+        fields.push(LogField {
+            label: "data (tail)".to_string(),
+            display: format!("0x{}", hex::encode(tail)),
+            copy_value: format!("0x{}", hex::encode(tail)),
+            raw_hint: None,
+        });
+    }
 }
 
 fn log_field_line(field: &LogField, selected: bool) -> Line<'static> {

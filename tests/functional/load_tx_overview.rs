@@ -405,6 +405,254 @@ async fn missing_tx_returns_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 12.6.4 — ABI-driven argument decoding for logs
+// ---------------------------------------------------------------------------
+//
+// The three tests below exercise the real ABI indexed / non-indexed
+// split instead of the "first N positional args are indexed"
+// heuristic used for signature-directory hits.
+
+fn log_with_topic_and_data(address: Address, topic0: [u8; 32], extra_topics: Vec<[u8; 32]>, data: Vec<u8>) -> LogEntry {
+    let mut topics = vec![topic0];
+    topics.extend(extra_topics);
+    LogEntry {
+        address,
+        topics,
+        data,
+    }
+}
+
+fn word_with_u128(n: u128) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[16..].copy_from_slice(&n.to_be_bytes());
+    w
+}
+
+fn word_with_address(hex_addr: &str) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    let bytes = hex::decode(hex_addr.trim_start_matches("0x")).unwrap();
+    w[12..].copy_from_slice(&bytes);
+    w
+}
+
+#[tokio::test]
+async fn logs_abi_decoding_respects_indexed_flags_for_erc20() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let mut tx = base_tx("0xabc0016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ab");
+    let topic0: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
+    let from_topic = word_with_address("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+    let to_topic = word_with_address("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let value_word = word_with_u128(1_000);
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    tx.logs.push(log_with_topic_and_data(
+        contract,
+        topic0,
+        vec![from_topic, to_topic],
+        value_word.to_vec(),
+    ));
+    reader.insert(tx.clone());
+    // ERC20 Transfer: indexed from, indexed to, value (non-indexed).
+    let abi = blockexplorer_tui::domain::ContractAbi {
+        abi: r#"[{"type":"event","name":"Transfer","inputs":[
+            {"name":"from","type":"address","indexed":true},
+            {"name":"to","type":"address","indexed":true},
+            {"name":"value","type":"uint256","indexed":false}
+        ],"anonymous":false}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(contract, abi);
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    assert_eq!(got.decoded_logs.len(), 1);
+    let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
+    assert_eq!(sig.signature, "Transfer(address,address,uint256)");
+    let parsed = sig.parsed.as_ref().expect("parsed ABI present");
+    assert_eq!(parsed.params.len(), 3);
+    assert_eq!(parsed.params[0].name, "from");
+    assert!(parsed.params[0].indexed);
+    assert_eq!(parsed.params[1].name, "to");
+    assert!(parsed.params[1].indexed);
+    assert_eq!(parsed.params[2].name, "value");
+    assert!(!parsed.params[2].indexed);
+}
+
+#[tokio::test]
+async fn logs_abi_decoding_handles_erc721_all_indexed() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let mut tx = base_tx("0xaba7016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394a7");
+    let topic0: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
+    let from_topic = word_with_address("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+    let to_topic = word_with_address("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let token_id = word_with_u128(42);
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    tx.logs.push(log_with_topic_and_data(
+        contract,
+        topic0,
+        vec![from_topic, to_topic, token_id],
+        Vec::new(),
+    ));
+    reader.insert(tx.clone());
+    // ERC721 Transfer: all three args are indexed.
+    let abi = blockexplorer_tui::domain::ContractAbi {
+        abi: r#"[{"type":"event","name":"Transfer","inputs":[
+            {"name":"from","type":"address","indexed":true},
+            {"name":"to","type":"address","indexed":true},
+            {"name":"tokenId","type":"uint256","indexed":true}
+        ],"anonymous":false}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(contract, abi);
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
+    let parsed = sig.parsed.as_ref().expect("parsed ABI present");
+    assert_eq!(parsed.params.len(), 3);
+    assert!(parsed.params.iter().all(|p| p.indexed));
+    assert_eq!(parsed.params[2].name, "tokenId");
+}
+
+#[tokio::test]
+async fn logs_abi_decoding_handles_custom_mixed_event() {
+    // Custom event: non-leading indexed arg.
+    // `Ping(uint256 id, string note, address indexed who)`
+    // Signature selector (for the test to drive the stub): compute
+    // via the same helper the use case uses.
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let mut tx = base_tx("0xabc2016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ab");
+    let signature_text = "Ping(uint256,string,address)";
+    let topic0 = blockexplorer_tui::domain::contract_source::event_topic_for(signature_text);
+    let who = word_with_address("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+    // Non-indexed: id (uint256) then string. For simplicity the
+    // string body is dropped onto an arbitrary 32-byte word; the
+    // decoder will fall back to raw-hex for the string type, which
+    // is fine — the test focuses on alignment.
+    let id_word = word_with_u128(7);
+    let mut data = Vec::new();
+    data.extend_from_slice(&id_word); // id
+    data.extend_from_slice(&id_word); // string offset placeholder (not decoded)
+    let contract = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    tx.logs.push(log_with_topic_and_data(
+        contract,
+        topic0,
+        vec![who], // single indexed arg at topic[1]
+        data,
+    ));
+    reader.insert(tx.clone());
+    let abi = blockexplorer_tui::domain::ContractAbi {
+        abi: r#"[{"type":"event","name":"Ping","inputs":[
+            {"name":"id","type":"uint256","indexed":false},
+            {"name":"note","type":"string","indexed":false},
+            {"name":"who","type":"address","indexed":true}
+        ],"anonymous":false}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(contract, abi);
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
+    let parsed = sig.parsed.as_ref().expect("parsed ABI present");
+    assert_eq!(parsed.params.len(), 3);
+    // `who` is the third positional arg but the only indexed one.
+    // A naive "first N are indexed" heuristic would get this wrong;
+    // the ABI-driven decoder must honour the `indexed` flag.
+    assert_eq!(parsed.params[0].indexed, false);
+    assert_eq!(parsed.params[1].indexed, false);
+    assert_eq!(parsed.params[2].indexed, true);
+    assert_eq!(parsed.params[2].name, "who");
+    assert_eq!(parsed.params[2].type_, "address");
+}
+
+#[tokio::test]
+async fn logs_directory_hit_leaves_parsed_none() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let mut tx = base_tx("0xabcf016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394ac");
+    let topic: [u8; 32] =
+        hex::decode("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+            .unwrap()
+            .try_into()
+            .unwrap();
+    tx.logs.push(LogEntry {
+        address: Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
+        topics: vec![topic],
+        data: Vec::new(),
+    });
+    reader.insert(tx.clone());
+    signatures.set_event_topic(topic, "Transfer(address,address,uint256)");
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
+    assert_eq!(sig.signature, "Transfer(address,address,uint256)");
+    assert!(sig.parsed.is_none(), "directory hits cannot report indexed flags");
+}
+
+// ---------------------------------------------------------------------------
 // Plan 12.6.1 — Overview tab must never wait on slow RPC methods.
 // ---------------------------------------------------------------------------
 

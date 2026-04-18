@@ -66,6 +66,44 @@ pub struct DecodedLog {
 pub struct DecodedSignature {
     pub signature: String,
     pub source: SignatureSource,
+    /// Populated when the signature was resolved through an ABI
+    /// entry (direct or proxy implementation). The UI uses it to
+    /// align `topics[1..]` and `data` words onto the real
+    /// indexed / non-indexed split, instead of assuming the first
+    /// N positional args are the indexed ones (which only happens
+    /// to match canonical ERC20/ERC721 events).
+    ///
+    /// Signature-directory hits (openchain / Samczsun) leave this
+    /// `None`: the 4byte mirror cannot tell indexed apart from
+    /// non-indexed.
+    ///
+    /// See `plan/4-tx-detail.md` section 12.6.4.
+    pub parsed: Option<EventAbi>,
+}
+
+/// Parsed event description pulled out of an ABI entry. Used by
+/// the Logs tab to honour the real indexed / non-indexed split.
+/// See [`DecodedSignature::parsed`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventAbi {
+    pub name: String,
+    pub params: Vec<EventParamAbi>,
+}
+
+/// One positional parameter of an ABI event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventParamAbi {
+    /// Canonical argument name. May be empty for anonymous
+    /// parameters; the renderer falls back to `arg{index}` in that
+    /// case.
+    pub name: String,
+    /// Canonical Solidity type string (e.g. `address`,
+    /// `uint256`, `bytes32`). Preserved verbatim from the ABI.
+    pub type_: String,
+    /// Whether the parameter is marked `indexed` in the ABI.
+    /// Indexed parameters go into `topics[1..]`, non-indexed into
+    /// `data`.
+    pub indexed: bool,
 }
 
 /// Status of a deferred / feature-gated enrichment. The UI uses

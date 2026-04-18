@@ -18,7 +18,8 @@ use serde_json::Value;
 
 use crate::{
     application::{
-        DecodedLog, DecodedMethod, DecodedSignature, LoadStatus, SignatureSource, TxView,
+        DecodedLog, DecodedMethod, DecodedSignature, EventAbi, EventParamAbi, LoadStatus,
+        SignatureSource, TxView,
         ports::{
             ContractSourcePort, ProxyDetectionPort, SignatureDirectoryPort, TxReaderPort,
             TxSimulationPort, TxTracePort,
@@ -187,11 +188,12 @@ where
     let topic0 = log.topics.first().copied()?;
     // Direct ABI.
     if let Ok(Some(abi)) = contract_source.get_abi(log.address, chain).await
-        && let Some(signature) = match_event_topic_in_abi(&abi.abi, topic0)
+        && let Some((signature, parsed)) = match_event_topic_in_abi(&abi.abi, topic0)
     {
         return Some(DecodedSignature {
             signature,
             source: SignatureSource::Abi,
+            parsed: Some(parsed),
         });
     }
     // Proxy implementation ABI. Events for proxy-backed ERC-20s are
@@ -199,7 +201,7 @@ where
     // same fallback applies to topics.
     if let Some((implementation, abi)) =
         proxy_implementation_abi(contract_source, proxy_detector, log.address, chain).await
-        && let Some(signature) = match_event_topic_in_abi(&abi, topic0)
+        && let Some((signature, parsed)) = match_event_topic_in_abi(&abi, topic0)
     {
         return Some(DecodedSignature {
             signature,
@@ -207,12 +209,14 @@ where
                 proxy: log.address,
                 implementation,
             },
+            parsed: Some(parsed),
         });
     }
     if let Ok(Some(hit)) = signatures.lookup_event_topic(topic0).await {
         return Some(DecodedSignature {
             signature: hit.signature,
             source: hit.source,
+            parsed: None,
         });
     }
     None
@@ -270,7 +274,7 @@ fn match_selector_in_abi(abi_json: &str, selector: [u8; 4]) -> Option<String> {
     None
 }
 
-fn match_event_topic_in_abi(abi_json: &str, topic: [u8; 32]) -> Option<String> {
+fn match_event_topic_in_abi(abi_json: &str, topic: [u8; 32]) -> Option<(String, EventAbi)> {
     let abi: Value = serde_json::from_str(abi_json).ok()?;
     let entries = abi.as_array()?;
     for entry in entries {
@@ -282,10 +286,40 @@ fn match_event_topic_in_abi(abi_json: &str, topic: [u8; 32]) -> Option<String> {
         };
         let computed = crate::domain::contract_source::event_topic_for(&signature);
         if computed == topic {
-            return Some(signature);
+            let parsed = parse_event_abi(entry)?;
+            return Some((signature, parsed));
         }
     }
     None
+}
+
+/// Convert the `inputs` array of an ABI `event` entry into the
+/// [`EventAbi`] shape consumed by the Logs tab. Preserves the
+/// positional order, the canonical type and the `indexed` flag.
+/// Anonymous args default to `name: ""` — the renderer falls back
+/// to `arg{i}` for them.
+fn parse_event_abi(entry: &Value) -> Option<EventAbi> {
+    let name = entry.get("name").and_then(Value::as_str)?.to_string();
+    let inputs = entry.get("inputs").and_then(Value::as_array)?;
+    let mut params = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let ty = input.get("type").and_then(Value::as_str)?.to_string();
+        let param_name = input
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let indexed = input
+            .get("indexed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        params.push(EventParamAbi {
+            name: param_name,
+            type_: ty,
+            indexed,
+        });
+    }
+    Some(EventAbi { name, params })
 }
 
 fn build_signature(entry: &Value) -> Option<String> {
