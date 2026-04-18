@@ -6,15 +6,15 @@ use blockexplorer_tui::{
     application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
-        BlockNumber, Chain, ContractAbi, DiffChange, DomainError, LogEntry, StateDiff,
-        Transaction, TxHash, TxStatus, TxType, Wei,
+        BlockNumber, Chain, ContractAbi, DiffChange, DomainError, LogEntry, ProxyInfo,
+        ProxyKind, StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use pretty_assertions::assert_eq;
 
 use crate::support::stubs::{
-    StubContractSourcePort, StubSignatureDirectoryPort, StubTxReaderPort,
-    StubTxSimulationPort, StubTxTracePort,
+    StubContractSourcePort, StubProxyDetectionPort, StubSignatureDirectoryPort,
+    StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
 fn base_tx(hash_hex: &str) -> Transaction {
@@ -117,6 +117,7 @@ async fn decoding_prefers_abi_over_signature_directory() {
     let reader = StubTxReaderPort::new();
     let contract_source = StubContractSourcePort::new();
     let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
 
     let tx = base_tx(
         "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
@@ -136,6 +137,7 @@ async fn decoding_prefers_abi_over_signature_directory() {
         &reader,
         &contract_source,
         &signatures,
+        &detector,
         tx.hash,
         Chain::Ethereum,
     )
@@ -152,6 +154,7 @@ async fn decoding_falls_back_to_signature_directory() {
     let reader = StubTxReaderPort::new();
     let contract_source = StubContractSourcePort::new();
     let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
 
     let tx = base_tx(
         "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb",
@@ -163,6 +166,7 @@ async fn decoding_falls_back_to_signature_directory() {
         &reader,
         &contract_source,
         &signatures,
+        &detector,
         tx.hash,
         Chain::Ethereum,
     )
@@ -179,6 +183,7 @@ async fn logs_are_decoded_via_signature_directory() {
     let reader = StubTxReaderPort::new();
     let contract_source = StubContractSourcePort::new();
     let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
 
     let mut tx = base_tx(
         "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc",
@@ -201,6 +206,7 @@ async fn logs_are_decoded_via_signature_directory() {
         &reader,
         &contract_source,
         &signatures,
+        &detector,
         tx.hash,
         Chain::Ethereum,
     )
@@ -210,6 +216,122 @@ async fn logs_are_decoded_via_signature_directory() {
     assert_eq!(got.decoded_logs.len(), 1);
     let sig = got.decoded_logs[0].signature.as_ref().expect("decoded");
     assert_eq!(sig.signature, "Transfer(address,address,uint256)");
+}
+
+#[tokio::test]
+async fn it_decodes_method_via_proxy_implementation_abi() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let tx = base_tx(
+        "0xd101016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d1",
+    );
+    reader.insert(tx.clone());
+
+    let proxy = tx.to.expect("tx targets proxy");
+    let implementation =
+        Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
+
+    // Proxy ABI is present but lacks `transfer`.
+    let proxy_abi = ContractAbi {
+        abi: r#"[{"type":"function","name":"implementation","inputs":[],"outputs":[{"name":"","type":"address"}]}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(proxy, proxy_abi);
+
+    // Detector resolves proxy -> implementation.
+    detector.set(
+        proxy,
+        ProxyInfo {
+            kind: ProxyKind::Eip1967,
+            implementation,
+        },
+    );
+
+    // Implementation ABI carries the selector.
+    let impl_abi = ContractAbi {
+        abi: r#"[{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(implementation, impl_abi);
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    let method = got.decoded_method.expect("decoded via proxy impl");
+    assert_eq!(method.signature, "transfer(address,uint256)");
+    match method.source {
+        SignatureSource::ProxyAbi {
+            proxy: got_proxy,
+            implementation: got_impl,
+        } => {
+            assert_eq!(got_proxy, proxy);
+            assert_eq!(got_impl, implementation);
+        }
+        other => panic!("expected ProxyAbi, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn it_decodes_method_via_openchain_when_abi_has_no_match() {
+    let reader = StubTxReaderPort::new();
+    let contract_source = StubContractSourcePort::new();
+    let signatures = StubSignatureDirectoryPort::new();
+    let detector = StubProxyDetectionPort::new();
+
+    let tx = base_tx(
+        "0xd202016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394d2",
+    );
+    reader.insert(tx.clone());
+
+    let proxy = tx.to.expect("tx targets proxy");
+    let implementation =
+        Address::from_hex("0x1111222233334444555566667777888899990000").unwrap();
+
+    // Both direct and implementation ABI miss the selector.
+    let unrelated_abi = ContractAbi {
+        abi: r#"[{"type":"function","name":"foo","inputs":[],"outputs":[]}]"#.to_string(),
+        is_verified: true,
+    };
+    contract_source.insert(proxy, unrelated_abi.clone());
+    contract_source.insert(implementation, unrelated_abi);
+    detector.set(
+        proxy,
+        ProxyInfo {
+            kind: ProxyKind::Eip1967,
+            implementation,
+        },
+    );
+
+    // Signature directory returns the name.
+    signatures.set_selector([0xa9, 0x05, 0x9c, 0xbb], "transfer(address,uint256)");
+
+    let got = load_tx_overview::run_with_decoding(
+        &reader,
+        &contract_source,
+        &signatures,
+        &detector,
+        tx.hash,
+        Chain::Ethereum,
+    )
+    .await
+    .expect("ok");
+
+    let method = got.decoded_method.expect("decoded via signature directory");
+    assert_eq!(method.signature, "transfer(address,uint256)");
+    assert_eq!(method.source, SignatureSource::SignatureDirectory);
 }
 
 #[tokio::test]

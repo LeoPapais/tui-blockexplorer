@@ -35,6 +35,15 @@ Feature: Transaction detail
     Then a "Transaction" screen is on top
     And once the transaction is loaded, the decoded method is "transfer(address,uint256)" from ABI
 
+  Scenario: Method decoding follows the proxy implementation ABI
+    Given the tx reader knows tx "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb" was successful
+    And the contract source knows the proxy ABI of "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" has no transfer
+    And the proxy detector maps "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" to implementation "0x1111222233334444555566667777888899990000"
+    And the contract source knows the implementation ABI of "0x1111222233334444555566667777888899990000"
+    When the user opens TxDetail with decoding for hash "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb"
+    Then a "Transaction" screen is on top
+    And once the transaction is loaded, the decoded method is "transfer(address,uint256)" via implementation "0x1111222233334444555566667777888899990000"
+
   Scenario: Logs tab shows decoded event signatures
     Given the tx reader knows tx "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc" emitted a Transfer event
     And the signature directory resolves the Transfer event topic

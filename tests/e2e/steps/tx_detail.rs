@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{ScreenStack, TxDetailScreen, TxTab, tx_feed},
-    application::{LoadStatus, TxView, use_cases::load_tx_overview},
+    application::{LoadStatus, SignatureSource, TxView, use_cases::load_tx_overview},
     domain::{
         AddressStateDiff, Address, AssetChange, AssetChangeKind, AssetKind, BlockHash,
-        BlockNumber, Chain, ContractAbi, DiffChange, LogEntry, StateDiff, Transaction,
-        TxHash, TxStatus, TxType, Wei,
+        BlockNumber, Chain, ContractAbi, DiffChange, LogEntry, ProxyInfo, ProxyKind,
+        StateDiff, Transaction, TxHash, TxStatus, TxType, Wei,
     },
 };
 use cucumber::{given, then, when};
@@ -131,6 +131,51 @@ async fn contract_source_has_abi(world: &mut AppWorld, addr_hex: String) {
     world.contract_source_stub.insert(address, abi);
 }
 
+#[given(
+    regex = r#"^the contract source knows the proxy ABI of "(0x[0-9a-fA-F]{40})" has no transfer$"#
+)]
+async fn contract_source_has_proxy_abi(world: &mut AppWorld, addr_hex: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    let abi = ContractAbi {
+        abi: r#"[{"type":"function","name":"implementation","inputs":[],"outputs":[{"name":"","type":"address"}]},{"type":"function","name":"admin","inputs":[],"outputs":[{"name":"","type":"address"}]}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    world.contract_source_stub.insert(address, abi);
+}
+
+#[given(
+    regex = r#"^the contract source knows the implementation ABI of "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn contract_source_has_impl_abi(world: &mut AppWorld, addr_hex: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    let abi = ContractAbi {
+        abi: r#"[{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}]"#
+            .to_string(),
+        is_verified: true,
+    };
+    world.contract_source_stub.insert(address, abi);
+}
+
+#[given(
+    regex = r#"^the proxy detector maps "(0x[0-9a-fA-F]{40})" to implementation "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn proxy_detector_maps(
+    world: &mut AppWorld,
+    proxy_hex: String,
+    impl_hex: String,
+) {
+    let proxy = Address::from_hex(&proxy_hex).unwrap();
+    let implementation = Address::from_hex(&impl_hex).unwrap();
+    world.proxy_detector_stub.set(
+        proxy,
+        ProxyInfo {
+            kind: ProxyKind::Eip1967,
+            implementation,
+        },
+    );
+}
+
 #[given(regex = r#"^the tx reader knows tx "(0x[0-9a-fA-F]{64})" emitted a Transfer event$"#)]
 async fn reader_knows_transfer_event(world: &mut AppWorld, hash_hex: String) {
     let mut tx = sample_tx(&hash_hex, TxStatus::Success);
@@ -236,12 +281,14 @@ async fn opens_tx_detail_with_full_enrichment(world: &mut AppWorld, hash_hex: St
     let signatures = world.signatures_stub.clone();
     let sim = world.tx_simulation_stub.clone();
     let tracer = world.tx_trace_stub.clone();
+    let detector = world.proxy_detector_stub.clone();
     let screen = spawn_tx_detail_with_full_enrichment(
         chain,
         hash,
         reader,
         contract_source,
         signatures,
+        detector,
         sim,
         tracer,
     );
@@ -257,7 +304,15 @@ async fn opens_tx_detail_with_decoding(world: &mut AppWorld, hash_hex: String) {
     let reader = world.tx_reader_stub.clone();
     let contract_source = world.contract_source_stub.clone();
     let signatures = world.signatures_stub.clone();
-    let screen = spawn_tx_detail_with_decoding(chain, hash, reader, contract_source, signatures);
+    let detector = world.proxy_detector_stub.clone();
+    let screen = spawn_tx_detail_with_decoding(
+        chain,
+        hash,
+        reader,
+        contract_source,
+        signatures,
+        detector,
+    );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
 }
@@ -268,6 +323,7 @@ fn spawn_tx_detail_with_decoding(
     reader: crate::support::stubs::StubTxReaderPort,
     contract_source: crate::support::stubs::StubContractSourcePort,
     signatures: crate::support::stubs::StubSignatureDirectoryPort,
+    detector: crate::support::stubs::StubProxyDetectionPort,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     let (feed, sender) = tx_feed();
     tokio::spawn(async move {
@@ -280,6 +336,7 @@ fn spawn_tx_detail_with_decoding(
                 &reader,
                 &contract_source,
                 &signatures,
+                &detector,
                 h,
                 chain,
             )
@@ -300,6 +357,7 @@ fn spawn_tx_detail_with_full_enrichment(
     reader: crate::support::stubs::StubTxReaderPort,
     contract_source: crate::support::stubs::StubContractSourcePort,
     signatures: crate::support::stubs::StubSignatureDirectoryPort,
+    detector: crate::support::stubs::StubProxyDetectionPort,
     sim: crate::support::stubs::StubTxSimulationPort,
     tracer: crate::support::stubs::StubTxTracePort,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
@@ -314,6 +372,7 @@ fn spawn_tx_detail_with_full_enrichment(
                 &reader,
                 &contract_source,
                 &signatures,
+                &detector,
                 h,
                 chain,
             )
@@ -371,6 +430,35 @@ async fn overview_method_from_abi(world: &mut AppWorld, expected: String) {
         method.source,
         blockexplorer_tui::application::SignatureSource::Abi
     );
+}
+
+#[then(
+    regex = r#"^once the transaction is loaded, the decoded method is "([^"]+)" via implementation "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn overview_method_via_proxy(
+    world: &mut AppWorld,
+    expected_sig: String,
+    expected_impl_hex: String,
+) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current_tx_detail(s)
+            .current()
+            .and_then(|v| v.decoded_method.as_ref())
+            .is_some()
+    })
+    .await;
+    let screen = current_tx_detail(stack);
+    let view: &TxView = screen.current().expect("loaded");
+    let method = view.decoded_method.as_ref().expect("decoded");
+    assert_eq!(method.signature, expected_sig);
+    match method.source {
+        SignatureSource::ProxyAbi { implementation, .. } => {
+            let expected_impl = Address::from_hex(&expected_impl_hex).unwrap();
+            assert_eq!(implementation, expected_impl);
+        }
+        other => panic!("expected ProxyAbi, got {other:?}"),
+    }
 }
 
 #[then(
