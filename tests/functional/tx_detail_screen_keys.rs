@@ -7,9 +7,11 @@
 use blockexplorer_tui::adapters::ui::{Screen, TxDetailScreen, TxTab, tx_feed};
 use blockexplorer_tui::application::{LoadStatus, TxView};
 use blockexplorer_tui::domain::{
-    Address, BlockHash, BlockNumber, Chain, Transaction, TxHash, TxStatus, TxType, Wei,
+    Address, BlockHash, BlockNumber, CallKind, CallNode, Chain, Transaction, TxHash, TxStatus,
+    TxType, Wei,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -175,4 +177,77 @@ fn s_on_pending_tx_triggers_resimulate() {
     let current = screen.current().expect("view loaded");
     assert!(matches!(current.asset_changes, LoadStatus::Pending));
     assert!(matches!(current.state_diff, LoadStatus::Pending));
+}
+
+fn render_to_buffer(screen: &TxDetailScreen) -> Buffer {
+    let backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| screen.render(frame, frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
+    for y in 0..buffer.area.height {
+        let mut row = String::new();
+        for x in 0..buffer.area.width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if row.contains(needle) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Snapshot test for the Internal tab: once the tracer delivers a
+/// call tree, the rendered frame shows the root `CALL` and the
+/// nested `STATICCALL` child with the ASCII elbow.
+/// See `plan/4-tx-detail.md` section 12.6.5.
+#[test]
+fn internal_tab_renders_call_tree_with_elbows() {
+    let tx = sample_tx();
+    let (feed, sender) = tx_feed();
+    let mut screen = TxDetailScreen::loading(tx.chain, tx.hash, feed);
+    let child_to = Address::from_hex("0x1111111111111111111111111111111111111111").unwrap();
+    let tree = CallNode {
+        kind: CallKind::Call,
+        from: tx.from,
+        to: tx.to,
+        value: Wei::new(0),
+        input: Vec::new(),
+        output: Vec::new(),
+        gas_used: 52_341,
+        error: None,
+        children: vec![CallNode {
+            kind: CallKind::Staticcall,
+            from: tx.to.unwrap(),
+            to: Some(child_to),
+            value: Wei::new(0),
+            input: Vec::new(),
+            output: Vec::new(),
+            gas_used: 128,
+            error: None,
+            children: Vec::new(),
+        }],
+    };
+    let mut view = TxView::bare(tx);
+    view.call_tree = LoadStatus::Loaded(tree);
+    sender.updates_tx.send(view).unwrap();
+    screen.tick();
+    // Overview → Logs → Internal.
+    screen.handle_key(key(KeyCode::Tab));
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.active_tab(), TxTab::Internal);
+
+    let buffer = render_to_buffer(&screen);
+    assert!(
+        buffer_contains(&buffer, "CALL ->"),
+        "root CALL frame should render"
+    );
+    assert!(
+        buffer_contains(&buffer, "`- STATICCALL ->"),
+        "staticcall child should render with ASCII elbow"
+    );
 }
