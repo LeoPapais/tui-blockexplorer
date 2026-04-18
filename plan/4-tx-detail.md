@@ -425,19 +425,199 @@ BDD additions:
 
 1. Internal-calls tab (Trace / Debug namespace): needs a recursive
    call-tree domain type + collapsible outline widget; worth a
-   dedicated plan entry when prioritised.
+   dedicated plan entry when prioritised. **Partially shipped** in
+   §12.6.5 below: the `TxTracePort::call_tree` method, the
+   `CallNode` domain type and the Alchemy adapter plumbing landed,
+   but the UI tab is still pending wider terminal testing before
+   it is wired into `TxTab`.
 2. Argument-level ABI decoding of calldata on the Overview tab
    (currently we show the signature text only; showing the decoded
    argument values requires a proper ABI decoder — shipping a
-   minimal subset later).
+   minimal subset later). **Shipped for logs** in §12.6.4 below:
+   when the decoding cascade resolves a signature through the ABI
+   path, the Logs tab now honours the real indexed/non-indexed
+   flags from the ABI entry instead of guessing from a canonical
+   ERC20/ERC721 shape.
 3. `s` re-simulate key on pending txs: the pending screen renders
    correctly but the key is bound to a no-op until the simulation
    path is extended to re-run against the latest block on demand.
+   **Shipped** in §12.6.3 below.
 4. In the overview tab, show the function called, the parameters
    passed, and the snippet of the implementation of the evoked
    funtion
 5. the "asset changes" tab should show ERC20 transfers and native
     tokens transfers.
+
+### 12.6 Follow-up iteration (probe/8.5) — shipped in April 2026
+
+Branch `probe/8.5-tx-detail-followups` lands the five deferred items
+tracked under `plan/15-backlog.md` section 8.5. Each sub-section
+below documents the final shape of the slice it ships.
+
+#### 12.6.1 Overview tab never waits on slow RPC methods (item 5)
+
+**Scope**: `load_tx_overview::run_with_decoding`,
+`infra::tx_feed::spawn_full`, `tests/functional/load_tx_overview.rs`,
+`tests/e2e/features/tx_detail.feature`.
+
+The Overview view-model is populated strictly from
+`eth_getTransactionByHash` + `eth_getTransactionReceipt` (the
+`TxReaderPort::get` method) plus Etherscan ABI + signature
+directory lookups. None of the decoding cascade touches the
+trace / debug namespace.
+
+`TxFeedSender::spawn_full` emits two updates per request:
+
+1. A **base view** built from `run_with_decoding` (reader + ABI +
+   signature directory). This reaches the UI the moment the reader
+   resolves, regardless of how slow the tracer / simulator is.
+2. An **enriched view** where `asset_changes` and `state_diff` have
+   moved from `Pending` to `Loaded { .. } | Unsupported | Failed`.
+   Both tracer and simulator run concurrently via `tokio::join!`,
+   so their latencies no longer compound.
+
+Functional tests use a `SlowStubTxTracePort` / `SlowStubTxSimulationPort`
+wrapper in `tests/support/stubs.rs` that holds each call for a
+caller-controlled duration; the test asserts the first channel
+update arrives before the tracer stub has fired.
+
+BDD: `Scenario: Overview renders before trace finishes`.
+
+#### 12.6.2 Minor dependency on base view delivery
+
+The above split means `LoadStatus::Pending` is the canonical initial
+state for `asset_changes` and `state_diff`. The screen renders the
+"Simulating asset changes..." / "Replaying transaction for state
+diff..." hints during that window, so the user sees *something* on
+those tabs even while the tracer / simulator is still in flight.
+
+#### 12.6.3 `s` re-simulate on pending tx (item 3)
+
+**Scope**: `TxDetailScreen::handle_key`, `tests/functional/tx_detail_screen_keys.rs`,
+`tests/e2e/features/tx_detail.feature`.
+
+`s` binding:
+
+- On a **pending** tx (`TxStatus::Pending`), resends the tx hash on
+  the feed's `input_tx` channel. The background task re-runs
+  `run_with_decoding` + the simulator/tracer join — the same code
+  path used on initial load — so the Asset Changes and State
+  Changes tabs refresh against the latest block.
+- On a **mined** tx, the binding is a no-op: the screen exposes
+  `last_resimulate_count()` as zero so the functional test can pin
+  the behaviour.
+
+The hook deliberately stays inside the screen: the re-fetch request
+is just another message on the existing `TxFeed::input_tx`
+channel, so we don't need a new port or a new command variant.
+
+BDD: `Scenario: Pressing s on a pending tx refetches asset changes`.
+
+#### 12.6.4 ABI-driven argument decoding on the Logs tab (item 2)
+
+**Scope**: `src/application/tx_view.rs::{DecodedSignature, DecodedLog}`,
+`src/application/use_cases/load_tx_overview.rs`,
+`src/adapters/ui/tx_detail.rs`,
+`tests/functional/load_tx_overview.rs`,
+`tests/fixtures/*`.
+
+`DecodedSignature` grows an optional
+`parsed: Option<EventAbi>` payload where
+
+```rust
+pub struct EventAbi {
+    pub name: String,
+    pub params: Vec<EventParamAbi>,
+}
+
+pub struct EventParamAbi {
+    pub name: String,
+    pub type_: String,
+    pub indexed: bool,
+}
+```
+
+is populated only when the cascade resolves through an ABI
+entry (direct ABI or proxy-implementation ABI). Signature-directory
+hits leave it `None`: the 4byte mirror cannot tell indexed apart
+from non-indexed, so the UI falls back to the existing "first N
+positional types are indexed" heuristic for those.
+
+When `parsed` is `Some`, the Logs tab aligns `topics[1..]` onto the
+`params.iter().filter(|p| p.indexed)` sequence in ABI order, and
+`data` 32-byte words onto `params.iter().filter(|p| !p.indexed)`.
+The fallback heuristic is kept intact for signature-directory hits
+and non-standard events.
+
+Functional tests in `tests/functional/load_tx_overview.rs` cover:
+
+- ERC721 `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` — all three topics indexed.
+- ERC20 `Transfer(address indexed from, address indexed to, uint256 value)` — two indexed, one data word.
+- Custom event with mixed indexed / non-indexed ordering
+  (e.g. `Ping(uint256 indexed id, string message, address indexed who)`)
+  to prove that the ABI parameter order is preserved rather than
+  assumed to be "indexed first".
+
+#### 12.6.5 Internal-calls port + Alchemy adapter (item 1)
+
+**Scope**: `src/domain/tx_trace.rs`, `src/application/ports/tx_trace.rs`,
+`src/adapters/rpc/tx_trace.rs`,
+`tests/functional/alchemy_tx_trace.rs`, fixtures.
+
+New domain type:
+
+```rust
+pub struct CallNode {
+    pub from: Address,
+    pub to: Option<Address>,
+    pub value: Wei,
+    pub input: Vec<u8>,
+    pub output: Vec<u8>,
+    pub kind: CallKind, // Call | Create | Create2 | Staticcall | Delegatecall | Callcode | Selfdestruct
+    pub gas_used: u64,
+    pub error: Option<String>,
+    pub children: Vec<CallNode>,
+}
+```
+
+New port method on `TxTracePort`:
+
+```rust
+async fn call_tree(&self, hash: TxHash, chain: Chain)
+    -> Result<CallNode, DomainError>;
+```
+
+`AlchemyTxTracer::call_tree` first tries `trace_transaction` (Parity
+namespace), mapping its flat frame array into the tree via
+`trace_address`; when that returns `-32601` (method not found), it
+falls back to `debug_traceTransaction` with
+`{"tracer": "callTracer"}`, which already returns a tree.
+
+Fixtures:
+
+- `alchemy__trace_transaction__usdc_transfer.json` (parity happy path).
+- `alchemy__trace_transaction__method_not_found.json` (forces fallback).
+- `alchemy__debug_trace_calltracer__usdc_transfer.json` (debug happy path).
+- `alchemy__debug_trace_calltracer__unsupported.json` (both unsupported).
+
+#### 12.6.6 ContractDetail scroll cursors migrated to ScrollState (item 4)
+
+**Scope**: `src/adapters/ui/contract_detail.rs`,
+`src/adapters/ui/scroll.rs`.
+
+`ContractDetailScreen` now keeps its Overview / ABI / Events /
+Storage / Source scroll offsets in a shared `Cell<ScrollState>`,
+replacing the `scroll: u16` + `scroll_cap: Cell<u16>` pair. The
+Source tab retains its own file-picker `ListState`; the content
+paragraph uses `ScrollState` like every other scrollable body.
+
+Both `handle_key` and the tab-switch path route through
+`scroll.reset()` when the tab changes, mirroring `TxDetailScreen`.
+`set_dimensions` is called from every `render_*` helper so the clamp
+is always live. Behaviour does not change for the user; this is
+strictly a consistency / correctness refactor that eliminates one
+more place where the scroll cursor could drift past the visible
+content (plan 13.3).
 
 ## 13. Follow-up fixes
 
