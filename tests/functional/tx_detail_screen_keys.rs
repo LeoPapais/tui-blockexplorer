@@ -5,7 +5,7 @@
 //! / arrow keys) and 12.6.3 (`s` re-simulate on pending txs).
 
 use blockexplorer_tui::adapters::ui::{Screen, TxDetailScreen, TxTab, tx_feed};
-use blockexplorer_tui::application::TxView;
+use blockexplorer_tui::application::{LoadStatus, TxView};
 use blockexplorer_tui::domain::{
     Address, BlockHash, BlockNumber, Chain, Transaction, TxHash, TxStatus, TxType, Wei,
 };
@@ -141,7 +141,6 @@ fn s_is_noop_when_tx_is_mined() {
 /// replies.
 #[test]
 fn s_on_pending_tx_triggers_resimulate() {
-    use blockexplorer_tui::application::{LoadStatus, TxView};
     let mut tx = sample_tx();
     tx.status = TxStatus::Pending;
     tx.block_number = None;

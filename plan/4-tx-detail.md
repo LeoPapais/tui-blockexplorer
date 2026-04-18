@@ -421,32 +421,26 @@ BDD additions:
 - `State Changes tab renders storage and balance diffs`.
 - `State Changes degrades gracefully on a chain without trace_`.
 
-### 12.5 Still deferred
+### 12.5 Still deferred (after probe/8.5)
 
-1. Internal-calls tab (Trace / Debug namespace): needs a recursive
-   call-tree domain type + collapsible outline widget; worth a
-   dedicated plan entry when prioritised. **Partially shipped** in
-   §12.6.5 below: the `TxTracePort::call_tree` method, the
-   `CallNode` domain type and the Alchemy adapter plumbing landed,
-   but the UI tab is still pending wider terminal testing before
-   it is wired into `TxTab`.
-2. Argument-level ABI decoding of calldata on the Overview tab
-   (currently we show the signature text only; showing the decoded
-   argument values requires a proper ABI decoder — shipping a
-   minimal subset later). **Shipped for logs** in §12.6.4 below:
-   when the decoding cascade resolves a signature through the ABI
-   path, the Logs tab now honours the real indexed/non-indexed
-   flags from the ABI entry instead of guessing from a canonical
-   ERC20/ERC721 shape.
-3. `s` re-simulate key on pending txs: the pending screen renders
-   correctly but the key is bound to a no-op until the simulation
-   path is extended to re-run against the latest block on demand.
-   **Shipped** in §12.6.3 below.
-4. In the overview tab, show the function called, the parameters
-   passed, and the snippet of the implementation of the evoked
-   funtion
-5. the "asset changes" tab should show ERC20 transfers and native
-    tokens transfers.
+The April 2026 probe/8.5 iteration (see §12.6) shipped the five
+items previously tracked here. What stays deferred:
+
+1. Argument-level ABI decoding of **calldata** on the Overview tab
+   (currently we show the signature text only; §12.6.4 ships the
+   equivalent for log arguments via `DecodedSignature::parsed`, but
+   the Overview `Method` line still renders the raw selector +
+   calldata slice when the function has arguments).
+2. Overview gains a source-snippet preview of the invoked
+   implementation function (Solidity source around the selector,
+   pulled via `ContractSourcePort`).
+3. Asset-Changes tab enrichment: render ERC20 and native transfers
+   with metadata + price column (today the tab shows the bare
+   `AssetChange` shape with raw amounts).
+4. Internal tab interactive collapse: frames are currently flat-
+   rendered via `render_call_node` with elbow glyphs. Collapsing
+   subtrees via `Space` is deferred until the tab grows a cursor
+   (tracked with the other scroll / selection screens).
 
 ### 12.6 Follow-up iteration (probe/8.5) — shipped in April 2026
 
@@ -558,11 +552,13 @@ Functional tests in `tests/functional/load_tx_overview.rs` cover:
   to prove that the ABI parameter order is preserved rather than
   assumed to be "indexed first".
 
-#### 12.6.5 Internal-calls port + Alchemy adapter (item 1)
+#### 12.6.5 Internal-calls tab end-to-end (item 1)
 
 **Scope**: `src/domain/tx_trace.rs`, `src/application/ports/tx_trace.rs`,
-`src/adapters/rpc/tx_trace.rs`,
-`tests/functional/alchemy_tx_trace.rs`, fixtures.
+`src/adapters/rpc/tx_trace.rs`, `src/adapters/ui/tx_detail.rs`,
+`src/infra/tx_feed.rs`,
+`tests/functional/alchemy_tx_trace.rs`,
+`tests/e2e/features/tx_detail.feature`, fixtures.
 
 New domain type:
 
@@ -598,7 +594,20 @@ Fixtures:
 - `alchemy__trace_transaction__usdc_transfer.json` (parity happy path).
 - `alchemy__trace_transaction__method_not_found.json` (forces fallback).
 - `alchemy__debug_trace_calltracer__usdc_transfer.json` (debug happy path).
-- `alchemy__debug_trace_calltracer__unsupported.json` (both unsupported).
+- `alchemy__debug_trace_calltracer__method_not_found.json` (both unsupported).
+
+UI wiring:
+
+- `TxDetailScreen` gains an `Internal` tab between `Logs` and
+  `Asset Changes`. The body is rendered by `internal_body` from a
+  `LoadStatus<CallNode>`, using `render_call_tree` to emit an ASCII
+  outline (` `- ` and `|- ` glyphs; one line per frame).
+- `infra::tx_feed::spawn_full` joins `load_call_tree` alongside
+  `load_asset_changes` and `load_state_diff` so the three tabs
+  populate concurrently once the bare Overview view has reached
+  the channel.
+- BDD: `Scenario: Internal tab shows call tree`. Stubbed via
+  `StubTxTracePort::set_call_tree`.
 
 #### 12.6.6 ContractDetail scroll cursors migrated to ScrollState (item 4)
 
@@ -621,11 +630,11 @@ content (plan 13.3).
 
 ## 13. Follow-up fixes
 
-Status: **done** for 13.1, 13.2, 13.4, 13.5. **Partially done** for
-13.3 (tx-detail uses the full `ScrollState` helper with bounded
-scroll; contract-detail and address-detail use the lighter
-`scroll_cap: Cell<u16>` clamp strategy — see the "Deferred" bullet
-at the end of 13.3).
+Status: **done** for 13.1, 13.2, 13.4, 13.5. 13.3 is **done** for
+`TxDetailScreen` and `ContractDetailScreen` (see §12.6.6 for the
+contract-detail migration). `AddressDetailScreen` still uses the
+lighter `scroll_cap: Cell<u16>` clamp strategy — see the
+"Deferred" bullet at the end of 13.3.
 
 Five refinements requested after the MVP shipped. Items marked
 **(project-wide)** are not tx-detail-specific and must be applied
