@@ -13,11 +13,13 @@ pub mod format;
 pub mod gas_tracker;
 pub mod highlight;
 pub mod home;
+pub mod keybind_modal;
 pub mod mempool;
 pub mod screen;
 pub mod scroll;
 pub mod search;
 pub mod settings;
+pub mod theme;
 pub mod token_detail;
 pub mod tx_detail;
 
@@ -37,12 +39,14 @@ pub use gas_tracker::{
     gas_refresh_channel,
 };
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
+pub use keybind_modal::KeyBindConflictModal;
 pub use mempool::{MempoolScreen, OpenPendingTxFactory};
 pub use screen::{Command, Screen, ScreenStack};
 pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen, search_feed,
 };
-pub use settings::{AppConfigSnapshot, SettingsScreen};
+pub use settings::{AppConfigSnapshot, ProviderHealthSnapshot, SettingsScreen};
+pub use theme::{Palette, PalettePreset};
 pub use token_detail::{
     OpenContractFactory as TokenOpenContractFactory, OpenTxFactory as TokenOpenTxFactory,
     TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab, token_feed,

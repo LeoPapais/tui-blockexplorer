@@ -8,10 +8,11 @@
 //! the same code paths the UI adapter will use.
 
 use blockexplorer_tui::{
-    adapters::ui::home,
+    adapters::ui::{HomeScreen, Screen, home},
     application::{ConnectionStatus, HomeSession, HomeViewModel, use_cases::observe_new_heads},
     domain::{BlockNumber, Chain, NewHead},
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{given, then, when};
 use pretty_assertions::assert_eq;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -359,6 +360,66 @@ async fn gas_card_renders_last_known_tiers(world: &mut AppWorld) {
             && buffer_contains(&buffer, &avg)
             && buffer_contains(&buffer, &fast),
         "all three gwei values ({slow}, {avg}, {fast}) must still render"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// First-run banner (plan/10-settings.md §12.2)
+// ---------------------------------------------------------------------------
+
+fn render_home_screen(screen: &HomeScreen) -> Buffer {
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| screen.render(frame, frame.area()))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+#[given("the Home screen is rendered without an alchemy key")]
+async fn home_rendered_without_alchemy_key(world: &mut AppWorld) {
+    let chain = world.active_chain.get_or_insert(Chain::Ethereum);
+    let view = HomeViewModel {
+        chain: *chain,
+        network: None,
+        gas: None,
+        connection: ConnectionStatus::Connected,
+    };
+    world.home_screen = Some(HomeScreen::new(view).with_first_run_hint(true));
+}
+
+#[then("the Home screen shows the first-run credentials banner")]
+async fn banner_is_visible(world: &mut AppWorld) {
+    let screen = world
+        .home_screen
+        .as_ref()
+        .expect("scenario primed a HomeScreen");
+    let buffer = render_home_screen(screen);
+    assert!(
+        buffer_contains(&buffer, "Set up credentials"),
+        "first-run banner must be visible"
+    );
+}
+
+#[when("the user dismisses the first-run banner with Esc")]
+async fn user_dismisses_banner_with_esc(world: &mut AppWorld) {
+    let screen = world
+        .home_screen
+        .as_mut()
+        .expect("scenario primed a HomeScreen");
+    screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+}
+
+#[then("the Home screen no longer shows the first-run credentials banner")]
+async fn banner_is_gone(world: &mut AppWorld) {
+    let screen = world
+        .home_screen
+        .as_ref()
+        .expect("scenario primed a HomeScreen");
+    let buffer = render_home_screen(screen);
+    assert!(
+        !buffer_contains(&buffer, "Set up credentials"),
+        "first-run banner must disappear after Esc"
     );
 }
 

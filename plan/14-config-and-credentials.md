@@ -171,3 +171,13 @@ the screen.
   keybinds, chain picker, cache).
 - `plan/15-websocket-subscriptions.md` (future) replaces polling with
   newHeads subscriptions.
+- `ConfigPort::save` with atomic temp-file-and-rename write — now
+  owned by `plan/10-settings.md` §12.3 (the Settings follow-up
+  slice ships the port trait, the `FsConfig` adapter and the BDD
+  coverage). §8.15 of `plan/15-backlog.md` pointed here; callers
+  now depend on `crate::application::ports::ConfigPort` rather than
+  on the `ConfigLoader` struct for write-through use cases.
+- The `AppConfig::load` entry point keeps working exactly as before
+  and remains the loader for the composition root; see §12.3 of
+  `plan/10-settings.md` for the split between `ConfigLoader`
+  (pure read) and `FsConfig` (read + save).

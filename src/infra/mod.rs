@@ -12,7 +12,9 @@ mod block_feed;
 pub mod config;
 mod contract_feed;
 mod gas_feed;
+pub mod health;
 pub mod home_feed;
+pub mod logging;
 pub mod mempool_feed;
 mod runtime;
 pub mod search_feed;
@@ -480,13 +482,25 @@ See plan/14-config-and-credentials.md for the full wiring.";
 
 /// Entry point called from `main`.
 pub fn run() -> Result<()> {
+    // Install the masking logger before anything else so credentials
+    // never hit stderr, even if config loading decides to log a
+    // warning. See plan/10-settings.md §12.1.
+    logging::install_masking_logger();
+
     let cli = parse_cli();
     let config = AppConfig::load().context("failed to load config")?;
 
     if cli.demo {
-        return boot_runtime(|_| {
+        // plan/10-settings.md §12.2: surface the first-run banner
+        // when the demo binary is launched without a real key so the
+        // user gets routed to Settings → Credentials before they try
+        // to open a live screen.
+        let first_run_hint = !config.has_alchemy_key();
+        return boot_runtime(move |_| {
             let mut stack = ScreenStack::new();
-            stack.push(Box::new(HomeScreen::with_demo_data()));
+            stack.push(Box::new(
+                HomeScreen::with_demo_data().with_first_run_hint(first_run_hint),
+            ));
             stack
         });
     }

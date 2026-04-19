@@ -15,6 +15,7 @@ pub mod contract_source;
 pub mod errors;
 pub mod events;
 pub mod gas;
+pub mod key_binding;
 pub mod label;
 pub mod mempool;
 pub mod network_status;
@@ -42,6 +43,9 @@ pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, S
 pub use errors::DomainError;
 pub use events::EventsPage;
 pub use gas::{Gwei, Percentiles, Unit, Wei};
+pub use key_binding::{
+    Action, KeyBindConflict, KeyBindConflictReport, KeyBinding, KeyMap, ScreenId,
+};
 pub use label::{Label, LabelSource};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use network_status::{GasSnapshot, NetworkStatus, NewHead};

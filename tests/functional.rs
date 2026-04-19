@@ -228,3 +228,27 @@ mod gas_percentiles;
 
 #[path = "functional/gas_tracker_screen.rs"]
 mod gas_tracker_screen;
+
+#[path = "functional/logger_masking.rs"]
+mod logger_masking;
+
+#[path = "functional/home_screen_first_run_banner.rs"]
+mod home_screen_first_run_banner;
+
+#[path = "functional/fs_config_save.rs"]
+mod fs_config_save;
+
+#[path = "functional/keymap_conflict.rs"]
+mod keymap_conflict;
+
+#[path = "functional/alchemy_health.rs"]
+mod alchemy_health;
+
+#[path = "functional/etherscan_health.rs"]
+mod etherscan_health;
+
+#[path = "functional/plaintext_secret_store.rs"]
+mod plaintext_secret_store;
+
+#[path = "functional/settings_theme.rs"]
+mod settings_theme;
