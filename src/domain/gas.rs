@@ -298,7 +298,7 @@ fn nearest_rank(sorted: &[Gwei], percent: u32) -> Gwei {
     // rank = ceil(percent / 100 * n); 1-indexed.
     let numerator = (percent as u128) * n;
     let mut rank = numerator / 100;
-    if numerator % 100 != 0 {
+    if !numerator.is_multiple_of(100) {
         rank += 1;
     }
     if rank == 0 {

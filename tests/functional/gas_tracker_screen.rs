@@ -74,8 +74,14 @@ fn ctrl_r_returns_refresh_and_kicks_refresh_handle() {
     let mut screen = GasTrackerScreen::new(Chain::Ethereum, Some(snapshot(10)), feed)
         .with_refresh_handle(refresh_handle);
 
-    assert_eq!(screen.handle_key(ctrl(KeyCode::Char('r'))), Command::Refresh);
-    assert_eq!(screen.handle_key(ctrl(KeyCode::Char('R'))), Command::Refresh);
+    assert_eq!(
+        screen.handle_key(ctrl(KeyCode::Char('r'))),
+        Command::Refresh
+    );
+    assert_eq!(
+        screen.handle_key(ctrl(KeyCode::Char('R'))),
+        Command::Refresh
+    );
     assert!(refresh_listener.try_recv().is_some());
     assert!(refresh_listener.try_recv().is_some());
     assert!(refresh_listener.try_recv().is_none());
@@ -85,7 +91,10 @@ fn ctrl_r_returns_refresh_and_kicks_refresh_handle() {
 fn ctrl_r_without_handle_still_returns_refresh_command() {
     let (feed, _sender) = gas_feed();
     let mut screen = GasTrackerScreen::new(Chain::Ethereum, Some(snapshot(10)), feed);
-    assert_eq!(screen.handle_key(ctrl(KeyCode::Char('r'))), Command::Refresh);
+    assert_eq!(
+        screen.handle_key(ctrl(KeyCode::Char('r'))),
+        Command::Refresh
+    );
 }
 
 #[test]
@@ -162,7 +171,10 @@ fn converter_converts_one_ether_to_gwei_on_enter() {
     let mut screen = GasTrackerScreen::new(Chain::Ethereum, Some(snapshot(10)), feed);
     screen.handle_key(key(KeyCode::Char('u')));
     // Default from -> to is Ether -> Gwei.
-    assert_eq!(screen.converter_units(), (gas::Unit::Ether, gas::Unit::Gwei));
+    assert_eq!(
+        screen.converter_units(),
+        (gas::Unit::Ether, gas::Unit::Gwei)
+    );
 
     screen.handle_key(key(KeyCode::Char('1')));
     assert_eq!(screen.converter_input(), "1");
@@ -196,7 +208,10 @@ fn converter_left_right_cycle_source_unit() {
     let (feed, _sender) = gas_feed();
     let mut screen = GasTrackerScreen::new(Chain::Ethereum, Some(snapshot(10)), feed);
     screen.handle_key(key(KeyCode::Char('u')));
-    assert_eq!(screen.converter_units(), (gas::Unit::Ether, gas::Unit::Gwei));
+    assert_eq!(
+        screen.converter_units(),
+        (gas::Unit::Ether, gas::Unit::Gwei)
+    );
 
     screen.handle_key(key(KeyCode::Right));
     assert_eq!(screen.converter_units().0, gas::Unit::Wei);

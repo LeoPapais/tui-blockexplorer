@@ -6,7 +6,7 @@
 
 use blockexplorer_tui::{
     adapters::ui::{
-        GasTrackerScreen, ScreenStack,
+        GasTrackerScreen, Screen, ScreenStack,
         gas_tracker::{gas_feed, gas_refresh_channel},
     },
     domain::{Chain, GasSnapshot, Gwei},
@@ -90,8 +90,7 @@ async fn opens_gas_tracker_with_refresh(world: &mut AppWorld) {
     let (handle, listener) = gas_refresh_channel();
     world.gas_feed_sender = Some(sender);
     world.gas_refresh_listener = Some(listener);
-    let screen =
-        GasTrackerScreen::new(chain, initial, feed).with_refresh_handle(handle);
+    let screen = GasTrackerScreen::new(chain, initial, feed).with_refresh_handle(handle);
     let stack = world.stack.as_mut().unwrap();
     stack.push(Box::new(screen));
 }

@@ -32,7 +32,10 @@ pub use contract_detail::{
     ContractDetailScreen, ContractFeed, ContractFeedSender, ContractTab, contract_feed,
 };
 pub use detail_placeholder::DetailPlaceholderScreen;
-pub use gas_tracker::{GasFeed, GasFeedSender, GasTrackerScreen, gas_feed};
+pub use gas_tracker::{
+    GasFeed, GasFeedSender, GasRefreshHandle, GasRefreshListener, GasTrackerScreen, gas_feed,
+    gas_refresh_channel,
+};
 pub use home::{HomeFeed, HomeFeedSender, HomeScreen, home_feed};
 pub use mempool::{MempoolScreen, OpenPendingTxFactory};
 pub use screen::{Command, Screen, ScreenStack};
