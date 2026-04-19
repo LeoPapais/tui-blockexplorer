@@ -34,6 +34,13 @@ fn prime_fixtures_for(world: &AppWorld, chain: Chain) {
         .set_snapshot(GasSnapshotFixture::load(gas_fixture));
 }
 
+/// Public re-export so the shared `Given the active chain is "…"` step
+/// in `steps::shared` can prime the Home fixtures without duplicating
+/// the per-chain filename mapping.
+pub(crate) fn prime_home_fixtures_for(world: &AppWorld, chain: Chain) {
+    prime_fixtures_for(world, chain);
+}
+
 fn fixtures_for(chain: Chain) -> (&'static str, &'static str) {
     match chain {
         Chain::Ethereum => (
@@ -97,20 +104,9 @@ fn futures_lite_block_on<F: std::future::Future>(fut: F) -> F::Output {
 // Given
 // ---------------------------------------------------------------------------
 
-#[given("the user launches the app")]
-async fn user_launches_the_app(world: &mut AppWorld) {
-    // Nothing to do: `AppWorld::default()` already provides fresh stubs
-    // and a registry with every chain enabled. This step only exists to
-    // match the Background and document intent.
-    assert!(world.home.is_none(), "launch should start with no session");
-}
-
-#[given(regex = r#"^the active chain is "([^"]+)"$"#)]
-async fn active_chain_is(world: &mut AppWorld, chain: String) {
-    let chain = Chain::from_slug(&chain).expect("scenario references a known chain");
-    world.active_chain = Some(chain);
-    prime_fixtures_for(world, chain);
-}
+// `Given the user launches the app` and `Given the active chain is "…"`
+// are registered in `steps::shared` because every feature file relies
+// on them; we no longer duplicate them here.
 
 #[given("the Home screen is rendered")]
 async fn given_home_is_rendered(world: &mut AppWorld) {
