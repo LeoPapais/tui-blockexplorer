@@ -273,3 +273,6 @@ mod rpc_retry;
 
 #[path = "functional/rpc_circuit_breaker.rs"]
 mod rpc_circuit_breaker;
+
+#[path = "functional/cost_meter.rs"]
+mod cost_meter;

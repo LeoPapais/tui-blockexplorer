@@ -12,9 +12,17 @@ use thiserror::Error;
 use url::Url;
 
 use super::circuit_breaker::{CircuitBreaker, is_breaker_failure};
+use super::cost_hint::cost_hint_for;
 use super::retry::{RetryPolicy, retry_with_backoff};
 use crate::application::ports::Rng;
 use crate::domain::DomainError;
+
+/// Trait implemented by the [`crate::infra::cost_meter::CostMeter`];
+/// declared here so the adapter layer does not depend on `infra`.
+/// See `plan/13-alchemy-adapter.md` §8.4.
+pub trait CostRecorder: Send + Sync {
+    fn record(&self, compute_units: u32);
+}
 
 /// Errors produced by the RPC client. Mapped to [`DomainError`] at the
 /// adapter boundary via [`RpcError::into_domain`].
@@ -103,12 +111,23 @@ impl RpcError {
 
 /// Thin JSON-RPC 2.0 client. One instance is reused across calls on the
 /// same base URL.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RpcClient {
     http: Client,
     base_url: Url,
     retry: Arc<RetryPolicy>,
     breaker: Option<Arc<CircuitBreaker>>,
+    cost_recorder: Option<Arc<dyn CostRecorder>>,
+}
+
+impl std::fmt::Debug for RpcClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcClient")
+            .field("base_url", &self.base_url)
+            .field("retry", &self.retry)
+            .field("breaker", &self.breaker)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RpcClient {
@@ -125,6 +144,7 @@ impl RpcClient {
             base_url,
             retry: Arc::new(RetryPolicy::none()),
             breaker: None,
+            cost_recorder: None,
         }
     }
 
@@ -177,6 +197,16 @@ impl RpcClient {
         self.breaker.as_ref()
     }
 
+    /// Install a [`CostRecorder`] (typically the process-level
+    /// `CostMeter` in `infra`). Every successful `call` charges the
+    /// recorder using the hint returned by [`cost_hint_for`].
+    /// See `plan/13-alchemy-adapter.md` §8.4.
+    #[must_use]
+    pub fn with_cost_recorder(mut self, recorder: Arc<dyn CostRecorder>) -> Self {
+        self.cost_recorder = Some(recorder);
+        self
+    }
+
     /// Issue a JSON-RPC 2.0 call and decode the `result` field.
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &self,
@@ -204,6 +234,11 @@ impl RpcClient {
                 Err(err) if is_breaker_failure(err) => breaker.record_failure(),
                 Err(_) => {}
             }
+        }
+        if outcome.is_ok()
+            && let Some(recorder) = &self.cost_recorder
+        {
+            recorder.record(cost_hint_for(method).compute_units);
         }
         outcome
     }
