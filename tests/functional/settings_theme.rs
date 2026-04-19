@@ -3,9 +3,7 @@
 //! See `plan/10-settings.md` section 12.7.
 
 use blockexplorer_tui::{
-    adapters::ui::{
-        AppConfigSnapshot, Command, PalettePreset, Screen, SettingsScreen,
-    },
+    adapters::ui::{AppConfigSnapshot, Command, PalettePreset, Screen, SettingsScreen},
     domain::Chain,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

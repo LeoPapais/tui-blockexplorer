@@ -98,7 +98,10 @@ impl SettingsScreen {
                         .as_deref()
                         .map(|m| format!(" ({m})"))
                         .unwrap_or_default();
-                    format!("{label:<12} {level:<9} {latency}ms{suffix}", latency = s.latency_ms)
+                    format!(
+                        "{label:<12} {level:<9} {latency}ms{suffix}",
+                        latency = s.latency_ms
+                    )
                 }
                 None => format!("{label:<12} (unknown)"),
             }

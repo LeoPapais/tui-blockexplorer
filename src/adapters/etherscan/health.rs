@@ -48,24 +48,22 @@ impl EtherscanHealth {
         let latency_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
         match result {
-            Ok(body) => {
-                match body.get("status").and_then(|v| v.as_str()) {
-                    Some("1") => Ok(HealthStatus::healthy(ETHERSCAN_PROVIDER, latency_ms)),
-                    Some("0") => {
-                        let msg = body
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("status=0")
-                            .to_string();
-                        Ok(HealthStatus::degraded(ETHERSCAN_PROVIDER, latency_ms, msg))
-                    }
-                    other => Ok(HealthStatus::degraded(
-                        ETHERSCAN_PROVIDER,
-                        latency_ms,
-                        format!("unexpected status field: {other:?}"),
-                    )),
+            Ok(body) => match body.get("status").and_then(|v| v.as_str()) {
+                Some("1") => Ok(HealthStatus::healthy(ETHERSCAN_PROVIDER, latency_ms)),
+                Some("0") => {
+                    let msg = body
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("status=0")
+                        .to_string();
+                    Ok(HealthStatus::degraded(ETHERSCAN_PROVIDER, latency_ms, msg))
                 }
-            }
+                other => Ok(HealthStatus::degraded(
+                    ETHERSCAN_PROVIDER,
+                    latency_ms,
+                    format!("unexpected status field: {other:?}"),
+                )),
+            },
             Err(EtherscanError::Http(err)) if err.is_timeout() || err.is_connect() => Ok(
                 HealthStatus::down(ETHERSCAN_PROVIDER, latency_ms, err.to_string()),
             ),

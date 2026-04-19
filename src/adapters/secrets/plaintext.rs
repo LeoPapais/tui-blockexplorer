@@ -11,9 +11,7 @@
 use std::sync::Arc;
 
 use crate::{
-    application::ports::{
-        AppConfigView, ConfigPatch, ConfigPort, SecretStorePort, secret_keys,
-    },
+    application::ports::{AppConfigView, ConfigPatch, ConfigPort, SecretStorePort, secret_keys},
     domain::DomainError,
 };
 

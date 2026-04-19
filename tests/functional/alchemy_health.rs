@@ -16,7 +16,10 @@ use wiremock::{
 
 use crate::support::fixture_loader::load_text;
 
-async fn health_for(body_fixture: &str, chain: Chain) -> blockexplorer_tui::application::ports::HealthStatus {
+async fn health_for(
+    body_fixture: &str,
+    chain: Chain,
+) -> blockexplorer_tui::application::ports::HealthStatus {
     let server = MockServer::start().await;
     let body = load_text(body_fixture);
     Mock::given(method("POST"))
@@ -28,7 +31,10 @@ async fn health_for(body_fixture: &str, chain: Chain) -> blockexplorer_tui::appl
     let base_url = Url::parse(&server.uri()).unwrap();
     let http = reqwest::Client::new();
     let probe = AlchemyHealth::new(RpcClient::new(base_url, http));
-    probe.probe(chain).await.expect("probe must return a status even on failure paths")
+    probe
+        .probe(chain)
+        .await
+        .expect("probe must return a status even on failure paths")
 }
 
 #[tokio::test]
@@ -41,14 +47,20 @@ async fn healthy_when_chain_id_matches() {
 
 #[tokio::test]
 async fn degraded_when_chain_id_mismatches() {
-    let status = health_for("health__alchemy__eth_chainId_mismatch.json", Chain::Ethereum).await;
+    let status = health_for(
+        "health__alchemy__eth_chainId_mismatch.json",
+        Chain::Ethereum,
+    )
+    .await;
 
     assert_eq!(status.status, HealthLevel::Degraded);
-    assert!(status
-        .message
-        .as_deref()
-        .unwrap_or_default()
-        .contains("expected chain id"));
+    assert!(
+        status
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("expected chain id")
+    );
 }
 
 #[tokio::test]

@@ -6,9 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use blockexplorer_tui::{
     adapters::secrets::PlaintextSecretStore,
-    application::ports::{
-        AppConfigView, ConfigPatch, ConfigPort, SecretStorePort, secret_keys,
-    },
+    application::ports::{AppConfigView, ConfigPatch, ConfigPort, SecretStorePort, secret_keys},
     domain::{Chain, DomainError},
 };
 use pretty_assertions::assert_eq;

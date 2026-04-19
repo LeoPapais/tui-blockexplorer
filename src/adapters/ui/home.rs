@@ -36,12 +36,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
 /// Variant of [`render`] that also paints a first-run credentials
 /// banner above the header when `banner` is `true`. See
 /// `plan/10-settings.md` section 12.2.
-pub fn render_with_banner(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    view: &HomeViewModel,
-    banner: bool,
-) {
+pub fn render_with_banner(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel, banner: bool) {
     if banner {
         let chunks = Layout::default()
             .direction(Direction::Vertical)

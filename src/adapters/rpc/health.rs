@@ -28,16 +28,13 @@ impl AlchemyHealth {
 
     pub async fn probe(&self, chain: Chain) -> Result<HealthStatus, DomainError> {
         let start = Instant::now();
-        let result: Result<String, _> = self
-            .client
-            .call("eth_chainId", serde_json::json!([]))
-            .await;
+        let result: Result<String, _> =
+            self.client.call("eth_chainId", serde_json::json!([])).await;
         let latency_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
         match result {
             Ok(hex) => {
-                let id = parse_hex_u64(&hex)
-                    .map_err(|e| DomainError::Internal(e.to_string()))?;
+                let id = parse_hex_u64(&hex).map_err(|e| DomainError::Internal(e.to_string()))?;
                 if id == expected_chain_id(chain) {
                     Ok(HealthStatus::healthy(ALCHEMY_PROVIDER, latency_ms))
                 } else {

@@ -24,7 +24,10 @@ fn builtin_map_has_no_conflicts() {
     assert!(!map.is_empty(), "builtin keymap must include bindings");
     // Sanity: the classic Home shortcuts resolve.
     let enter_search = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
-    assert_eq!(map.resolve(ScreenId::Home, enter_search), Some(Action::OpenSearch));
+    assert_eq!(
+        map.resolve(ScreenId::Home, enter_search),
+        Some(Action::OpenSearch)
+    );
 }
 
 #[test]
@@ -85,8 +88,14 @@ fn global_binding_resolves_when_screen_has_no_match() {
 
     let map = KeyMap::from_entries(&entries).expect("ok");
 
-    assert_eq!(map.resolve(ScreenId::Home, enter), Some(Action::OpenSettings));
-    assert_eq!(map.resolve(ScreenId::BlockDetail, enter), Some(Action::OpenSettings));
+    assert_eq!(
+        map.resolve(ScreenId::Home, enter),
+        Some(Action::OpenSettings)
+    );
+    assert_eq!(
+        map.resolve(ScreenId::BlockDetail, enter),
+        Some(Action::OpenSettings)
+    );
 }
 
 #[test]
@@ -108,7 +117,10 @@ fn screen_specific_binding_shadows_global() {
     let map = KeyMap::from_entries(&entries).expect("ok");
 
     assert_eq!(map.resolve(ScreenId::Home, enter), Some(Action::OpenSearch));
-    assert_eq!(map.resolve(ScreenId::TxDetail, enter), Some(Action::OpenSettings));
+    assert_eq!(
+        map.resolve(ScreenId::TxDetail, enter),
+        Some(Action::OpenSettings)
+    );
 }
 
 #[test]

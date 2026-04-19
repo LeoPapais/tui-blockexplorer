@@ -40,7 +40,10 @@ fn mask_sensitive_redacts_json_like_pairs() {
 #[test]
 fn mask_sensitive_is_case_insensitive_on_the_field_name() {
     let line = "API_TOKEN=abc Bearer_Token=xyz";
-    assert_eq!(mask_sensitive(line), "API_TOKEN=<redacted> Bearer_Token=<redacted>");
+    assert_eq!(
+        mask_sensitive(line),
+        "API_TOKEN=<redacted> Bearer_Token=<redacted>"
+    );
 }
 
 #[test]
@@ -51,7 +54,8 @@ fn mask_sensitive_keeps_lines_without_sensitive_fields_untouched() {
 
 #[test]
 fn mask_sensitive_handles_structured_tracing_field_syntax() {
-    let line = r#"INFO blockexplorer_tui::infra: starting alchemy_key="my-secret" chain="ethereum""#;
+    let line =
+        r#"INFO blockexplorer_tui::infra: starting alchemy_key="my-secret" chain="ethereum""#;
     assert_eq!(
         mask_sensitive(line),
         r#"INFO blockexplorer_tui::infra: starting alchemy_key=<redacted> chain="ethereum""#

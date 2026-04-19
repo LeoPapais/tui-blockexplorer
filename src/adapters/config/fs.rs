@@ -48,14 +48,9 @@ impl FsConfig {
     fn load_file(&self) -> Result<ConfigDocument, DomainError> {
         match fs::read_to_string(&self.path) {
             Ok(text) => toml::from_str::<ConfigDocument>(&text).map_err(|err| {
-                DomainError::Config(format!(
-                    "malformed config {}: {err}",
-                    self.path.display()
-                ))
+                DomainError::Config(format!("malformed config {}: {err}", self.path.display()))
             }),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                Ok(ConfigDocument::default())
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ConfigDocument::default()),
             Err(err) => Err(DomainError::Config(format!(
                 "failed to read {}: {err}",
                 self.path.display()
@@ -63,11 +58,7 @@ impl FsConfig {
         }
     }
 
-    fn merge(
-        &self,
-        mut doc: ConfigDocument,
-        patch: &ConfigPatch,
-    ) -> ConfigDocument {
+    fn merge(&self, mut doc: ConfigDocument, patch: &ConfigPatch) -> ConfigDocument {
         if let Some(chain) = patch.default_chain {
             let defaults = doc.defaults.get_or_insert_with(Default::default);
             defaults.chain = Some(chain.slug().to_string());
@@ -84,9 +75,8 @@ impl FsConfig {
     }
 
     fn atomic_write(&self, doc: &ConfigDocument) -> Result<(), DomainError> {
-        let rendered = toml::to_string_pretty(doc).map_err(|err| {
-            DomainError::Config(format!("failed to render config TOML: {err}"))
-        })?;
+        let rendered = toml::to_string_pretty(doc)
+            .map_err(|err| DomainError::Config(format!("failed to render config TOML: {err}")))?;
 
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|err| {
