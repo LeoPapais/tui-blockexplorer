@@ -234,3 +234,6 @@ mod logger_masking;
 
 #[path = "functional/home_screen_first_run_banner.rs"]
 mod home_screen_first_run_banner;
+
+#[path = "functional/fs_config_save.rs"]
+mod fs_config_save;
