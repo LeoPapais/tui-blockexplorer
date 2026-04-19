@@ -198,10 +198,10 @@ async fn server_5xx_error_maps_into_provider_unavailable() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/by-address"))
-        .respond_with(ResponseTemplate::new(500).set_body_raw(
-            load_text("prices__error__5xx.json"),
-            "application/json",
-        ))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_raw(load_text("prices__error__5xx.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 

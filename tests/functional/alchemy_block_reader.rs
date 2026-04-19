@@ -7,8 +7,8 @@ use blockexplorer_tui::{
     application::ports::BlockReaderPort,
     domain::{BlockHash, BlockId, BlockNumber, Chain},
 };
-use serde_json::json;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use url::Url;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,

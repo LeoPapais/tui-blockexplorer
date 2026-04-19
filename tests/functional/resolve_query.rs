@@ -2,6 +2,7 @@
 //!
 //! See `plan/2-search.md` section 10.1.
 
+use assert_matches::assert_matches;
 use blockexplorer_tui::{
     application::use_cases::resolve_query::{
         Classification, ResolveQuery, classify, classify_input,
@@ -11,7 +12,6 @@ use blockexplorer_tui::{
         ResolvedEntity, TokenMetadata, TxHash, TxSummary,
     },
 };
-use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 

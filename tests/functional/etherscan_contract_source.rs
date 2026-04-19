@@ -147,10 +147,10 @@ async fn server_5xx_error_maps_into_provider_unavailable() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v2/api"))
-        .respond_with(ResponseTemplate::new(503).set_body_raw(
-            load_text("etherscan__error__5xx.json"),
-            "application/json",
-        ))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .set_body_raw(load_text("etherscan__error__5xx.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
