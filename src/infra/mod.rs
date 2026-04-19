@@ -25,12 +25,14 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use url::Url;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
     adapters::{
         cache::TtlCache,
         config::InMemoryChainRegistry,
+        rng::OsRng,
         etherscan::{
             CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
             EtherscanTokenSearch,
@@ -574,7 +576,7 @@ fn build_live_keymap(config: &AppConfig) -> GlobalKeyMap {
 
     let url = alchemy_url(chain, &key);
     let http = Client::new();
-    let rpc = RpcClient::new(url, http);
+    let rpc = RpcClient::new(url, http).with_default_retry(Arc::new(OsRng::new()));
     let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
 
     let search_factory = {
@@ -689,7 +691,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
 
     let url = alchemy_url(chain, key);
     let http = Client::new();
-    let rpc = RpcClient::new(url, http);
+    let rpc = RpcClient::new(url, http).with_default_retry(Arc::new(OsRng::new()));
 
     let network = AlchemyNetworkStatusAdapter::new(rpc.clone());
     let gas = AlchemyGasOracleAdapter::new(rpc.clone());
