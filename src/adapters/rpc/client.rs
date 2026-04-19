@@ -2,6 +2,7 @@
 //!
 //! See `plan/13-alchemy-adapter.md` section 2.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::{Client, StatusCode};
@@ -10,6 +11,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use url::Url;
 
+use super::retry::{RetryPolicy, retry_with_backoff};
+use crate::application::ports::Rng;
 use crate::domain::DomainError;
 
 /// Errors produced by the RPC client. Mapped to [`DomainError`] at the
@@ -96,14 +99,23 @@ impl RpcError {
 pub struct RpcClient {
     http: Client,
     base_url: Url,
+    retry: Arc<RetryPolicy>,
 }
 
 impl RpcClient {
     /// Construct a new client. Callers build the `reqwest::Client` once
     /// and pass it in so connection pooling is shared across adapters.
+    ///
+    /// The returned client uses [`RetryPolicy::none()`]; opt into the
+    /// hardened schedule via [`Self::with_default_retry`] or
+    /// [`Self::with_retry_policy`] in the composition root.
     #[must_use]
     pub fn new(base_url: Url, http: Client) -> Self {
-        Self { http, base_url }
+        Self {
+            http,
+            base_url,
+            retry: Arc::new(RetryPolicy::none()),
+        }
     }
 
     /// Convenience constructor: builds a `reqwest::Client` with sane
@@ -113,23 +125,51 @@ impl RpcClient {
         Ok(Self::new(base_url, http))
     }
 
+    /// Consume `self` and attach an explicit [`RetryPolicy`]. Prefer
+    /// [`Self::with_default_retry`] unless a test needs a tailored
+    /// delay schedule.
+    #[must_use]
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry = Arc::new(policy);
+        self
+    }
+
+    /// Convenience for the MVP composition root: install the default
+    /// 3-attempt jittered policy using the supplied [`Rng`] port.
+    #[must_use]
+    pub fn with_default_retry(self, rng: Arc<dyn Rng>) -> Self {
+        self.with_retry_policy(RetryPolicy::default_with_rng(rng))
+    }
+
+    /// Retry policy currently attached to this client. Exposed for
+    /// the circuit breaker + tests; do not mutate through it.
+    #[must_use]
+    pub fn retry_policy(&self) -> &RetryPolicy {
+        &self.retry
+    }
+
     /// Issue a JSON-RPC 2.0 call and decode the `result` field.
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &self,
         method: &str,
         params: P,
     ) -> Result<R, RpcError> {
+        let params_value = serde_json::to_value(&params)?;
         let request = json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
-            "params": params,
+            "params": params_value,
         });
 
+        retry_with_backoff(&self.retry, || self.call_once::<R>(&request)).await
+    }
+
+    async fn call_once<R: DeserializeOwned>(&self, request: &Value) -> Result<R, RpcError> {
         let resp = self
             .http
             .post(self.base_url.clone())
-            .json(&request)
+            .json(request)
             .send()
             .await?;
 

@@ -267,3 +267,6 @@ mod runtime_teardown;
 
 #[path = "functional/rpc_error_mapping.rs"]
 mod rpc_error_mapping;
+
+#[path = "functional/rpc_retry.rs"]
+mod rpc_retry;
