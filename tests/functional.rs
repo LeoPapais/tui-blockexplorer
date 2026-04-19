@@ -219,3 +219,12 @@ mod token_price_stream;
 
 #[path = "functional/token_detail_screen_keys.rs"]
 mod token_detail_screen_keys;
+
+#[path = "functional/gas_unit_conversion.rs"]
+mod gas_unit_conversion;
+
+#[path = "functional/gas_percentiles.rs"]
+mod gas_percentiles;
+
+#[path = "functional/gas_tracker_screen.rs"]
+mod gas_tracker_screen;
