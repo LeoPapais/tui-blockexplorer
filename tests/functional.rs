@@ -282,3 +282,9 @@ mod rpc_batch;
 
 #[path = "functional/alchemy_new_heads_stream.rs"]
 mod alchemy_new_heads_stream;
+
+#[path = "functional/chain_from_slug.rs"]
+mod chain_from_slug;
+
+#[path = "functional/init_config.rs"]
+mod init_config;
