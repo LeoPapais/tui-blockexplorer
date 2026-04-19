@@ -8,14 +8,18 @@
 use std::time::Duration;
 
 use crate::{
-    adapters::{cache::TtlCache, clock::SystemClock},
+    adapters::{
+        cache::{ABI_TTL, TtlCache},
+        clock::SystemClock,
+    },
     application::ports::{Clock, EtherscanProxyHintPort},
     domain::{Address, Chain, DomainError},
 };
 
-/// Default TTL for the proxy-hint cache. Shared with the ABI /
-/// ENS caches.
-pub const DEFAULT_HINT_TTL: Duration = Duration::from_secs(300);
+/// Default TTL for the proxy-hint cache. Pulled from the shared cache
+/// registry (`adapters::cache::ABI_TTL`) so the ABI / proxy-hint
+/// family of caches always agrees on a single 5-minute budget.
+pub const DEFAULT_HINT_TTL: Duration = ABI_TTL;
 
 /// Decorator that wraps any [`EtherscanProxyHintPort`] with a
 /// TTL-bounded cache keyed by `(chain, address)`.

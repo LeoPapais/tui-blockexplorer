@@ -288,3 +288,6 @@ mod chain_from_slug;
 
 #[path = "functional/init_config.rs"]
 mod init_config;
+
+#[path = "functional/cache_registry.rs"]
+mod cache_registry;
