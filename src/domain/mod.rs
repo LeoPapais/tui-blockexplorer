@@ -6,6 +6,23 @@
 //!
 //! See `plan/0-general-architecture.md` section 6 for layer rules.
 
+// Opt this module tree into `clippy::pedantic`. See
+// `plan/11-rust-scaffolding.md` §9.1 for rationale and the blanket
+// allow-list below.
+#![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::match_same_arms)]
+
 pub mod address;
 pub mod block;
 pub mod chain;

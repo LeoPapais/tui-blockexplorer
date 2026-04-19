@@ -54,9 +54,8 @@ where
     R: BlockReaderPort,
     L: LabelPort,
 {
-    let block = match reader.get(id, chain).await? {
-        Some(block) => block,
-        None => return Err(DomainError::NotFound),
+    let Some(block) = reader.get(id, chain).await? else {
+        return Err(DomainError::NotFound);
     };
 
     let miner_label = soft_label(labels, block.miner, chain).await;

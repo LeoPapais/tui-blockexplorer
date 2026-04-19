@@ -11,6 +11,12 @@
 //! See [`plan/0-general-architecture.md`](../plan/0-general-architecture.md)
 //! for the full picture.
 
+// Crate-wide lint floor. See `plan/11-rust-scaffolding.md` §9.1.
+// `dbg!` must never ship; `todo!` is a signal that the author owes a plan
+// reference, so we nudge reviewers by warning on every occurrence.
+#![deny(clippy::dbg_macro)]
+#![warn(clippy::todo)]
+
 pub mod adapters;
 pub mod application;
 pub mod domain;

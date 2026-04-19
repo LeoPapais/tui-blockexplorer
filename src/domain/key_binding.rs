@@ -245,8 +245,14 @@ pub fn format_key(event: KeyEvent) -> String {
         KeyCode::Right => out.push_str("Right"),
         KeyCode::Up => out.push_str("Up"),
         KeyCode::Down => out.push_str("Down"),
-        KeyCode::F(n) => out.push_str(&format!("F{n}")),
-        other => out.push_str(&format!("{other:?}")),
+        KeyCode::F(n) => {
+            use std::fmt::Write as _;
+            let _ = write!(out, "F{n}");
+        }
+        other => {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{other:?}");
+        }
     }
     out
 }

@@ -56,9 +56,8 @@ where
     S: SignatureDirectoryPort,
     P: ProxyDetectionPort,
 {
-    let tx = match reader.get(hash, chain).await? {
-        Some(tx) => tx,
-        None => return Err(DomainError::NotFound),
+    let Some(tx) = reader.get(hash, chain).await? else {
+        return Err(DomainError::NotFound);
     };
 
     // --- Method signature decoding --------------------------------
@@ -79,7 +78,7 @@ where
 
     // --- Receipt-log decoding -------------------------------------
     let mut decoded_logs = Vec::with_capacity(tx.logs.len());
-    for raw in tx.logs.iter() {
+    for raw in &tx.logs {
         let sig = decode_log(contract_source, signatures, proxy_detector, raw, chain).await;
         decoded_logs.push(DecodedLog {
             raw: raw.clone(),

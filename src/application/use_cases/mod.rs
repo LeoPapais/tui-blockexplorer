@@ -2,6 +2,24 @@
 //!
 //! Each file mirrors a use case named in a plan file under `plan/`.
 
+// Opt this module tree into `clippy::pedantic`. See
+// `plan/11-rust-scaffolding.md` §9.1.
+#![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::match_same_arms)]
+
 pub mod classify_address;
 pub mod invoke_read_function;
 pub mod load_address_overview;
