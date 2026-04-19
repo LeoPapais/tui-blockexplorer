@@ -24,9 +24,8 @@ where
         proxy_detector.detect(address, chain),
     );
 
-    let account = match account_res? {
-        Some(overview) => overview,
-        None => return Err(DomainError::NotFound),
+    let Some(account) = account_res? else {
+        return Err(DomainError::NotFound);
     };
     // Proxy-detection failures are non-fatal: the overview is still
     // useful without proxy information.

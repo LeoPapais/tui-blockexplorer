@@ -293,6 +293,9 @@ pub fn classify(input: &str) -> Classification {
     {
         return Classification::BlockNumber(BlockNumber::new(n));
     }
+    // `lower` is already `to_ascii_lowercase`d above, so the
+    // case-sensitive suffix check is what we want here.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     if lower.ends_with(".eth") {
         return Classification::EnsName(lower);
     }

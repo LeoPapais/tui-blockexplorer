@@ -178,6 +178,9 @@ mod classify_address;
 #[path = "functional/ttl_cache.rs"]
 mod ttl_cache;
 
+#[path = "functional/rng_stub.rs"]
+mod rng_stub;
+
 #[path = "functional/etherscan_token_search.rs"]
 mod etherscan_token_search;
 

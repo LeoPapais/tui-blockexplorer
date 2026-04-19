@@ -149,6 +149,11 @@ impl ConfigPort for FsConfig {
     }
 }
 
+// NOTE: adapter-local wall clock. Application code must never call
+// `SystemTime::now()`; see `plan/11-rust-scaffolding.md` §9.2. Here the
+// timestamp is only used as a uniqueness nonce inside a temp filename
+// (atomic-write pattern) and is never observed by downstream code, so
+// wiring a `Clock` port would be noise without test value.
 fn temp_sibling(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
