@@ -255,3 +255,12 @@ mod plaintext_secret_store;
 
 #[path = "functional/settings_theme.rs"]
 mod settings_theme;
+
+#[path = "functional/help_modal.rs"]
+mod help_modal;
+
+#[path = "functional/global_keymap.rs"]
+mod global_keymap;
+
+#[path = "functional/runtime_teardown.rs"]
+mod runtime_teardown;

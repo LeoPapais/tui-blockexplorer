@@ -9,10 +9,9 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        AddressDetailScreen, BlockDetailScreen, Command, ContractDetailScreen,
-        DetailPlaceholderScreen, HomeScreen, ScreenStack, SearchScreen, TokenDetailScreen,
-        TxDetailScreen, address_feed, block_feed, contract_feed, home_feed, search_feed,
-        token_feed, tx_feed,
+        AddressDetailScreen, BlockDetailScreen, ContractDetailScreen, DetailPlaceholderScreen,
+        HomeScreen, ScreenStack, SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed,
+        block_feed, contract_feed, home_feed, search_feed, token_feed, tx_feed,
     },
     application::{
         ConnectionStatus, HomeViewModel,
@@ -653,31 +652,14 @@ pub(crate) fn spawn_tx_detail<R: TxReaderPort + Clone + 'static>(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
-/// Apply a [`Command`] returned by a screen to the world's stack. The
-/// runtime's real dispatcher does the same (`src/infra/runtime.rs`).
-fn apply_command(stack: &mut ScreenStack, cmd: Command) {
-    match cmd {
-        Command::None | Command::Refresh => {}
-        Command::Pop => {
-            stack.pop();
-        }
-        Command::Quit => stack.clear(),
-        Command::Push(screen) => stack.push(screen),
-        Command::Replace(screen) => {
-            stack.pop();
-            stack.push(screen);
-        }
-    }
-}
-
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
     let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
 }
 
 fn tick(stack: &mut ScreenStack) {
     let cmd = stack.top_mut().expect("stack non-empty").tick();
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
 }
 
 async fn type_and_resolve(stack: &mut ScreenStack, input: &str) {

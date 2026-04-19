@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use blockexplorer_tui::{
-    adapters::ui::{BlockDetailScreen, BlockTab, Command, ScreenStack},
+    adapters::ui::{BlockDetailScreen, BlockTab, ScreenStack},
     domain::{
         Address, Block, BlockHash, BlockId, BlockNumber, BlockSummary, Chain, TxHash,
         UnixTimestamp, Wei, Withdrawal,
@@ -58,29 +58,14 @@ fn main_block_hash_hex() -> String {
     "0xaaaa000000000000000000000000000000000000000000000000000000000000".to_string()
 }
 
-fn apply_command(stack: &mut ScreenStack, cmd: Command) {
-    match cmd {
-        Command::None | Command::Refresh => {}
-        Command::Pop => {
-            stack.pop();
-        }
-        Command::Quit => stack.clear(),
-        Command::Push(screen) => stack.push(screen),
-        Command::Replace(screen) => {
-            stack.pop();
-            stack.push(screen);
-        }
-    }
-}
-
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
     let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
 }
 
 fn tick(stack: &mut ScreenStack) {
     let cmd = stack.top_mut().expect("stack non-empty").tick();
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
 }
 
 async fn tick_until<F>(stack: &mut ScreenStack, mut predicate: F)

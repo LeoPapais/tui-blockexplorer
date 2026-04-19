@@ -360,22 +360,7 @@ fn press_key(stack: &mut ScreenStack, code: KeyCode) {
         kind: KeyEventKind::Press,
         state: KeyEventState::empty(),
     });
-    match cmd {
-        Command::None | Command::Refresh => {}
-        Command::Pop => {
-            stack.pop();
-        }
-        Command::Push(next) => {
-            stack.push(next);
-        }
-        Command::Replace(next) => {
-            stack.pop();
-            stack.push(next);
-        }
-        Command::Quit => {
-            stack.clear();
-        }
-    }
+    stack.apply_command(cmd);
 }
 
 // ---------------------------------------------------------------------------

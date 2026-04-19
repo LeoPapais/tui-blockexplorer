@@ -126,3 +126,195 @@ fn _assert_crossterm_symbols_resolve(kind: KeyEventKind, modifiers: KeyModifiers
     let _ = (kind, modifiers);
     let _ = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
 }
+
+// ---------------------------------------------------------------------------
+// plan/12-screen-runtime.md §7: modal slot, apply_command, Switch.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn modal_slot_is_empty_on_a_fresh_stack() {
+    let stack = ScreenStack::new();
+    assert!(stack.modal().is_none());
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn open_modal_sets_the_modal_without_touching_the_stack() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+
+    stack.open_modal(LabelScreen::boxed("help"));
+
+    assert!(stack.has_modal());
+    assert_eq!(stack.modal().unwrap().title(), "help");
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn close_modal_clears_the_modal_slot() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("help"));
+
+    stack.close_modal();
+
+    assert!(!stack.has_modal());
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn apply_command_pop_pops_the_stack_when_no_modal_is_open() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("tx"));
+
+    let transition = stack.apply_command(Command::Pop);
+    assert!(!transition.should_exit());
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn apply_command_pop_closes_the_modal_when_one_is_open() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("help"));
+
+    let transition = stack.apply_command(Command::Pop);
+
+    assert!(!transition.should_exit());
+    assert!(!stack.has_modal());
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn apply_command_quit_signals_exit() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("help"));
+
+    let transition = stack.apply_command(Command::Quit);
+
+    assert!(transition.should_exit());
+    assert!(stack.is_empty());
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_push_pushes_on_top() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+
+    stack.apply_command(Command::Push(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert_eq!(stack.len(), 2);
+}
+
+#[test]
+fn apply_command_replace_swaps_the_top() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Replace(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert_eq!(stack.len(), 2);
+}
+
+#[test]
+fn apply_command_switch_clears_the_stack_and_pushes() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("tx"));
+    stack.push(LabelScreen::boxed("block"));
+
+    stack.apply_command(Command::Switch(LabelScreen::boxed("settings")));
+
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "settings");
+}
+
+#[test]
+fn apply_command_switch_also_clears_the_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("help"));
+
+    stack.apply_command(Command::Switch(LabelScreen::boxed("settings")));
+
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "settings");
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_open_modal_populates_the_modal_slot() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+
+    stack.apply_command(Command::OpenModal(LabelScreen::boxed("help")));
+
+    assert_eq!(stack.modal().unwrap().title(), "help");
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn apply_command_open_modal_replaces_an_existing_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("first"));
+
+    stack.apply_command(Command::OpenModal(LabelScreen::boxed("second")));
+
+    assert_eq!(stack.modal().unwrap().title(), "second");
+}
+
+#[test]
+fn apply_command_close_modal_on_empty_slot_is_a_noop() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+
+    stack.apply_command(Command::CloseModal);
+
+    assert_eq!(stack.len(), 1);
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_push_with_open_modal_closes_the_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Push(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_replace_with_open_modal_closes_the_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Replace(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_pop_on_last_screen_signals_exit() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+
+    let transition = stack.apply_command(Command::Pop);
+
+    assert!(transition.should_exit());
+    assert!(stack.is_empty());
+}
