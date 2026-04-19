@@ -7,8 +7,8 @@
 //!
 //! See `plan/12-screen-runtime.md` §7 items 1 and 2.
 
-use blockexplorer_tui::infra::runtime::{TeardownGate, signal_to_command};
 use blockexplorer_tui::adapters::ui::Command;
+use blockexplorer_tui::infra::runtime::{TeardownGate, signal_to_command};
 
 #[test]
 fn teardown_gate_only_fires_once() {

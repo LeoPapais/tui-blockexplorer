@@ -285,6 +285,30 @@ fn apply_command_close_modal_on_empty_slot_is_a_noop() {
 }
 
 #[test]
+fn apply_command_push_with_open_modal_closes_the_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Push(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert!(!stack.has_modal());
+}
+
+#[test]
+fn apply_command_replace_with_open_modal_closes_the_modal() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Replace(LabelScreen::boxed("tx")));
+
+    assert_eq!(stack.top().unwrap().title(), "tx");
+    assert!(!stack.has_modal());
+}
+
+#[test]
 fn apply_command_pop_on_last_screen_signals_exit() {
     let mut stack = ScreenStack::new();
     stack.push(LabelScreen::boxed("home"));

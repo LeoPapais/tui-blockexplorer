@@ -37,15 +37,23 @@ fn key(code: KeyCode) -> KeyEvent {
 #[test]
 fn empty_map_returns_none_for_every_key() {
     let map = GlobalKeyMap::default();
-    assert!(matches!(map.dispatch(key(KeyCode::Char('/'))), Command::None));
-    assert!(matches!(map.dispatch(key(KeyCode::Char('?'))), Command::None));
-    assert!(matches!(map.dispatch(key(KeyCode::Char('q'))), Command::None));
+    assert!(matches!(
+        map.dispatch(key(KeyCode::Char('/'))),
+        Command::None
+    ));
+    assert!(matches!(
+        map.dispatch(key(KeyCode::Char('?'))),
+        Command::None
+    ));
+    assert!(matches!(
+        map.dispatch(key(KeyCode::Char('q'))),
+        Command::None
+    ));
 }
 
 #[test]
 fn slash_opens_search_as_a_modal_when_configured() {
-    let map = GlobalKeyMap::default()
-        .with_search_factory(|| Box::new(Marker { label: "Search" }));
+    let map = GlobalKeyMap::default().with_search_factory(|| Box::new(Marker { label: "Search" }));
     let cmd = map.dispatch(key(KeyCode::Char('/')));
     match cmd {
         Command::OpenModal(screen) => assert_eq!(screen.title(), "Search"),
@@ -55,8 +63,7 @@ fn slash_opens_search_as_a_modal_when_configured() {
 
 #[test]
 fn question_mark_opens_help_as_a_modal_when_configured() {
-    let map = GlobalKeyMap::default()
-        .with_help_factory(|| Box::new(Marker { label: "Help" }));
+    let map = GlobalKeyMap::default().with_help_factory(|| Box::new(Marker { label: "Help" }));
     let cmd = map.dispatch(key(KeyCode::Char('?')));
     match cmd {
         Command::OpenModal(screen) => assert_eq!(screen.title(), "Help"),
@@ -69,15 +76,17 @@ fn unrelated_keys_are_not_intercepted() {
     let map = GlobalKeyMap::default()
         .with_search_factory(|| Box::new(Marker { label: "Search" }))
         .with_help_factory(|| Box::new(Marker { label: "Help" }));
-    assert!(matches!(map.dispatch(key(KeyCode::Char('q'))), Command::None));
+    assert!(matches!(
+        map.dispatch(key(KeyCode::Char('q'))),
+        Command::None
+    ));
     assert!(matches!(map.dispatch(key(KeyCode::Enter)), Command::None));
 }
 
 #[test]
 fn modifiers_prevent_interception() {
     // `Ctrl+/` should not trigger global search — only the plain key.
-    let map = GlobalKeyMap::default()
-        .with_search_factory(|| Box::new(Marker { label: "Search" }));
+    let map = GlobalKeyMap::default().with_search_factory(|| Box::new(Marker { label: "Search" }));
     let ctrl_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
     assert!(matches!(map.dispatch(ctrl_slash), Command::None));
 }
