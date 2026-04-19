@@ -214,8 +214,13 @@ async fn rpc_error_surfaces_as_domain_error() {
         .await
         .expect_err("primary error must propagate");
 
-    // `-32000 server error` maps to DomainError::Internal; details
-    // unchecked so a future mapping refinement doesn't break the
-    // test.
-    assert!(format!("{err:?}").contains("Internal"));
+    // `-32000 server error` falls in the JSON-RPC server-defined
+    // range (`-32099..=-32000`) and therefore maps to
+    // `DomainError::ProviderUnavailable` under the §8.1 mapping
+    // (plan/13-alchemy-adapter.md §8.1 / plan/15-backlog.md §8.14
+    // item 6).
+    assert!(matches!(
+        err,
+        blockexplorer_tui::domain::DomainError::ProviderUnavailable
+    ));
 }

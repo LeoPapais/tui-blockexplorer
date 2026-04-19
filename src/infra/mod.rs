@@ -11,6 +11,7 @@ pub mod address_feed;
 mod block_feed;
 pub mod config;
 mod contract_feed;
+pub mod cost_meter;
 mod gas_feed;
 pub mod health;
 pub mod home_feed;
@@ -25,23 +26,28 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use url::Url;
 
+use std::sync::Arc;
 use std::time::Duration;
+
+use cost_meter::CostMeter;
 
 use crate::{
     adapters::{
         cache::TtlCache,
+        clock::SystemClock,
         config::InMemoryChainRegistry,
         etherscan::{
             CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
             EtherscanTokenSearch,
         },
         prices::{AlchemyPrices, PollingTokenPriceStream, PricesClient},
+        rng::OsRng,
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
             AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
             AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector, AlchemySimulation,
             AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
-            AlchemyTxTracer, CompositeProxyDetector, RpcClient,
+            AlchemyTxTracer, CircuitBreaker, CompositeProxyDetector, RpcClient,
         },
         signatures::{
             CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
@@ -574,7 +580,13 @@ fn build_live_keymap(config: &AppConfig) -> GlobalKeyMap {
 
     let url = alchemy_url(chain, &key);
     let http = Client::new();
-    let rpc = RpcClient::new(url, http);
+    let breaker = Arc::new(CircuitBreaker::default_with_clock(Arc::new(
+        SystemClock::new(),
+    )));
+    let rpc = RpcClient::new(url, http)
+        .with_default_retry(Arc::new(OsRng::new()))
+        .with_circuit_breaker(breaker)
+        .with_cost_recorder(CostMeter::shared());
     let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
 
     let search_factory = {
@@ -689,7 +701,13 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
 
     let url = alchemy_url(chain, key);
     let http = Client::new();
-    let rpc = RpcClient::new(url, http);
+    let breaker = Arc::new(CircuitBreaker::default_with_clock(Arc::new(
+        SystemClock::new(),
+    )));
+    let rpc = RpcClient::new(url, http)
+        .with_default_retry(Arc::new(OsRng::new()))
+        .with_circuit_breaker(breaker)
+        .with_cost_recorder(CostMeter::shared());
 
     let network = AlchemyNetworkStatusAdapter::new(rpc.clone());
     let gas = AlchemyGasOracleAdapter::new(rpc.clone());

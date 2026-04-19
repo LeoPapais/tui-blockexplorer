@@ -264,3 +264,21 @@ mod global_keymap;
 
 #[path = "functional/runtime_teardown.rs"]
 mod runtime_teardown;
+
+#[path = "functional/rpc_error_mapping.rs"]
+mod rpc_error_mapping;
+
+#[path = "functional/rpc_retry.rs"]
+mod rpc_retry;
+
+#[path = "functional/rpc_circuit_breaker.rs"]
+mod rpc_circuit_breaker;
+
+#[path = "functional/cost_meter.rs"]
+mod cost_meter;
+
+#[path = "functional/rpc_batch.rs"]
+mod rpc_batch;
+
+#[path = "functional/alchemy_new_heads_stream.rs"]
+mod alchemy_new_heads_stream;

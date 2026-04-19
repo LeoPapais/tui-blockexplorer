@@ -94,30 +94,51 @@ impl PortfolioPort for AlchemyPortfolio {
             return Ok(Vec::new());
         }
 
-        // Fan-out: each metadata call runs on its own Tokio task so
-        // they overlap in flight; we then await them in order so the
-        // resulting Vec stays aligned with `parsed`.
-        let handles: Vec<_> = parsed
-            .iter()
-            .map(|(addr, _)| {
-                let client = self.client.clone();
-                let addr_hex = addr.to_hex();
-                tokio::spawn(async move {
-                    client
-                        .call::<_, RawMetadata>("alchemy_getTokenMetadata", json!([addr_hex]))
-                        .await
-                })
-            })
-            .collect();
+        // Fan-in via JSON-RPC batch: one request for the whole list
+        // of `alchemy_getTokenMetadata` calls instead of N spawned
+        // tasks. See `plan/13-alchemy-adapter.md` §8.5.
+        let metadata_params: Vec<[String; 1]> =
+            parsed.iter().map(|(addr, _)| [addr.to_hex()]).collect();
+        let metadata_results: Vec<Result<RawMetadata, RpcError>> = if metadata_params.len() == 1 {
+            // Skip the array wrapper for the degenerate one-call case:
+            // keeps the body identical to the pre-batch shape and
+            // avoids paying allocation overhead for nothing.
+            vec![
+                self.client
+                    .call::<_, RawMetadata>(
+                        "alchemy_getTokenMetadata",
+                        json!([metadata_params[0][0]]),
+                    )
+                    .await,
+            ]
+        } else {
+            match self
+                .client
+                .call_batch::<_, RawMetadata>("alchemy_getTokenMetadata", &metadata_params)
+                .await
+            {
+                Ok(results) => results,
+                Err(_) => {
+                    // Batch envelope failed (transport / rate limit):
+                    // degrade to per-call best-effort.
+                    let mut out = Vec::with_capacity(metadata_params.len());
+                    for [addr_hex] in &metadata_params {
+                        out.push(
+                            self.client
+                                .call::<_, RawMetadata>(
+                                    "alchemy_getTokenMetadata",
+                                    json!([addr_hex]),
+                                )
+                                .await,
+                        );
+                    }
+                    out
+                }
+            }
+        };
 
         let mut holdings = Vec::with_capacity(parsed.len());
-        for ((contract, balance), handle) in parsed.into_iter().zip(handles) {
-            let meta_result = handle.await.unwrap_or_else(|_| {
-                Err(RpcError::Rpc {
-                    code: -32000,
-                    message: "metadata task panicked".into(),
-                })
-            });
+        for ((contract, balance), meta_result) in parsed.into_iter().zip(metadata_results) {
             // Best-effort metadata: a missing symbol / decimals is
             // rendered as the raw contract address.
             let raw_meta = meta_result.unwrap_or(RawMetadata {
