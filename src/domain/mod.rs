@@ -41,7 +41,7 @@ pub use contract_read::{
 pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, SourceFile};
 pub use errors::DomainError;
 pub use events::EventsPage;
-pub use gas::{Gwei, Wei};
+pub use gas::{Gwei, Percentiles, Unit, Wei};
 pub use label::{Label, LabelSource};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use network_status::{GasSnapshot, NetworkStatus, NewHead};
