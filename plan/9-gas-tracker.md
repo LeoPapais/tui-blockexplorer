@@ -1,10 +1,12 @@
 # 9 — Gas Tracker
 
-Status: **done** (MVP scope) — `g` on Home opens a Gas Tracker
+Status: **done** (MVP + follow-ups) — `g` on Home opens a Gas Tracker
 screen that renders `slow / average / fast / base fee / trend` from
 the shared `GasOraclePort`. Live mode polls Alchemy every 6s via a
-dedicated feed task. The unit converter modal, percentile histogram
-and pending base-fee prediction remain deferred (section 11.2).
+dedicated feed task. Follow-ups §11.2 (pause / Ctrl+R), §11.3
+(percentile histogram) and §11.4 (unit converter modal) shipped in
+the §8.10 backlog slice. Pending base-fee prediction stays WONT-DO
+(§11.5).
 
 Full-screen gas dashboard. Reached from Home (`Enter` on the Gas card) or via the
 command palette. Shares the `GasOraclePort` with Home.
@@ -142,8 +144,69 @@ One slice — the port and domain already exist (shared with Home).
   - After the stub publishes a new snapshot, assert the screen
     updates.
 
-### 11.2 Deferred
+### 11.2 Shipped — Pause + manual refresh (`p` / Ctrl+R)
 
-- Unit converter modal (`u`).
-- Base-fee prediction for the pending block.
-- Percentile histogram widget.
+Promoted out of `plan/15-backlog.md` §8.10.
+
+- `GasTrackerScreen` gained a `paused: bool` flag. `p` toggles it.
+- While paused, `tick` keeps draining the feed channel (so the
+  unbounded mpsc cannot back-pressure the feed task) but **drops**
+  every incoming `GasSnapshot` instead of replacing `current`.
+  The "paused" badge in the header shows the state.
+- `Ctrl+R` returns `Command::Refresh` **and**, when the screen was
+  built with a refresh handle, kicks a `GasRefreshHandle` that is
+  consumed by the feed task via `tokio::select!` so the next
+  `oracle.snapshot` call happens immediately instead of waiting
+  for the 6s period. A manual refresh is honoured even while the
+  screen is paused, with the explicit semantics "unpauses + applies
+  the next snapshot once". The badge then returns to "live".
+- The feed task (`src/infra/gas_feed.rs::spawn`) takes an optional
+  `GasRefreshListener`; the composition root wires one end into the
+  screen and the other into the spawn call. Tests that don't need a
+  refresh path keep the old 2-arg `gas_feed()` helper.
+
+### 11.3 Shipped — Percentile histogram (p25 / p50 / p75)
+
+- New pure helper `Gwei::percentiles(samples: &[Gwei]) ->
+  Percentiles { p25, p50, p75 }` in `src/domain/gas.rs`. Nearest-rank
+  method (same definition the RPC layer already uses via
+  `eth_feeHistory`'s `rewardPercentiles`). Empty input returns
+  `Percentiles::empty()` so the widget can render a neutral state.
+- The Gas Tracker screen keeps a rolling buffer of the last 60
+  snapshots (one per polling tick). The histogram block renders
+  `p25 / p50 / p75` of `base_fee` alongside the tier numbers, plus a
+  tiny horizontal bar for each percentile using Unicode block
+  characters. Two ASCII fallback characters keep the widget readable
+  on terminals without a block-element font.
+
+### 11.4 Shipped — Unit converter modal (`u`)
+
+- New domain helper `gas::convert_unit(value: &str, from: Unit, to:
+  Unit) -> Result<String, DomainError>` with the `Unit` enum
+  (`Wei / Gwei / Ether`). Validation rules:
+  - Reject strings that start with `-` → `InvalidInput("negative
+    values not allowed")`.
+  - Parse the input as a fixed-point decimal with up to **18**
+    fractional digits (ether max precision). Values with more digits
+    or with invalid characters return `InvalidInput`.
+  - Any intermediate overflow of the internal `u128` representation
+    surfaces as `InvalidInput("value exceeds u128 range")`.
+  - The output is a canonical decimal string: integer values have no
+    trailing `.` / `0`; fractional values are trimmed of trailing
+    zeros.
+- The Gas Tracker screen owns a lightweight modal struct kept
+  strictly internal to the file (no cross-screen modal runtime yet —
+  `plan/15-backlog.md` §8.13 tracks that). `u` opens it, `Esc`
+  closes it, `Enter` performs the conversion, arrow keys flip the
+  source / target units. Errors are rendered inline under the input
+  field. The modal is rendered by the screen's own `render`, centred
+  over the main content.
+- Follow-up: migrate the modal to `Command::OpenModal` once the
+  dispatcher gains it in §8.13.
+
+### 11.5 Deferred
+
+- Base-fee prediction for the pending block (EIP-1559 formula). This
+  is pure math but the UX cost — another column + error bars —
+  outweighs the benefit today. Stays tracked in `plan/15-backlog.md`
+  §8.10 as WONT-DO.
