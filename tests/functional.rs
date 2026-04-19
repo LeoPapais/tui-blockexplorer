@@ -240,3 +240,9 @@ mod fs_config_save;
 
 #[path = "functional/keymap_conflict.rs"]
 mod keymap_conflict;
+
+#[path = "functional/alchemy_health.rs"]
+mod alchemy_health;
+
+#[path = "functional/etherscan_health.rs"]
+mod etherscan_health;

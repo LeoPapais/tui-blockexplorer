@@ -44,7 +44,7 @@ pub use screen::{Command, Screen, ScreenStack};
 pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen, search_feed,
 };
-pub use settings::{AppConfigSnapshot, SettingsScreen};
+pub use settings::{AppConfigSnapshot, ProviderHealthSnapshot, SettingsScreen};
 pub use token_detail::{
     OpenContractFactory as TokenOpenContractFactory, OpenTxFactory as TokenOpenTxFactory,
     TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab, token_feed,

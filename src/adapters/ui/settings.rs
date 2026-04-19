@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::{
     adapters::ui::screen::{Command, Screen},
+    application::ports::{HealthLevel, HealthStatus},
     domain::Chain,
 };
 
@@ -23,19 +24,72 @@ pub struct AppConfigSnapshot {
     pub config_path_hint: Option<String>,
 }
 
+/// Optional snapshot of provider health shown under the Overview
+/// section. Fetched once on screen open; live polling is deferred.
+/// See `plan/10-settings.md` section 12.5.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderHealthSnapshot {
+    pub alchemy: Option<HealthStatus>,
+    pub etherscan: Option<HealthStatus>,
+}
+
 pub struct SettingsScreen {
     snapshot: AppConfigSnapshot,
+    health: ProviderHealthSnapshot,
 }
 
 impl SettingsScreen {
     #[must_use]
     pub fn new(snapshot: AppConfigSnapshot) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            health: ProviderHealthSnapshot::default(),
+        }
+    }
+
+    /// Attach a health snapshot to the screen. See
+    /// `plan/10-settings.md` section 12.5.
+    #[must_use]
+    pub fn with_health(mut self, health: ProviderHealthSnapshot) -> Self {
+        self.health = health;
+        self
     }
 
     #[must_use]
     pub fn snapshot(&self) -> &AppConfigSnapshot {
         &self.snapshot
+    }
+
+    #[must_use]
+    pub fn health(&self) -> &ProviderHealthSnapshot {
+        &self.health
+    }
+
+    fn render_providers(&self) -> String {
+        fn line(label: &str, status: Option<&HealthStatus>) -> String {
+            match status {
+                Some(s) => {
+                    let level = match s.status {
+                        HealthLevel::Healthy => "healthy",
+                        HealthLevel::Degraded => "degraded",
+                        HealthLevel::Down => "down",
+                    };
+                    let suffix = s
+                        .message
+                        .as_deref()
+                        .map(|m| format!(" ({m})"))
+                        .unwrap_or_default();
+                    format!("{label:<12} {level:<9} {latency}ms{suffix}", latency = s.latency_ms)
+                }
+                None => format!("{label:<12} (unknown)"),
+            }
+        }
+
+        format!(
+            "{}\n{}",
+            line("alchemy", self.health.alchemy.as_ref()),
+            line("etherscan-v2", self.health.etherscan.as_ref()),
+        )
     }
 }
 
@@ -47,7 +101,11 @@ impl Screen for SettingsScreen {
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(6),
+            ])
             .split(area);
 
         frame.render_widget(
@@ -83,6 +141,13 @@ Esc to return to the previous screen, q to quit.",
                 .wrap(Wrap { trim: false })
                 .block(Block::default().borders(Borders::ALL).title("Overview")),
             chunks[1],
+        );
+
+        frame.render_widget(
+            Paragraph::new(self.render_providers())
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Providers")),
+            chunks[2],
         );
     }
 
