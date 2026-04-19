@@ -2,10 +2,11 @@
 //!
 //! See `plan/4-tx-detail.md` section 12.4.1.
 
+use assert_matches::assert_matches;
 use blockexplorer_tui::{
     adapters::etherscan::{EtherscanClient, EtherscanContractSource},
     application::ports::ContractSourcePort,
-    domain::{Address, Chain},
+    domain::{Address, Chain, DomainError},
 };
 use url::Url;
 use wiremock::{
@@ -133,6 +134,40 @@ async fn multi_file_source_parses_the_double_wrapped_envelope() {
         source.implementation.map(|a| a.to_hex()),
         Some("0xb0b1000000000000000000000000000000000001".to_string())
     );
+}
+
+#[tokio::test]
+async fn server_5xx_error_maps_into_provider_unavailable() {
+    // plan/15-backlog.md §8.16 "Global error fixtures": every
+    // adapter must map an HTTP 5xx into
+    // `DomainError::ProviderUnavailable`. Previously the Etherscan
+    // adapter decoded the JSON body first, so a 5xx with an
+    // arbitrary error body crashed the deserializer and surfaced
+    // as `DomainError::Internal(...)`, bypassing the breaker.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v2/api"))
+        .respond_with(ResponseTemplate::new(503).set_body_raw(
+            load_text("etherscan__error__5xx.json"),
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let adapter = adapter_for(&server.uri());
+    let addr = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+
+    let err = adapter
+        .get_abi(addr, Chain::Ethereum)
+        .await
+        .expect_err("5xx must surface as an error");
+    assert_matches!(err, DomainError::ProviderUnavailable);
+
+    let err = adapter
+        .get_source(addr, Chain::Ethereum)
+        .await
+        .expect_err("5xx must surface as an error");
+    assert_matches!(err, DomainError::ProviderUnavailable);
 }
 
 #[tokio::test]

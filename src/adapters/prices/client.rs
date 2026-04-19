@@ -48,8 +48,13 @@ impl PricesError {
             PricesError::NotIndexed => {
                 DomainError::Internal("token not indexed by prices provider".into())
             }
-            PricesError::Api { status, body } if (500..600).contains(&status) => {
-                DomainError::Internal(format!("prices API {status}: {body}"))
+            // HTTP 5xx from Alchemy Prices is a provider outage, not
+            // a caller bug. Map it to `ProviderUnavailable` so the
+            // breaker + degraded-state UX both treat it like a
+            // transient infrastructure blip. See
+            // `plan/15-backlog.md` §8.16 "Global error fixtures".
+            PricesError::Api { status, .. } if (500..600).contains(&status) => {
+                DomainError::ProviderUnavailable
             }
             PricesError::Api { status, body } => {
                 DomainError::Internal(format!("prices API {status}: {body}"))
