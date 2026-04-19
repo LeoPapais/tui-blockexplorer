@@ -79,7 +79,10 @@ impl RpcError {
             RpcError::Http(err) if err.is_timeout() => DomainError::ProviderUnavailable,
             RpcError::Http(err) if err.is_connect() => DomainError::ProviderUnavailable,
             RpcError::Http(err) => DomainError::Internal(err.to_string()),
-            RpcError::Rpc { code: -32602, message } => DomainError::InvalidInput(message),
+            RpcError::Rpc {
+                code: -32602,
+                message,
+            } => DomainError::InvalidInput(message),
             RpcError::Rpc {
                 code: -32601 | -32004,
                 ..

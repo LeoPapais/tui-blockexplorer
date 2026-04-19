@@ -219,5 +219,8 @@ async fn rpc_error_surfaces_as_domain_error() {
     // `DomainError::ProviderUnavailable` under the §8.1 mapping
     // (plan/13-alchemy-adapter.md §8.1 / plan/15-backlog.md §8.14
     // item 6).
-    assert!(matches!(err, blockexplorer_tui::domain::DomainError::ProviderUnavailable));
+    assert!(matches!(
+        err,
+        blockexplorer_tui::domain::DomainError::ProviderUnavailable
+    ));
 }

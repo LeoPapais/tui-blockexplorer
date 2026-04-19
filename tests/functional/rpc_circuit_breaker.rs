@@ -8,19 +8,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use blockexplorer_tui::{
-    adapters::rpc::{
-        CircuitBreaker, CircuitBreakerConfig, RetryPolicy, RpcClient, RpcError,
-    },
+    adapters::rpc::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy, RpcClient, RpcError},
     application::ports::Clock,
     domain::DomainError,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use url::Url;
-use wiremock::{
-    Mock, MockServer, ResponseTemplate,
-    matchers::method,
-};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 use crate::support::fixture_loader::load_text;
 use crate::support::stubs::{FrozenClock, SeededRng};
@@ -127,17 +122,13 @@ async fn reopens_and_closes_after_cool_down_elapses() {
     let client = build_client(&server.uri(), breaker.clone());
 
     for _ in 0..3 {
-        let _ = client
-            .call::<_, String>("eth_blockNumber", json!([]))
-            .await;
+        let _ = client.call::<_, String>("eth_blockNumber", json!([])).await;
     }
     assert!(breaker.is_open());
 
     // Short-circuit while still open.
     assert!(matches!(
-        client
-            .call::<_, String>("eth_blockNumber", json!([]))
-            .await,
+        client.call::<_, String>("eth_blockNumber", json!([])).await,
         Err(RpcError::CircuitOpen),
     ));
 

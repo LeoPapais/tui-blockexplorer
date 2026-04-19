@@ -36,10 +36,7 @@ async fn successful_call_charges_cost_hint_into_meter() {
     let client = RpcClient::new(Url::parse(&server.uri()).unwrap(), reqwest::Client::new())
         .with_cost_recorder(recorder);
 
-    let _value: String = client
-        .call("eth_blockNumber", json!([]))
-        .await
-        .expect("ok");
+    let _value: String = client.call("eth_blockNumber", json!([])).await.expect("ok");
 
     assert_eq!(
         meter.consumed(),

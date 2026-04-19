@@ -215,12 +215,7 @@ mod tests {
     #[test]
     fn backoff_for_honors_max_delay_ceiling() {
         let rng = Arc::new(ConstantRng(0));
-        let policy = RetryPolicy::new(
-            10,
-            Duration::from_millis(1),
-            Duration::from_millis(4),
-            rng,
-        );
+        let policy = RetryPolicy::new(10, Duration::from_millis(1), Duration::from_millis(4), rng);
         // 1ms * 2^30 is way above 4ms ceiling.
         assert_eq!(policy.backoff_for(30), Duration::from_millis(4));
     }

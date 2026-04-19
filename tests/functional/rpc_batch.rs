@@ -50,11 +50,7 @@ async fn call_batch_posts_array_and_returns_results_in_request_order() {
         .await;
     let client = RpcClient::new(Url::parse(&server.uri()).unwrap(), reqwest::Client::new());
 
-    let params: Vec<[String; 1]> = vec![
-        ["0x1".into()],
-        ["0x2".into()],
-        ["0x3".into()],
-    ];
+    let params: Vec<[String; 1]> = vec![["0x1".into()], ["0x2".into()], ["0x3".into()]];
     let out = client
         .call_batch::<_, String>("my_method", &params)
         .await
@@ -94,11 +90,7 @@ async fn call_batch_matches_results_by_id_when_provider_reorders() {
         .await;
     let client = RpcClient::new(Url::parse(&server.uri()).unwrap(), reqwest::Client::new());
 
-    let params: Vec<[String; 1]> = vec![
-        ["A".into()],
-        ["B".into()],
-        ["C".into()],
-    ];
+    let params: Vec<[String; 1]> = vec![["A".into()], ["B".into()], ["C".into()]];
     let out = client
         .call_batch::<_, String>("whatever", &params)
         .await

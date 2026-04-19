@@ -27,10 +27,7 @@ impl Respond for AlchemyResponder {
         // matching array so the portfolio adapter's `call_batch`
         // wrapper can match responses by `id`.
         if let Value::Array(envelopes) = &body {
-            let responses: Vec<Value> = envelopes
-                .iter()
-                .map(|env| response_for_single(env))
-                .collect();
+            let responses: Vec<Value> = envelopes.iter().map(response_for_single).collect();
             return ResponseTemplate::new(200).set_body_json(Value::Array(responses));
         }
 

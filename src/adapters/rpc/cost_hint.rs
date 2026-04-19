@@ -107,6 +107,9 @@ mod tests {
 
     #[test]
     fn fallback_compute_units_is_non_zero_so_accounting_does_not_silently_skip() {
-        assert!(CostHint::UNKNOWN.compute_units > 0);
+        const _: () = assert!(CostHint::UNKNOWN.compute_units > 0);
+        // Runtime assertion kept as a smoke check that the const
+        // path is exercised at all.
+        assert_ne!(CostHint::UNKNOWN.compute_units, 0);
     }
 }

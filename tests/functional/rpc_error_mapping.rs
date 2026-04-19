@@ -50,7 +50,10 @@ fn it_maps_rate_limit_to_provider_unavailable_when_code_is_32005() {
         message: "request rate exceeded".into(),
     };
 
-    assert!(matches!(err.into_domain(), DomainError::ProviderUnavailable));
+    assert!(matches!(
+        err.into_domain(),
+        DomainError::ProviderUnavailable
+    ));
 }
 
 #[test]

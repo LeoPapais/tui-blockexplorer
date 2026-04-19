@@ -36,12 +36,12 @@ use crate::{
         cache::TtlCache,
         clock::SystemClock,
         config::InMemoryChainRegistry,
-        rng::OsRng,
         etherscan::{
             CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
             EtherscanTokenSearch,
         },
         prices::{AlchemyPrices, PollingTokenPriceStream, PricesClient},
+        rng::OsRng,
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
             AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,

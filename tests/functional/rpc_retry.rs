@@ -29,16 +29,12 @@ fn policy_for_tests() -> RetryPolicy {
     // Very short delays so tests complete in ~ms but the ordering of
     // retry vs non-retry is still exercised.
     let rng: Arc<dyn blockexplorer_tui::application::ports::Rng> = Arc::new(SeededRng::new(7));
-    RetryPolicy::new(
-        3,
-        Duration::from_millis(1),
-        Duration::from_millis(2),
-        rng,
-    )
+    RetryPolicy::new(3, Duration::from_millis(1), Duration::from_millis(2), rng)
 }
 
 fn client_for(url: &str) -> RpcClient {
-    RpcClient::new(Url::parse(url).unwrap(), reqwest::Client::new()).with_retry_policy(policy_for_tests())
+    RpcClient::new(Url::parse(url).unwrap(), reqwest::Client::new())
+        .with_retry_policy(policy_for_tests())
 }
 
 #[tokio::test]
@@ -89,10 +85,8 @@ async fn exhausts_attempts_after_three_rate_limit_responses() {
     Mock::given(method("POST"))
         .respond_with(move |_req: &wiremock::Request| {
             hits_inner.fetch_add(1, Ordering::SeqCst);
-            ResponseTemplate::new(200).set_body_raw(
-                load_text("rpc__error__rate_limit.json"),
-                "application/json",
-            )
+            ResponseTemplate::new(200)
+                .set_body_raw(load_text("rpc__error__rate_limit.json"), "application/json")
         })
         .mount(&server)
         .await;
@@ -103,7 +97,10 @@ async fn exhausts_attempts_after_three_rate_limit_responses() {
         .await
         .expect_err("three -32005 responses exhaust retries");
 
-    assert!(matches!(err, blockexplorer_tui::adapters::rpc::RpcError::Rpc { code: -32005, .. }));
+    assert!(matches!(
+        err,
+        blockexplorer_tui::adapters::rpc::RpcError::Rpc { code: -32005, .. }
+    ));
     assert_eq!(
         hits.load(Ordering::SeqCst),
         3,
