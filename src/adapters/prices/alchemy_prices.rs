@@ -227,6 +227,12 @@ impl PricesPort for AlchemyPrices {
 /// Best-effort wall-clock read. The adapter only uses this to build
 /// the `startTime`/`endTime` window sent to Alchemy, so the precision
 /// is not critical. A clock port would be overkill here.
+///
+// NOTE: adapter-local wall clock. Application code must never call
+// `SystemTime::now()`; see `plan/11-rust-scaffolding.md` §9.2. This
+// helper is quarantined to the Alchemy Prices adapter and its output
+// is immediately folded into the outbound HTTP request, which means
+// tests that stub the HTTP layer never observe the timestamp.
 fn current_unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
