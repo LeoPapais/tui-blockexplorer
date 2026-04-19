@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use blockexplorer_tui::{
-    adapters::ui::{Command, MempoolScreen, ScreenStack},
+    adapters::ui::{MempoolScreen, ScreenStack},
     application::{ConnectionStatus, use_cases::observe_pending_txs::run as subscribe},
     domain::{Address, Chain, PendingTx, PendingTxFilter, TxHash, Wei},
     infra::mempool_feed::spawn_filter_drain,
@@ -25,29 +25,14 @@ fn ensure_active_chain(world: &mut AppWorld) -> Chain {
     *world.active_chain.get_or_insert(Chain::Ethereum)
 }
 
-fn apply_command(stack: &mut ScreenStack, cmd: Command) {
-    match cmd {
-        Command::None | Command::Refresh => {}
-        Command::Pop => {
-            stack.pop();
-        }
-        Command::Quit => stack.clear(),
-        Command::Push(screen) => stack.push(screen),
-        Command::Replace(screen) => {
-            stack.pop();
-            stack.push(screen);
-        }
-    }
-}
-
 fn press(stack: &mut ScreenStack, key: KeyEvent) {
     let cmd = stack.top_mut().expect("stack non-empty").handle_key(key);
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
 }
 
 async fn tick_and_wait(stack: &mut ScreenStack) {
     let cmd = stack.top_mut().expect("stack non-empty").tick();
-    apply_command(stack, cmd);
+    stack.apply_command(cmd);
     tokio::time::sleep(Duration::from_millis(5)).await;
 }
 
