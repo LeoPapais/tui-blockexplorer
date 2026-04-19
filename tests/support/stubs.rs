@@ -1455,6 +1455,20 @@ impl StubTokenPriceStreamPort {
             list.retain(|s| s.send(lookup.clone()).is_ok());
         }
     }
+
+    /// Count of live subscribers for `address`. BDD steps poll this
+    /// to wait for the async dispatcher to have actually subscribed
+    /// before pushing a sample, avoiding races between `push` and
+    /// `subscribe` landing on the Tokio executor.
+    pub fn subscriber_count(&self, address: Address) -> usize {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        if let Some(list) = state.senders.get_mut(&address) {
+            list.retain(|s| !s.is_closed());
+            list.len()
+        } else {
+            0
+        }
+    }
 }
 
 impl TokenPriceStreamPort for StubTokenPriceStreamPort {

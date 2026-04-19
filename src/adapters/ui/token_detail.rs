@@ -271,9 +271,7 @@ impl TokenDetailScreen {
     /// directly.
     #[must_use]
     pub fn is_incomplete_badge_active(&self) -> bool {
-        self.current
-            .as_ref()
-            .is_some_and(|ov| ov.is_incomplete())
+        self.current.as_ref().is_some_and(|ov| ov.is_incomplete())
     }
 
     /// Number of live price samples appended to the active-window

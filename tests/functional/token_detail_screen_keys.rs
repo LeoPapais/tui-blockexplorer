@@ -9,8 +9,8 @@
 use std::any::Any;
 
 use blockexplorer_tui::adapters::ui::{
-    Command, Screen, TokenDetailScreen, TokenFeed, TokenFeedSender, token_feed,
-    token_detail::OpenContractFactory,
+    Command, Screen, TokenDetailScreen, TokenFeed, TokenFeedSender,
+    token_detail::OpenContractFactory, token_feed,
 };
 use blockexplorer_tui::domain::{
     Address, Chain, PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenMetadata,
@@ -108,14 +108,10 @@ fn is_incomplete_badge_turns_on_when_metadata_is_degenerate() {
 #[test]
 fn c_key_pushes_contract_screen_when_badge_is_active() {
     let (feed, sender) = feeds();
-    let open_contract: OpenContractFactory = Box::new(|a| Box::new(FakeContractScreen { address: a }));
-    let mut screen = TokenDetailScreen::with_factories(
-        Chain::Ethereum,
-        addr(),
-        feed,
-        None,
-        Some(open_contract),
-    );
+    let open_contract: OpenContractFactory =
+        Box::new(|a| Box::new(FakeContractScreen { address: a }));
+    let mut screen =
+        TokenDetailScreen::with_factories(Chain::Ethereum, addr(), feed, None, Some(open_contract));
     sender.updates_tx.send(incomplete_overview()).unwrap();
     let _ = screen.tick();
 
@@ -135,14 +131,10 @@ fn c_key_pushes_contract_screen_when_badge_is_active() {
 #[test]
 fn c_key_is_inert_when_badge_is_inactive() {
     let (feed, sender) = feeds();
-    let open_contract: OpenContractFactory = Box::new(|a| Box::new(FakeContractScreen { address: a }));
-    let mut screen = TokenDetailScreen::with_factories(
-        Chain::Ethereum,
-        addr(),
-        feed,
-        None,
-        Some(open_contract),
-    );
+    let open_contract: OpenContractFactory =
+        Box::new(|a| Box::new(FakeContractScreen { address: a }));
+    let mut screen =
+        TokenDetailScreen::with_factories(Chain::Ethereum, addr(), feed, None, Some(open_contract));
     sender.updates_tx.send(standard_overview()).unwrap();
     let _ = screen.tick();
 
