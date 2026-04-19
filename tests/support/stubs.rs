@@ -20,8 +20,9 @@ use blockexplorer_tui::{
             BlockReceiptsPort, ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort,
             EnsResolverPort, EventLogPort, GasOraclePort, LabelPort, NetworkStatusPort,
             NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
-            SignatureDirectoryPort, SignatureHit, StoragePort, TokenReaderPort, TokenSearchPort,
-            TransfersPort, TxLookupPort, TxReaderPort, TxSimulationPort, TxTracePort,
+            SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
+            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
+            TxSimulationPort, TxTracePort,
         },
     },
     domain::{
@@ -1401,6 +1402,88 @@ impl PricesPort for StubPricesPort {
             .get(&(address, window))
             .cloned()
             .unwrap_or_else(|| PriceSeries::empty(window)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: TokenPriceStreamPort
+// ---------------------------------------------------------------------------
+
+/// Fan-out stub for the live token-price subscription. Scenarios push
+/// values on demand via [`Self::push`] / [`Self::push_unsupported`];
+/// every live receiver gets a copy. [`Self::set_broken`] flips
+/// subsequent `subscribe` calls to `DomainError::ProviderUnavailable`,
+/// mirroring the behaviour of the real polling adapter when its
+/// underlying port is down.
+///
+/// See `plan/8-token-detail.md` §13.1.
+#[derive(Default)]
+struct TokenPriceStreamState {
+    senders: HashMap<Address, Vec<UnboundedSender<PriceLookup>>>,
+    broken: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct StubTokenPriceStreamPort {
+    inner: Arc<Mutex<TokenPriceStreamState>>,
+}
+
+impl StubTokenPriceStreamPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_broken(&self, broken: bool) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.broken = broken;
+    }
+
+    /// Broadcast an `Available` lookup to every live subscriber for
+    /// this address.
+    pub fn push(&self, address: Address, price: TokenPrice) {
+        self.broadcast(address, PriceLookup::Available(price));
+    }
+
+    /// Broadcast an `Unsupported` lookup for this address.
+    pub fn push_unsupported(&self, address: Address, provider: &'static str) {
+        self.broadcast(address, PriceLookup::Unsupported { provider });
+    }
+
+    fn broadcast(&self, address: Address, lookup: PriceLookup) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        if let Some(list) = state.senders.get_mut(&address) {
+            list.retain(|s| s.send(lookup.clone()).is_ok());
+        }
+    }
+
+    /// Count of live subscribers for `address`. BDD steps poll this
+    /// to wait for the async dispatcher to have actually subscribed
+    /// before pushing a sample, avoiding races between `push` and
+    /// `subscribe` landing on the Tokio executor.
+    pub fn subscriber_count(&self, address: Address) -> usize {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        if let Some(list) = state.senders.get_mut(&address) {
+            list.retain(|s| !s.is_closed());
+            list.len()
+        } else {
+            0
+        }
+    }
+}
+
+impl TokenPriceStreamPort for StubTokenPriceStreamPort {
+    async fn subscribe(
+        &self,
+        address: Address,
+        _chain: Chain,
+    ) -> Result<UnboundedReceiver<PriceLookup>, DomainError> {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        if state.broken {
+            return Err(DomainError::ProviderUnavailable);
+        }
+        let (tx, rx) = unbounded_channel();
+        state.senders.entry(address).or_default().push(tx);
+        Ok(rx)
     }
 }
 

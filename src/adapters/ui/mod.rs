@@ -41,7 +41,7 @@ pub use search::{
 };
 pub use settings::{AppConfigSnapshot, SettingsScreen};
 pub use token_detail::{
-    OpenTxFactory as TokenOpenTxFactory, TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab,
-    token_feed,
+    OpenContractFactory as TokenOpenContractFactory, OpenTxFactory as TokenOpenTxFactory,
+    TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab, token_feed,
 };
 pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};

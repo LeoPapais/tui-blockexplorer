@@ -36,8 +36,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::{
     adapters::ui::screen::{Command, Screen},
     domain::{
-        Address, Chain, PriceLookup, PriceSeries, PriceWindow, TokenOverview, TokenPrice,
-        TransferAsset, TransferEvent, TransferPage, TxHash,
+        Address, Chain, PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenOverview,
+        TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash,
     },
 };
 
@@ -99,6 +99,11 @@ pub fn token_feed() -> (TokenFeed, TokenFeedSender) {
 /// when the user hits Enter on a row.
 pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 
+/// Factory used by the unsupported-token empty state to spawn a
+/// ContractDetail screen when the user presses `c`. See
+/// `plan/8-token-detail.md` §13.2.
+pub type OpenContractFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // Tabs / window
 // ---------------------------------------------------------------------------
@@ -143,6 +148,11 @@ pub struct TokenDetailScreen {
     tx_list_state: ListState,
     feed: TokenFeed,
     open_tx: Option<OpenTxFactory>,
+    open_contract: Option<OpenContractFactory>,
+    /// Number of live price samples appended to `series[active_window]`
+    /// since the screen opened. Exposed for the functional tests that
+    /// assert the streaming path fires.
+    live_samples: usize,
 }
 
 impl TokenDetailScreen {
@@ -152,7 +162,7 @@ impl TokenDetailScreen {
     /// window (`D1`).
     #[must_use]
     pub fn loading(chain: Chain, address: Address, feed: TokenFeed) -> Self {
-        Self::with_open_tx(chain, address, feed, None)
+        Self::with_factories(chain, address, feed, None, None)
     }
 
     /// Loading constructor that wires Enter on the Transfers tab to
@@ -164,13 +174,28 @@ impl TokenDetailScreen {
         feed: TokenFeed,
         open_tx: Option<OpenTxFactory>,
     ) -> Self {
+        Self::with_factories(chain, address, feed, open_tx, None)
+    }
+
+    /// Full constructor wiring both the Transfers-row Tx factory and
+    /// the unsupported-token "View as Contract" factory. The latter
+    /// backs the `c` shortcut described in
+    /// `plan/8-token-detail.md` §13.2.
+    #[must_use]
+    pub fn with_factories(
+        chain: Chain,
+        address: Address,
+        feed: TokenFeed,
+        open_tx: Option<OpenTxFactory>,
+        open_contract: Option<OpenContractFactory>,
+    ) -> Self {
         let _ = feed.input_tx.send(address);
         // The D1 chart window is fetched automatically by
-        // `token_feed::spawn` as part of the address handling —
-        // firing it explicitly here would race with that fetch
-        // (the `tokio::select!` could previously pick the window
-        // branch before `current_address` was populated and drop
-        // the request).
+        // `token_feed::spawn_with_stream` as part of the address
+        // handling — firing it explicitly here would race with that
+        // fetch (the `tokio::select!` could previously pick the
+        // window branch before `current_address` was populated and
+        // drop the request).
         let mut tx_list_state = ListState::default();
         tx_list_state.select(Some(0));
         Self {
@@ -185,6 +210,8 @@ impl TokenDetailScreen {
             tx_list_state,
             feed,
             open_tx,
+            open_contract,
+            live_samples: 0,
         }
     }
 
@@ -238,6 +265,23 @@ impl TokenDetailScreen {
             .and_then(|p| p.events.get(self.tx_list_state.selected().unwrap_or(0)))
     }
 
+    /// Whether the Overview currently renders the
+    /// unsupported-token empty state (`TokenOverview::is_incomplete`).
+    /// Exposed for BDD / functional tests; the render path calls it
+    /// directly.
+    #[must_use]
+    pub fn is_incomplete_badge_active(&self) -> bool {
+        self.current.as_ref().is_some_and(|ov| ov.is_incomplete())
+    }
+
+    /// Number of live price samples appended to the active-window
+    /// series since the screen opened. Used by the functional
+    /// streaming test (`plan/8-token-detail.md` §13.1).
+    #[must_use]
+    pub fn live_samples_count(&self) -> usize {
+        self.live_samples
+    }
+
     // -- Internal helpers -----------------------------------------------
 
     fn drain_feed(&mut self) {
@@ -256,6 +300,16 @@ impl TokenDetailScreen {
             if let Some(ov) = self.current.as_mut() {
                 ov.price = lookup.clone();
             }
+            // Live streaming: each `Available` sample is appended to
+            // the currently-active window's series so the chart ticks
+            // forward without the user reopening the screen. The tail
+            // is capped at `PriceSeries::ROLLING_CAP` to keep the
+            // rolling window bounded. `Unsupported` / `Pending`
+            // samples only refresh the Overview cell; they do not
+            // mutate the chart.
+            if let PriceLookup::Available(ref p) = lookup {
+                self.append_live_sample(p.clone());
+            }
             self.price = lookup;
         }
         while let Ok(page) = self.feed.transfers_rx.try_recv() {
@@ -263,8 +317,29 @@ impl TokenDetailScreen {
             self.clamp_tx_selection();
         }
         while let Ok(series) = self.feed.history_rx.try_recv() {
+            // A freshly-fetched history replaces the stored series:
+            // the rolling streaming tail will start accumulating on
+            // top of the new points from the next `Available` sample.
             self.series.insert(series.window, series);
         }
+    }
+
+    fn append_live_sample(&mut self, price: TokenPrice) {
+        let window = self.active_window;
+        let entry = self
+            .series
+            .entry(window)
+            .or_insert_with(|| PriceSeries::empty(window));
+        entry.points.push(PricePoint {
+            at: price.as_of,
+            value: price.value,
+        });
+        let cap = PriceSeries::ROLLING_CAP;
+        if entry.points.len() > cap {
+            let excess = entry.points.len() - cap;
+            entry.points.drain(..excess);
+        }
+        self.live_samples = self.live_samples.saturating_add(1);
     }
 
     fn clamp_tx_selection(&mut self) {
@@ -369,6 +444,17 @@ impl Screen for TokenDetailScreen {
                 Command::None
             }
 
+            // Unsupported-token shortcut: jump to the ContractDetail
+            // screen when the Overview currently renders the
+            // incomplete-metadata empty state. See
+            // `plan/8-token-detail.md` §13.2.
+            (_, KeyCode::Char('c')) if self.is_incomplete_badge_active() => {
+                match self.open_contract.as_ref() {
+                    Some(factory) => Command::Push(factory(self.address)),
+                    None => Command::None,
+                }
+            }
+
             // Chart window switch. The bindings are active from any
             // tab — if the user hits `2` while on Overview we still
             // queue up the request in the background.
@@ -436,6 +522,7 @@ impl TokenDetailScreen {
         let block = Block::default().borders(Borders::ALL).title("Overview");
         let body = match self.current.as_ref() {
             None => "Loading...".to_string(),
+            Some(ov) if ov.is_incomplete() => render_incomplete_body(ov, self.address),
             Some(ov) => {
                 let price_cell = format_price_lookup(&self.price);
                 let market_cap_cell = ov
@@ -588,6 +675,44 @@ Market cap    {mcap}\n\
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
+
+/// Body used by the Overview tab when `TokenOverview::is_incomplete`
+/// is true — the Alchemy metadata came back too degenerate to treat
+/// the address as a standard ERC-20 token. See
+/// `plan/8-token-detail.md` §13.2.
+fn render_incomplete_body(ov: &TokenOverview, address: Address) -> String {
+    let addr_hex = ov.metadata.address.to_hex();
+    let shown_addr = if addr_hex.is_empty() {
+        address.to_hex()
+    } else {
+        addr_hex
+    };
+    let symbol_cell = if ov.metadata.symbol.is_empty() {
+        "(none)".to_string()
+    } else {
+        ov.metadata.symbol.clone()
+    };
+    let name_cell = if ov.metadata.name.is_empty() {
+        "(none)".to_string()
+    } else {
+        ov.metadata.name.clone()
+    };
+    format!(
+        "Address       {addr}\n\
+Symbol        {symbol}\n\
+Name          {name}\n\
+Decimals      {decimals}\n\
+\n\
+This address does not look like a standard ERC-20.\n\
+Decimals / symbol are missing from alchemy_getTokenMetadata.\n\
+\n\
+[c] View as Contract    [Esc] back",
+        addr = shown_addr,
+        symbol = symbol_cell,
+        name = name_cell,
+        decimals = ov.metadata.decimals,
+    )
+}
 
 fn header_line(current: Option<&TokenOverview>, address: Address) -> String {
     match current {

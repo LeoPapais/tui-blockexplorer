@@ -123,6 +123,23 @@ async fn prices_api_returns_404(world: &mut AppWorld, addr_hex: String) {
 }
 
 #[given(
+    regex = r#"^the token reader knows "(0x[0-9a-fA-F]{40})" as an incomplete non-ERC20 contract$"#
+)]
+async fn reader_knows_incomplete_token(world: &mut AppWorld, addr_hex: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    world.token_reader_stub.insert(TokenOverview {
+        metadata: TokenMetadata {
+            address,
+            symbol: String::new(),
+            name: String::new(),
+            decimals: 0,
+        },
+        total_supply: 0,
+        price: PriceLookup::Pending,
+    });
+}
+
+#[given(
     regex = r#"^the prices stub returns (\d+) points for window "([^"]+)" on "(0x[0-9a-fA-F]{40})"$"#
 )]
 async fn prices_stub_has_history(
@@ -231,6 +248,21 @@ async fn opens_token_detail_with_full_feeds(world: &mut AppWorld, addr_hex: Stri
     let prices = world.prices_stub.clone();
     let transfers = world.transfers_stub.clone();
     let tx_reader = world.tx_reader_stub.clone();
+    let stream = world.price_stream_stub.clone();
+    // Wire the `c` shortcut (plan/8 §13.2) to the Contract Detail
+    // screen backed by the address-reader + proxy-detector stubs
+    // already primed by earlier Givens.
+    let address_reader = world.address_reader_stub.clone();
+    let proxy_detector = world.proxy_detector_stub.clone();
+    let open_contract: blockexplorer_tui::adapters::ui::TokenOpenContractFactory =
+        Box::new(move |addr| {
+            crate::steps::search::spawn_contract_detail(
+                Chain::Ethereum,
+                addr,
+                address_reader.clone(),
+                proxy_detector.clone(),
+            )
+        });
     let screen = spawn_token_detail_with_full_feeds(
         Chain::Ethereum,
         addr,
@@ -238,6 +270,8 @@ async fn opens_token_detail_with_full_feeds(world: &mut AppWorld, addr_hex: Stri
         prices,
         transfers,
         tx_reader,
+        Some(stream),
+        Some(open_contract),
     );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
@@ -252,6 +286,64 @@ async fn presses_digit_to_select_window(world: &mut AppWorld, digit: char, _wind
         matches!(cmd, Command::None),
         "digit key must not emit a nav command"
     );
+}
+
+#[when(regex = r#"^the user presses "c" to view as contract$"#)]
+async fn presses_c_to_view_as_contract(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    // Make sure the overview reached the incomplete state before
+    // dispatching the key — otherwise `c` is inert (see
+    // plan/8-token-detail.md §13.2).
+    tick_until(stack, |s| current(s).is_incomplete_badge_active()).await;
+    let cmd = current_mut(stack).handle_key(make_key(KeyCode::Char('c')));
+    match cmd {
+        Command::Push(screen) => stack.push(screen),
+        other => panic!("expected Push from `c`, got {other:?}"),
+    }
+}
+
+#[given(regex = r#"^the price stream pushes (\d+(?:\.\d+)?) USD for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn price_stream_pushes_given(world: &mut AppWorld, value: f64, addr_hex: String) {
+    push_stream_value(world, value, &addr_hex).await;
+}
+
+#[when(regex = r#"^the price stream pushes (\d+(?:\.\d+)?) USD for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn price_stream_pushes_when(world: &mut AppWorld, value: f64, addr_hex: String) {
+    push_stream_value(world, value, &addr_hex).await;
+}
+
+#[then(regex = r#"^the price stream pushes (\d+(?:\.\d+)?) USD for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn price_stream_pushes_then(world: &mut AppWorld, value: f64, addr_hex: String) {
+    push_stream_value(world, value, &addr_hex).await;
+}
+
+async fn push_stream_value(world: &mut AppWorld, value: f64, addr_hex: &str) {
+    // Wait for the async feed task to have subscribed before pushing.
+    // Without this, the stub broadcasts land in the void because the
+    // feed has not yet wired its receiver.
+    for _ in 0..50 {
+        if world
+            .price_stream_stub
+            .clone()
+            .subscriber_count(Address::from_hex(addr_hex).unwrap())
+            > 0
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let addr = Address::from_hex(addr_hex).unwrap();
+    world.price_stream_stub.push(
+        addr,
+        TokenPrice {
+            currency: "usd".into(),
+            value,
+            as_of: UnixTimestamp::from_seconds(1_700_000_000),
+        },
+    );
+    // Give the dispatcher one extra tick to forward the push onto
+    // `price_tx` before the next Then asserts.
+    tokio::time::sleep(Duration::from_millis(10)).await;
 }
 
 #[when("the user switches to the Transfers tab")]
@@ -315,10 +407,29 @@ async fn overview_stays_loading(world: &mut AppWorld) {
     assert!(current(stack).current().is_none());
 }
 
+#[then("once the feeds complete, the Overview shows the incomplete-token badge")]
+async fn overview_shows_incomplete_badge(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    let flagged = tick_until(stack, |s| current(s).is_incomplete_badge_active()).await;
+    assert!(
+        flagged,
+        "Overview never reached the incomplete-token badge state"
+    );
+}
+
 #[then(regex = r#"^once the feeds complete, the Overview price is "\$([0-9.]+)"$"#)]
 async fn overview_price_renders(world: &mut AppWorld, expected: f64) {
     let stack = world.stack.as_mut().expect("stack");
-    tick_until(stack, |s| current(s).price().is_some()).await;
+    // Tick until the displayed price actually converges to `expected`
+    // (not merely Some) so the live-stream scenarios that push two
+    // values in a row can assert on each one.
+    tick_until(stack, |s| {
+        current(s)
+            .price()
+            .map(|p| (p.value - expected).abs() < 1e-6)
+            .unwrap_or(false)
+    })
+    .await;
     let price = current(stack).price().expect("loaded");
     let diff = (price.value - expected).abs();
     assert!(

@@ -21,8 +21,9 @@ use crate::support::stubs::{
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
     StubPendingTxStreamPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
-    StubSignatureDirectoryPort, StubStoragePort, StubTokenReaderPort, StubTokenSearchPort,
-    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubSignatureDirectoryPort, StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort,
+    StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
+    StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession = HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
@@ -115,6 +116,10 @@ pub struct AppWorld {
 
     /// Token-detail prices stub (spot + historical price series).
     pub prices_stub: StubPricesPort,
+
+    /// Live token-price stream stub feeding the Token Detail
+    /// dispatcher. See `plan/8-token-detail.md` §13.1.
+    pub price_stream_stub: StubTokenPriceStreamPort,
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,

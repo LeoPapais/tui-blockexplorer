@@ -47,3 +47,26 @@ Feature: Token detail
     And the user switches to the Transfers tab
     And the user presses Enter on the first transfer row
     Then a "Transaction" screen is on top
+
+  Scenario: Non-standard token surfaces the incomplete badge and jumps to Contract Detail on c
+    # plan/8-token-detail.md §13.2 — when `alchemy_getTokenMetadata`
+    # returns empty metadata the Overview should swap to the
+    # unsupported-token empty state and `c` must push the Contract
+    # screen for the same address.
+    Given the token reader knows "0x0000000000000000000000000000000000009999" as an incomplete non-ERC20 contract
+    When the user opens TokenDetail with full feeds for "0x0000000000000000000000000000000000009999"
+    Then a "Token" screen is on top
+    And once the feeds complete, the Overview shows the incomplete-token badge
+    When the user presses "c" to view as contract
+    Then a "Contract" screen is on top
+
+  Scenario: Token price updates every tick without reopening the screen
+    # plan/8-token-detail.md §13.1 — the live stream keeps refreshing
+    # the Overview price cell while the user stays on the screen.
+    Given the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
+    When the user opens TokenDetail with full feeds for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then a "Token" screen is on top
+    And the price stream pushes 1.0001 USD for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And once the feeds complete, the Overview price is "$1.0001"
+    And the price stream pushes 1.2500 USD for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And once the feeds complete, the Overview price is "$1.2500"

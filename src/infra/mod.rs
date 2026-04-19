@@ -33,7 +33,7 @@ use crate::{
             CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
             EtherscanTokenSearch,
         },
-        prices::{AlchemyPrices, PricesClient},
+        prices::{AlchemyPrices, PollingTokenPriceStream, PricesClient},
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
             AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
@@ -242,19 +242,40 @@ fn live_token_detail_screen(
     };
 
     let (feed, sender) = token_feed();
-    std::mem::drop(token_feed::spawn(chain, reader, prices, transfers, sender));
+    // Live price streaming: wrap the Prices port in a polling adapter
+    // that emits one sample every `DEFAULT_POLL_INTERVAL`. See
+    // `plan/8-token-detail.md` §13.1.
+    let stream = PollingTokenPriceStream::with_default_interval(prices.clone());
+    std::mem::drop(token_feed::spawn_with_stream(
+        chain, reader, prices, transfers, stream, sender,
+    ));
 
-    let rpc_for_tx = rpc;
-    let etherscan_for_tx = etherscan_key;
+    let rpc_for_tx = rpc.clone();
+    let etherscan_for_tx = etherscan_key.clone();
     let open_tx: crate::adapters::ui::TokenOpenTxFactory = Box::new(move |hash| {
         live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
     });
 
-    Box::new(TokenDetailScreen::with_open_tx(
+    // `View as Contract` shortcut surfaced when the metadata comes
+    // back too incomplete to treat the address as an ERC-20. See
+    // `plan/8-token-detail.md` §13.2.
+    let rpc_for_contract = rpc;
+    let etherscan_for_contract = etherscan_key;
+    let open_contract: crate::adapters::ui::TokenOpenContractFactory = Box::new(move |addr| {
+        live_contract_detail_screen(
+            chain,
+            addr,
+            rpc_for_contract.clone(),
+            etherscan_for_contract.clone(),
+        )
+    });
+
+    Box::new(TokenDetailScreen::with_factories(
         chain,
         address,
         feed,
         Some(open_tx),
+        Some(open_contract),
     ))
 }
 

@@ -258,13 +258,18 @@ pub(crate) fn spawn_token_detail<R: TokenReaderPort + Clone + 'static>(
 /// Fully-wired TokenDetail feed: pumps overview + spot price +
 /// transfers + historical series against the provided stubs, and
 /// wires Enter on a Transfers row to open a TxDetail built through
-/// `spawn_tx_detail`.
+/// `spawn_tx_detail`. Accepts an optional
+/// [`TokenPriceStreamPort`](blockexplorer_tui::application::ports::TokenPriceStreamPort)
+/// so the scenarios covering `plan/8-token-detail.md` §13.1 can push
+/// live samples on demand, and an optional open-contract factory for
+/// the unsupported-token `c` shortcut described in §13.2.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_token_detail_with_full_feeds<
     R: TokenReaderPort + Clone + Send + Sync + 'static,
     Pr: blockexplorer_tui::application::ports::PricesPort + Clone + Send + Sync + 'static,
     Tr: blockexplorer_tui::application::ports::TransfersPort + Clone + Send + Sync + 'static,
     Tx: blockexplorer_tui::application::ports::TxReaderPort + Clone + Send + Sync + 'static,
+    S: blockexplorer_tui::application::ports::TokenPriceStreamPort + Clone + Send + Sync + 'static,
 >(
     chain: Chain,
     address: Address,
@@ -272,6 +277,8 @@ pub(crate) fn spawn_token_detail_with_full_feeds<
     prices: Pr,
     transfers: Tr,
     tx_reader: Tx,
+    stream: Option<S>,
+    open_contract: Option<blockexplorer_tui::adapters::ui::TokenOpenContractFactory>,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     let (feed, sender) = token_feed();
     let reader_for_task = reader.clone();
@@ -287,8 +294,12 @@ pub(crate) fn spawn_token_detail_with_full_feeds<
             mut window_req_rx,
         } = sender;
         let mut current: Option<Address> = None;
+        let mut price_stream_rx: Option<
+            tokio::sync::mpsc::UnboundedReceiver<blockexplorer_tui::domain::PriceLookup>,
+        > = None;
         loop {
             tokio::select! {
+                biased;
                 maybe_addr = input_rx.recv() => {
                     let Some(addr) = maybe_addr else { break; };
                     current = Some(addr);
@@ -300,6 +311,13 @@ pub(crate) fn spawn_token_detail_with_full_feeds<
                     if let Ok(Some(ov)) = ov { let _ = updates_tx.send(ov); }
                     if let Ok(opt) = price { let _ = price_tx.send(opt); }
                     if let Ok(page) = page { let _ = transfers_tx.send(page); }
+                    // Subscribe to the live stream (if wired) after
+                    // the initial fetch so the warm-up price does
+                    // not race against the one-shot `get_single`.
+                    price_stream_rx = match stream.as_ref() {
+                        Some(s) => s.subscribe(addr, chain).await.ok(),
+                        None => None,
+                    };
                 }
                 maybe_window = window_req_rx.recv() => {
                     let Some(window) = maybe_window else { break; };
@@ -310,17 +328,35 @@ pub(crate) fn spawn_token_detail_with_full_feeds<
                         .unwrap_or_else(|_| blockexplorer_tui::domain::PriceSeries::empty(window));
                     let _ = history_tx.send(series);
                 }
+                maybe_lookup = async {
+                    match price_stream_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match maybe_lookup {
+                        Some(lookup) => {
+                            if price_tx.send(lookup).is_err() {
+                                break;
+                            }
+                        }
+                        None => {
+                            price_stream_rx = None;
+                        }
+                    }
+                }
             }
         }
     });
 
     let open_tx: blockexplorer_tui::adapters::ui::token_detail::OpenTxFactory =
         Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader.clone()));
-    Box::new(TokenDetailScreen::with_open_tx(
+    Box::new(TokenDetailScreen::with_factories(
         chain,
         address,
         feed,
         Some(open_tx),
+        open_contract,
     ))
 }
 

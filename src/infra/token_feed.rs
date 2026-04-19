@@ -33,25 +33,40 @@ use tokio::task::JoinHandle;
 
 use crate::{
     adapters::ui::TokenFeedSender,
-    application::ports::{PricesPort, TokenReaderPort, TransfersPort},
+    application::ports::{PricesPort, TokenPriceStreamPort, TokenReaderPort, TransfersPort},
     domain::{Address, Chain, PriceWindow},
 };
 
-/// Wire every port needed by the TokenDetailScreen. The D1 chart
-/// window is fetched automatically on every incoming address;
-/// callers only need to push additional `PriceWindow` values when
-/// the user switches to M1 or Y1.
-pub fn spawn<R, P, T>(
+/// Wire every port needed by the TokenDetailScreen, including a
+/// [`TokenPriceStreamPort`] for live spot-price updates.
+///
+/// The D1 chart window is fetched automatically on every incoming
+/// address; callers only need to push additional `PriceWindow`
+/// values when the user switches to M1 or Y1.
+///
+/// The live subscription is cancelled by dropping the receiver when
+/// a new address arrives on `input_rx` — this matches the
+/// subscription lifetime used by `src/infra/home_feed.rs` for the
+/// `newHeads` WebSocket. Streaming failures during `subscribe` are
+/// silently degraded: the one-shot price from
+/// [`PricesPort::get_single`] still populates the Overview cell, but
+/// the chart does not tick forward until the next manual refresh or
+/// window switch.
+///
+/// See `plan/8-token-detail.md` §13.1.
+pub fn spawn_with_stream<R, P, T, S>(
     chain: Chain,
     reader: R,
     prices: P,
     transfers: T,
+    stream: S,
     sender: TokenFeedSender,
 ) -> JoinHandle<()>
 where
     R: TokenReaderPort + Clone + 'static,
     P: PricesPort + Clone + 'static,
     T: TransfersPort + Clone + 'static,
+    S: TokenPriceStreamPort + Clone + 'static,
 {
     tokio::spawn(async move {
         let TokenFeedSender {
@@ -64,6 +79,14 @@ where
         } = sender;
 
         let mut current_address: Option<Address> = None;
+        // Live price subscription scoped to the current address. On
+        // every address change we drop the previous receiver (which
+        // tears down the upstream subscription) before subscribing
+        // to the new one. `None` before the first address arrives
+        // or when the last `subscribe` call failed.
+        let mut price_stream_rx: Option<
+            tokio::sync::mpsc::UnboundedReceiver<crate::domain::PriceLookup>,
+        > = None;
 
         loop {
             tokio::select! {
@@ -86,6 +109,10 @@ where
                         &history_tx,
                     )
                     .await;
+                    // Drop the previous stream before opening a new
+                    // one so the adapter can cancel its polling
+                    // task cleanly.
+                    price_stream_rx = stream.subscribe(addr, chain).await.ok();
                 }
                 maybe_window = window_req_rx.recv() => {
                     let Some(window) = maybe_window else { break; };
@@ -98,6 +125,28 @@ where
                         });
                     if history_tx.send(series).is_err() {
                         break;
+                    }
+                }
+                maybe_lookup = async {
+                    match price_stream_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match maybe_lookup {
+                        Some(lookup) => {
+                            if price_tx.send(lookup).is_err() {
+                                break;
+                            }
+                        }
+                        None => {
+                            // Upstream subscription closed. Keep the
+                            // rest of the dispatcher running; the
+                            // one-shot price fetch in
+                            // `run_for_address` already populated
+                            // the Overview cell.
+                            price_stream_rx = None;
+                        }
                     }
                 }
             }
