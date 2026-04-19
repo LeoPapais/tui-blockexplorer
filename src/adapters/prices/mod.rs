@@ -9,6 +9,8 @@
 
 pub mod alchemy_prices;
 pub mod client;
+pub mod stream;
 
 pub use alchemy_prices::AlchemyPrices;
 pub use client::{PricesClient, PricesError};
+pub use stream::{DEFAULT_POLL_INTERVAL, PollingTokenPriceStream};
