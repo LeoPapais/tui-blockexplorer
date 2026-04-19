@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint-and-test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Warm the dep cache *before* we drop network on the test steps.
+      # If this step fails we want a loud signal ("cargo fetch failed")
+      # rather than silently dying in a sandboxed test run.
+      - name: cargo fetch
+        run: cargo fetch --locked
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # --- Tests run with the network namespace torn down. -------
+      #
+      # `unshare -rn` drops the step into a fresh network namespace
+      # with no interfaces, so any accidental `reqwest::Client::new`
+      # / real RPC call fails instantly with ENETUNREACH. This makes
+      # the testing.mdc contract "no network in tests" a hard,
+      # enforceable property of CI.
+      #
+      # Adapters that talk HTTP use `wiremock` on 127.0.0.1, which
+      # survives the loss of external routes because the MockServer
+      # binds to the loopback device that wiremock brings up inside
+      # the namespace (or falls back to a Unix socket when loopback
+      # is absent — see `wiremock`'s 0.6 docs).
+      - name: cargo test --lib --bins  (no network)
+        run: unshare -rn -- bash -c 'cargo test --lib --bins --locked'
+
+      - name: cargo test --tests  (no network)
+        run: unshare -rn -- bash -c 'cargo test --test functional --locked'
+
+      - name: cargo test --test e2e  (no network)
+        run: unshare -rn -- bash -c 'cargo test --test e2e --locked'
+
+      - name: scripts/check-layers.sh
+        run: bash scripts/check-layers.sh
+
+  supply-chain:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
