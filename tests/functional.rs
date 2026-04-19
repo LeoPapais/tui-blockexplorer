@@ -237,3 +237,6 @@ mod home_screen_first_run_banner;
 
 #[path = "functional/fs_config_save.rs"]
 mod fs_config_save;
+
+#[path = "functional/keymap_conflict.rs"]
+mod keymap_conflict;
