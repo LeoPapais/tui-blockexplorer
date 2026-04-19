@@ -42,3 +42,9 @@ Feature: Home screen
     When a new head is received from the "newHeads" subscription
     Then the Network card updates the latest block number
     And the Gas Tracker card recomputes its values
+
+  Scenario: First-run banner invites the user to Settings
+    Given the Home screen is rendered without an alchemy key
+    Then the Home screen shows the first-run credentials banner
+    When the user dismisses the first-run banner with Esc
+    Then the Home screen no longer shows the first-run credentials banner

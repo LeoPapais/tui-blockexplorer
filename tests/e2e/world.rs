@@ -8,7 +8,7 @@ use std::fmt;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        ScreenStack,
+        HomeScreen, ScreenStack,
         gas_tracker::{GasFeedSender, GasRefreshListener},
     },
     application::HomeSession,
@@ -126,6 +126,14 @@ pub struct AppWorld {
 
     pub active_chain: Option<Chain>,
     pub home: Option<AppHomeSession>,
+
+    /// HomeScreen instance driven by the first-run-banner scenario
+    /// (plan/10-settings.md §12.2). Kept separate from
+    /// [`Self::home`] because the banner scenario drives the screen
+    /// directly through its `Screen` impl; the rest of Home's
+    /// scenarios go through `HomeSession` + the pure `home::render`
+    /// function.
+    pub home_screen: Option<HomeScreen>,
 
     /// Screen stack driven by the search scenarios. Empty before the
     /// Home screen is built, a single-element stack once Home is on

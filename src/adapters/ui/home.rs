@@ -30,13 +30,50 @@ use crate::{
 
 /// Render the Home screen into `frame` at `area`.
 pub fn render(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(10)])
-        .split(area);
+    render_with_banner(frame, area, view, false);
+}
 
-    render_header(frame, chunks[0], view);
-    render_cards(frame, chunks[1], view);
+/// Variant of [`render`] that also paints a first-run credentials
+/// banner above the header when `banner` is `true`. See
+/// `plan/10-settings.md` section 12.2.
+pub fn render_with_banner(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    view: &HomeViewModel,
+    banner: bool,
+) {
+    if banner {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(10),
+            ])
+            .split(area);
+        render_first_run_banner(frame, chunks[0]);
+        render_header(frame, chunks[1], view);
+        render_cards(frame, chunks[2], view);
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(10)])
+            .split(area);
+        render_header(frame, chunks[0], view);
+        render_cards(frame, chunks[1], view);
+    }
+}
+
+fn render_first_run_banner(frame: &mut Frame<'_>, area: Rect) {
+    let body = "Set up credentials: press s to open Settings, or Esc / Enter to dismiss.";
+    let para = Paragraph::new(body)
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("No Alchemy key"),
+        );
+    frame.render_widget(para, area);
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
@@ -195,6 +232,9 @@ pub struct HomeScreen {
     mempool_factory: Option<MempoolFactory>,
     gas_factory: Option<GasTrackerFactory>,
     settings_factory: Option<SettingsFactory>,
+    /// When `true`, render the first-run banner above the header.
+    /// See `plan/10-settings.md` section 12.2.
+    first_run_hint: bool,
 }
 
 impl HomeScreen {
@@ -209,6 +249,7 @@ impl HomeScreen {
             mempool_factory: None,
             gas_factory: None,
             settings_factory: None,
+            first_run_hint: false,
         }
     }
 
@@ -223,6 +264,7 @@ impl HomeScreen {
             mempool_factory: None,
             gas_factory: None,
             settings_factory: None,
+            first_run_hint: false,
         }
     }
 
@@ -255,6 +297,16 @@ impl HomeScreen {
     #[must_use]
     pub fn with_settings_factory(mut self, factory: SettingsFactory) -> Self {
         self.settings_factory = Some(factory);
+        self
+    }
+
+    /// Enable or disable the first-run credentials banner. The binary
+    /// sets it to `true` when no `ALCHEMY_API_KEY` is present and the
+    /// user launched with `--demo` so they are routed to Settings →
+    /// Credentials. See `plan/10-settings.md` section 12.2.
+    #[must_use]
+    pub fn with_first_run_hint(mut self, enabled: bool) -> Self {
+        self.first_run_hint = enabled;
         self
     }
 
@@ -297,13 +349,21 @@ impl Screen for HomeScreen {
     }
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        render(frame, area, &self.view);
+        render_with_banner(frame, area, &self.view, self.first_run_hint);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
             KeyCode::Char('q') => Command::Quit,
+            KeyCode::Esc if self.first_run_hint => {
+                self.first_run_hint = false;
+                Command::None
+            }
             KeyCode::Esc => Command::Pop,
+            KeyCode::Enter if self.first_run_hint => {
+                self.first_run_hint = false;
+                Command::None
+            }
             KeyCode::Char('/') => match self.search_factory.as_ref() {
                 Some(factory) => Command::Push(factory()),
                 None => Command::None,

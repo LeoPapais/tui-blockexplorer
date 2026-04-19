@@ -231,3 +231,6 @@ mod gas_tracker_screen;
 
 #[path = "functional/logger_masking.rs"]
 mod logger_masking;
+
+#[path = "functional/home_screen_first_run_banner.rs"]
+mod home_screen_first_run_banner;

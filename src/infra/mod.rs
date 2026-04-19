@@ -490,9 +490,16 @@ pub fn run() -> Result<()> {
     let config = AppConfig::load().context("failed to load config")?;
 
     if cli.demo {
-        return boot_runtime(|_| {
+        // plan/10-settings.md §12.2: surface the first-run banner
+        // when the demo binary is launched without a real key so the
+        // user gets routed to Settings → Credentials before they try
+        // to open a live screen.
+        let first_run_hint = !config.has_alchemy_key();
+        return boot_runtime(move |_| {
             let mut stack = ScreenStack::new();
-            stack.push(Box::new(HomeScreen::with_demo_data()));
+            stack.push(Box::new(
+                HomeScreen::with_demo_data().with_first_run_hint(first_run_hint),
+            ));
             stack
         });
     }
