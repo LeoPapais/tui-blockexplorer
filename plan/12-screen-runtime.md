@@ -32,11 +32,18 @@ pub enum Command {
     Pop,
     Quit,
     Refresh,
+    Push(Box<dyn Screen>),
+    Replace(Box<dyn Screen>),
+    Switch(Box<dyn Screen>),
+    OpenModal(Box<dyn Screen>),
+    CloseModal,
 }
 ```
 
 Returned by every input handler. Resolved by the dispatcher after the
-handler returns.
+handler returns. `Switch` clears the stack and pushes its argument;
+`OpenModal` sets the modal slot without touching the back stack;
+`CloseModal` clears it.
 
 ### 2.2 `Screen` trait
 
@@ -159,7 +166,58 @@ loop.
   (stack emptied).
 - `cargo run` without the flag prints the hint and exits 0.
 
-## 7. Follow-up (not this phase)
+## 7. Shipped follow-ups (April 2026, branch `probe/8.13-screen-runtime`)
+
+Landed under `plan/15-backlog.md §8.13`:
+
+- **Panic hook installed before `enter_tui`.** `run_event_loop` now calls
+  `install_panic_hook()` as the very first step, so a panic while setting up
+  raw mode or the alternate screen still restores the terminal. Teardown is
+  guarded by an `AtomicBool` flag so `leave_tui` and the panic hook may both
+  fire safely without double-disabling raw mode.
+- **Ctrl+C handled via `tokio::signal::ctrl_c()`.** The dispatcher now
+  `tokio::select!`s between the event channel and the signal future; a
+  SIGINT is mapped to `Command::Quit`, taking the same teardown path as the
+  `q` binding.
+- **`Command` enum grown** with `OpenModal(Box<dyn Screen>)`, `CloseModal`
+  and `Switch(Box<dyn Screen>)`. `Push(_)` / `Replace(_)` already shipped
+  with §11. `Switch` clears the stack and pushes the target screen — the
+  dispatcher uses it for global jumps (`gh`, `gs`, `gm`) so the back stack
+  never drags context across top-level views.
+- **Modal slot on `ScreenStack`.** Modals live in a dedicated
+  `modal: Option<Box<dyn Screen>>` slot, rendered on top of the stack top
+  without participating in the back stack. Key events flow to the modal
+  first; `Command::Pop` from the modal closes it and yields control back
+  to the underlying screen. `ScreenStack::apply_command` centralises the
+  transition logic shared by the runtime dispatcher and the BDD harness.
+- **`HelpModal` (bound to `?`).** A lightweight modal rendered by the
+  dispatcher when the user presses `?`. Content comes from the active
+  screen's `KeyBindHints` (see `plan/10-settings.md §12.4`) when present
+  and falls back to the global map otherwise.
+- **Global search (`/`) via a `GlobalKeyMap`.** `run_event_loop` takes a
+  `GlobalKeyMap` with optional factories for `/` (search) and `?` (help).
+  When the current screen does not claim the key, the dispatcher opens
+  the configured factory as a modal. `HomeScreen::with_search_factory`
+  still works for tests that construct the stack directly; `infra` routes
+  the same factory through the global map so every screen picks it up.
+
+## 8. Still deferred
+
+- Migration of the Gas Tracker unit converter (`src/adapters/ui/gas_tracker.rs`)
+  from its local `ConverterState` to a `Command::OpenModal` dispatch.
+  Shape is understood (return `Command::OpenModal(Box::new(ConverterModal))`
+  on `u`, let the dispatcher render/tick it and route
+  `Command::CloseModal` on `Esc`) but the screen currently owns cross-state
+  with its rolling histogram so the refactor is left for a dedicated probe.
+- `ConfirmModal` and `InputModal`: the `HelpModal` lands first because it
+  is the only modal the current screens need; the `Confirm`/`Input`
+  counterparts are deferred until the first use case wants them (copy-on-
+  confirm or runtime edit from Settings, see `plan/10-settings.md §11.2`).
+- Reconnecting-badge reuse via the new modal system for the mempool
+  screen (`plan/5-mempool.md §11.3.4`). The modal system is ready; the
+  badge is still a local overlay inside `MempoolScreen`.
+
+## 9. Follow-up (not this phase)
 
 - Phase 2 (`plan/13-alchemy-adapter.md`): Alchemy HTTP adapter
   implementing `NetworkStatusPort` and `GasOraclePort`; `HomeScreen`
