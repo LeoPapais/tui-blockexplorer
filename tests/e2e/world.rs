@@ -7,7 +7,10 @@
 use std::fmt;
 
 use blockexplorer_tui::{
-    adapters::ui::ScreenStack,
+    adapters::ui::{
+        ScreenStack,
+        gas_tracker::{GasFeedSender, GasRefreshListener},
+    },
     application::HomeSession,
     domain::{Address, Chain, TxHash},
     infra::search_feed::SearchCache,
@@ -140,6 +143,18 @@ pub struct AppWorld {
     /// falls back to its hard-coded Polygon fixture so existing
     /// scenarios keep passing. See `plan/3-block-detail.md` §12.5.
     pub pending_block_detail: Option<blockexplorer_tui::domain::Block>,
+
+    /// Sender for the Gas Tracker's feed channel, kept around so
+    /// pause / refresh scenarios can push additional snapshots
+    /// after the screen is on the stack. See `plan/9-gas-tracker.md`
+    /// §11.2.
+    pub gas_feed_sender: Option<GasFeedSender>,
+
+    /// Receiver end of the Gas Tracker's refresh-kick channel. Set
+    /// when the scenario opens the Gas Tracker with a refresh
+    /// handle; the `Ctrl+R` step pulls from it to assert the kick
+    /// was queued. See `plan/9-gas-tracker.md` §11.2.
+    pub gas_refresh_listener: Option<GasRefreshListener>,
 }
 
 impl fmt::Debug for AppWorld {
