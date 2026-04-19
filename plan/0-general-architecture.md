@@ -92,6 +92,46 @@ Every screen shares the same chrome. Only the content area is screen-specific.
 The header, breadcrumb and status bar are drawn by the shell (not by individual
 screens). Screens only own the content area.
 
+### Shipped in §8.16 (cross-cutting first pass)
+
+- `render_breadcrumb(stack)` pure helper in `src/adapters/ui/breadcrumb.rs`
+  derives the breadcrumb trail from the current `ScreenStack` (title per
+  screen joined with ` > `). Snapshot-tested against a representative
+  stack shape in `tests/functional/render_breadcrumb.rs`. The shell
+  integration of the helper (so every screen renders the breadcrumb
+  without having to call it itself) is still queued.
+- `CacheRegistry` (`src/adapters/cache/registry.rs`) centralises the TTL
+  constants for named namespaces so composition roots and decorators
+  agree on the numbers: `ens_reverse` 5 min, `abi` 5 min, `search`
+  60 s, `health` 30 s. The decorators (`CachedEnsResolver`,
+  `CachedEtherscanProxyHint`) and the search feed read their TTLs from
+  the registry instead of hard-coded constants.
+- Shared BDD step library (`tests/e2e/steps/shared.rs`) owns the
+  `Given the user is on Home` / `Given the active chain is "..."` /
+  `Given the user launches the app` givens that every feature file
+  reuses. Individual feature modules register their own scenario-
+  specific givens but stop redefining the common ones.
+- `pretty_assertions::assert_eq!` is wired across every test module
+  that compares structured values; loose `assert!(matches!(…))` usages
+  on enum shapes are migrated to `assert_matches!`.
+- Adapter happy-path + 5xx error fixtures: every HTTP adapter that
+  ships today has at least one `*__error__*5xx.json` fixture feeding a
+  functional test that asserts the provider maps the failure to
+  `DomainError::ProviderUnavailable`. See
+  `tests/functional/rpc_error_mapping.rs`, `etherscan_health.rs`,
+  `openchain_signatures.rs`.
+
+### Still deferred (tracked in `plan/15-backlog.md` §8.16)
+
+- Application-shell polish: command palette `:`, chain-switcher
+  modal, status bar footer, dynamic tick rate, `StatusPort`, and the
+  data-driven `KeyMap` config overrides. The breadcrumb helper
+  above is a shell ingredient; promoting it to a top-level chrome
+  row is part of this work.
+- Clipboard audit across screens (`arboard` currently stubbed).
+- Per-screen narrow-terminal thresholds beyond Home.
+- Remaining Beacon / blob-sidecar adapter.
+
 ## 4. Global keybindings
 
 These bindings are valid on every screen unless explicitly overridden.
@@ -134,6 +174,12 @@ Screen-specific bindings extend this table and are listed inside each plan file.
   hash, address, block number). Uses the OS clipboard via `arboard`.
 - **Discoverability**: `?` lists every binding active right now. The command palette
   is the canonical list of actions.
+
+§8.16 status: help modal (`?`) landed in §8.13; the command palette
+(`:`) and the chain-switcher modal are still queued. Colour palette
+landed in §8.11; semantic tokens (`Theme::accent/warning/success`)
+are exposed on the palette and already drive every built-in widget,
+but a formal audit across every screen is still deferred.
 
 ## 6. Hexagonal architecture
 
