@@ -228,3 +228,6 @@ mod gas_percentiles;
 
 #[path = "functional/gas_tracker_screen.rs"]
 mod gas_tracker_screen;
+
+#[path = "functional/logger_masking.rs"]
+mod logger_masking;
