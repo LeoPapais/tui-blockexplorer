@@ -41,7 +41,10 @@ pub fn render_with_banner(frame: &mut Frame<'_>, area: Rect, view: &HomeViewMode
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                // 2 lines of banner body + top/bottom borders so
+                // both sentences (see render_first_run_banner) land
+                // on-screen.
+                Constraint::Length(4),
                 Constraint::Length(3),
                 Constraint::Min(10),
             ])
@@ -60,7 +63,12 @@ pub fn render_with_banner(frame: &mut Frame<'_>, area: Rect, view: &HomeViewMode
 }
 
 fn render_first_run_banner(frame: &mut Frame<'_>, area: Rect) {
-    let body = "Set up credentials: press s to open Settings, or Esc / Enter to dismiss.";
+    // Two lines of hint text: the first points at Settings, the
+    // second mentions the `--init-config` CLI flag that seeds a
+    // `config.toml` on disk. See `plan/14-config-and-credentials.md`
+    // §8.3.
+    let body = "Set up credentials: press s to open Settings, or Esc / Enter to dismiss.\n\
+                Or: run `cargo run -- --init-config` to seed a config.toml and edit it afterwards.";
     let para = Paragraph::new(body)
         .style(Style::default().add_modifier(Modifier::BOLD))
         .block(
