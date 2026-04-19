@@ -19,12 +19,19 @@ pub enum RpcError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// HTTP 5xx response from the provider. Split out of `Rate` so the
+    /// retry classifier (plan/13 §8.2) can tell "our fault vs theirs".
+    #[error("HTTP server error: {status}")]
+    HttpServerError { status: u16 },
+
     #[error("JSON-RPC error {code}: {message}")]
     Rpc { code: i64, message: String },
 
     #[error("response could not be decoded: {0}")]
     Decode(#[from] serde_json::Error),
 
+    /// HTTP 429 Too Many Requests. Distinct from `HttpServerError`
+    /// so the breaker + retry helpers can weigh them differently.
     #[error("rate limited")]
     Rate,
 
@@ -33,15 +40,52 @@ pub enum RpcError {
 }
 
 impl RpcError {
+    /// Map into the domain error model at the adapter boundary.
+    ///
+    /// See `plan/13-alchemy-adapter.md` §8.1 for the matrix:
+    /// - `-32602` (invalid params) → `DomainError::InvalidInput`.
+    /// - `-32601` / `-32004` (method not found / not supported) →
+    ///   `DomainError::FeatureUnavailable`.
+    /// - `-32005` (rate limit) and `-32000..=-32099` (server error
+    ///   range) → `DomainError::ProviderUnavailable`.
+    /// - Anything else from the RPC envelope falls through to
+    ///   `Internal(message)` so regressions surface instead of hiding
+    ///   as a generic provider error.
+    #[must_use]
     pub fn into_domain(self) -> DomainError {
         match self {
-            RpcError::Rate | RpcError::Timeout => DomainError::ProviderUnavailable,
+            RpcError::Rate | RpcError::Timeout | RpcError::HttpServerError { .. } => {
+                DomainError::ProviderUnavailable
+            }
             RpcError::Http(err) if err.is_timeout() => DomainError::ProviderUnavailable,
             RpcError::Http(err) if err.is_connect() => DomainError::ProviderUnavailable,
             RpcError::Http(err) => DomainError::Internal(err.to_string()),
-            RpcError::Rpc { code: -32005, .. } => DomainError::ProviderUnavailable,
+            RpcError::Rpc { code: -32602, message } => DomainError::InvalidInput(message),
+            RpcError::Rpc {
+                code: -32601 | -32004,
+                ..
+            } => DomainError::FeatureUnavailable,
+            RpcError::Rpc {
+                code: -32099..=-32000,
+                ..
+            } => DomainError::ProviderUnavailable,
             RpcError::Rpc { message, .. } => DomainError::Internal(message),
             RpcError::Decode(err) => DomainError::Internal(err.to_string()),
+        }
+    }
+
+    /// True when the error is transient and retrying the same call
+    /// may succeed. Drives both the retry helper (plan/13 §8.2) and
+    /// the circuit breaker's failure counter (§8.3).
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            RpcError::Rate
+            | RpcError::Timeout
+            | RpcError::HttpServerError { .. }
+            | RpcError::Rpc { code: -32005, .. } => true,
+            RpcError::Http(err) => err.is_timeout() || err.is_connect(),
+            _ => false,
         }
     }
 }
@@ -93,7 +137,9 @@ impl RpcClient {
             return Err(RpcError::Rate);
         }
         if resp.status().is_server_error() {
-            return Err(RpcError::Rate);
+            return Err(RpcError::HttpServerError {
+                status: resp.status().as_u16(),
+            });
         }
 
         let body: Value = resp.json().await?;
