@@ -96,8 +96,9 @@ screens). Screens only own the content area.
 
 - `render_breadcrumb(stack)` pure helper in `src/adapters/ui/breadcrumb.rs`
   derives the breadcrumb trail from the current `ScreenStack` (title per
-  screen joined with ` > `). Snapshot-tested against a representative
-  stack shape in `tests/functional/render_breadcrumb.rs`. The shell
+  screen joined with ` > `). Functional-tested against a representative
+  stack shape in `tests/functional/render_breadcrumb.rs`, including the
+  "open modal must not appear on the trail" invariant. The shell
   integration of the helper (so every screen renders the breadcrumb
   without having to call it itself) is still queued.
 - `CacheRegistry` (`src/adapters/cache/registry.rs`) centralises the TTL
@@ -114,12 +115,18 @@ screens). Screens only own the content area.
 - `pretty_assertions::assert_eq!` is wired across every test module
   that compares structured values; loose `assert!(matches!(…))` usages
   on enum shapes are migrated to `assert_matches!`.
-- Adapter happy-path + 5xx error fixtures: every HTTP adapter that
-  ships today has at least one `*__error__*5xx.json` fixture feeding a
-  functional test that asserts the provider maps the failure to
+- Adapter happy-path + 5xx error fixtures: the Alchemy RPC client,
+  the Etherscan V2 client and the Alchemy Prices client each ship a
+  `*__error__*5xx.json` fixture feeding a wiremock-driven test that
+  asserts the adapter maps HTTP 5xx to
   `DomainError::ProviderUnavailable`. See
-  `tests/functional/rpc_error_mapping.rs`, `etherscan_health.rs`,
-  `openchain_signatures.rs`.
+  `tests/functional/rpc_error_mapping.rs`,
+  `tests/functional/etherscan_contract_source.rs` (server_5xx_…)
+  and `tests/functional/alchemy_prices.rs` (server_5xx_…). The
+  openchain-shape signature adapter intentionally keeps its current
+  "non-2xx → Ok(None)" policy so a transient signature-directory
+  outage does not block tx-detail decoding; the composite falls
+  through to the Samczsun mirror instead.
 
 ### Still deferred (tracked in `plan/15-backlog.md` §8.16)
 
