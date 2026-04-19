@@ -135,9 +135,10 @@ state naturally.
 3. When using real adapters:
    - Build reqwest::Client once.
    - Build RpcClient targeted at the active chain's Alchemy URL.
-   - Build Alchemy{NetworkStatus,GasOracle}Adapter + StubChainRegistry
-     (the chain registry still comes from hardcoded config for now;
-     a real one arrives with the Settings screen).
+   - Build Alchemy{NetworkStatus,GasOracle}Adapter + the persistent
+     `InMemoryChainRegistry::with_default(chain)` (replaces the
+     `StubChainRegistry` that lived here in the original draft; see
+     §8.4 below).
    - Build HomeSession; start HomeFeed; build HomeScreen with it.
 4. Run the event loop.
 ```
@@ -181,3 +182,57 @@ the screen.
   and remains the loader for the composition root; see §12.3 of
   `plan/10-settings.md` for the split between `ConfigLoader`
   (pure read) and `FsConfig` (read + save).
+
+## 8. §8.15 follow-ups (April 2026)
+
+`plan/15-backlog.md` §8.15 listed four items for this slice. Status:
+
+### 8.1 `ConfigPort::save` — shipped
+
+The port + atomic `FsConfig` adapter shipped in §8.11 (see
+`plan/10-settings.md` §12.3). The composition root does not currently
+persist on its own (Settings is read-only per §10 open questions) so
+there is no chain-switch-on-save wiring today — `FsConfig` exists as a
+primitive for the future editable Settings slice and is exercised by
+`tests/functional/fs_config_save.rs`. §8.15 also wires `FsConfig` into
+the `--init-config` CLI flow (§8.3 below) so at least one composition
+call site depends on it at runtime.
+
+### 8.2 `BLOCKEXPLORER_TUI_CHAIN` validation — shipped
+
+`ConfigLoader::load` already calls `Chain::from_slug`, which maps
+unknown slugs to `DomainError::InvalidInput`. The error message now
+enumerates the valid slugs (`ethereum | ethereum-sepolia | base |
+polygon | optimism | arbitrum`) so the user can correct the env var
+without grepping the codebase. Functional coverage:
+`tests/functional/chain_from_slug.rs` + the existing
+`unknown_chain_slug_is_rejected` test in `src/infra/config.rs`.
+
+### 8.3 Fallback UX — shipped
+
+When the binary boots without credentials and without `--demo`, the
+composition root prints the enriched hint message that now also
+mentions the config-file path resolved via XDG and the new CLI flag:
+
+```
+cargo run -- --init-config
+```
+
+The `--init-config` handler resolves the default XDG config path
+(via `directories`) and writes a seed `config.toml` at that path
+through `FsConfig::save`, reusing the atomic temp-file-and-rename
+contract. The handler is a pure composition helper, not a new use
+case, and is covered by `tests/functional/init_config.rs`.
+
+The demo-mode first-run banner text is extended to surface the same
+`--init-config` shortcut so users who land on `cargo run -- --demo`
+without a key learn about the seed-file flow. The existing
+`tests/functional/home_screen_first_run_banner.rs` covers the banner
+content.
+
+### 8.4 `StubChainRegistry` in composition root — shipped
+
+The composition root already uses `InMemoryChainRegistry::with_default`
+(`src/adapters/config/chain_registry.rs`). The §4 wiring description
+above is updated to match. `StubChainRegistry` now lives exclusively
+under `tests/support/stubs.rs` for the test world.

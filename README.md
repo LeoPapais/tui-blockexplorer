@@ -23,6 +23,12 @@ ALCHEMY_API_KEY=<key> ETHERSCAN_API_KEY=<etherscan-v2-key> cargo run
 
 # Pick a different chain (defaults to Ethereum mainnet):
 ALCHEMY_API_KEY=<key> BLOCKEXPLORER_TUI_CHAIN=base cargo run
+
+# Seed ~/.config/blockexplorer-tui/config.toml with defaults and exit
+# (valid chain slugs: ethereum | ethereum-sepolia | base | polygon |
+# optimism | arbitrum — an invalid BLOCKEXPLORER_TUI_CHAIN surfaces
+# the full list in the error message):
+cargo run -- --init-config
 ```
 
 Inside the TUI:

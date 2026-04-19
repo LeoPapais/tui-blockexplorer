@@ -85,6 +85,32 @@ fn missing_file_is_not_an_error() {
 }
 
 #[test]
+fn invalid_env_chain_enumerates_every_valid_slug() {
+    // plan/14-config-and-credentials.md §8.2: when the env var holds an
+    // unknown slug the loader must surface a `DomainError::InvalidInput`
+    // whose message lists every supported chain so the user can fix
+    // the variable without grepping the codebase.
+    let loader = ConfigLoader::with_env(env_map(vec![(ENV_CHAIN, "mars")])).with_config_path(None);
+    let err = loader.load().expect_err("unknown slug must error");
+
+    let DomainError::InvalidInput(message) = err else {
+        panic!("expected InvalidInput, got {err:?}");
+    };
+
+    for chain in Chain::all() {
+        assert!(
+            message.contains(chain.slug()),
+            "loader error {message:?} must mention {}",
+            chain.slug()
+        );
+    }
+    assert!(
+        message.contains("mars"),
+        "loader error {message:?} must echo the offending slug"
+    );
+}
+
+#[test]
 fn malformed_file_is_rejected() {
     let path = scratch_path("malformed");
     fs::write(&path, "this is not TOML }}} [broken").unwrap();

@@ -479,12 +479,73 @@ fn build_signature_directory() -> TxSignatureDir {
 
 pub use config::{ApiCredentials, AppConfig, ConfigLoader};
 
+/// Resolve the default XDG config path (same logic the loader uses)
+/// so callers can mention it in error messages before the user has a
+/// file on disk. Returns `None` when the `directories` crate cannot
+/// produce a project directory for this OS (shouldn't happen on any
+/// supported target).
+#[must_use]
+pub fn default_config_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("", "", "blockexplorer-tui")
+        .map(|dirs| dirs.config_dir().join("config.toml"))
+}
+
+/// Seed a `config.toml` at `path` with default values, suitable for
+/// the user to edit afterwards. The write goes through the atomic
+/// `FsConfig::save` so we reuse the temp-file-and-rename contract
+/// `plan/10-settings.md` §12.3 already ships.
+///
+/// If the file already exists its contents are preserved: existing
+/// credentials and a user-picked default chain survive. This keeps
+/// `cargo run -- --init-config` idempotent.
+///
+/// See `plan/14-config-and-credentials.md` §8.3.
+pub fn init_config_at(
+    path: &std::path::Path,
+) -> std::result::Result<crate::application::ports::AppConfigView, crate::domain::DomainError> {
+    use crate::{
+        adapters::config::FsConfig,
+        application::ports::{ConfigPatch, ConfigPort},
+    };
+
+    let adapter = FsConfig::new(path.to_path_buf());
+
+    // `FsConfig` is implemented on top of `std::fs`, so the futures
+    // returned by `load` / `save` complete without yielding. We can
+    // therefore synchronously block on them from a non-async CLI
+    // context via the same helper used by the screen factories.
+    let existing = futures_block_on(adapter.load())?;
+
+    // Either the file is brand new (load returns Chain::Ethereum by
+    // default) or the user already picked something; either way
+    // materialising the current `[defaults]` block via `save`
+    // ensures the next boot reads a self-contained seed.
+    let patch = ConfigPatch::with_default_chain(existing.chain);
+
+    futures_block_on(adapter.save(&patch))
+}
+
 /// Hint printed when the binary is invoked without credentials and
-/// without `--demo`.
-const NO_DATA_HINT: &str = "blockexplorer-tui: no Alchemy key found.\n\
+/// without `--demo`. The exact text is asserted by integration tests
+/// via `NO_DATA_HINT_TEMPLATE`.
+fn no_data_hint(config_path: Option<&std::path::Path>) -> String {
+    let path_line = match config_path {
+        Some(p) => format!("  {}\n", p.display()),
+        None => String::from("  (config path unavailable on this OS)\n"),
+    };
+    format!(
+        "blockexplorer-tui: no Alchemy key found.\n\
 Set ALCHEMY_API_KEY and re-run, or launch with `cargo run -- --demo`\n\
 to see the Home screen rendered with placeholder data.\n\
-See plan/14-config-and-credentials.md for the full wiring.";
+\n\
+A seed config file can be created at:\n\
+{path_line}\
+by running `cargo run -- --init-config`; edit the file afterwards\n\
+to persist your Alchemy / Etherscan keys.\n\
+\n\
+See plan/14-config-and-credentials.md for the full wiring."
+    )
+}
 
 /// Entry point called from `main`.
 pub fn run() -> Result<()> {
@@ -494,6 +555,29 @@ pub fn run() -> Result<()> {
     logging::install_masking_logger();
 
     let cli = parse_cli();
+
+    // `--init-config` is handled before config loading so the flag
+    // still works when the file does not exist (that is, in fact,
+    // the only case where the flag is useful). Config parsing errors
+    // on the existing file would otherwise mask the bootstrap flow.
+    if cli.init_config {
+        let Some(path) = default_config_path() else {
+            anyhow::bail!(
+                "could not resolve XDG config path for this OS; \
+                pass a path via `--init-config=<path>` once supported"
+            );
+        };
+        let view = init_config_at(&path).context("failed to seed config")?;
+        eprintln!(
+            "blockexplorer-tui: wrote seed config to {}\n\
+             default chain: {}\n\
+             edit the file to add your Alchemy / Etherscan keys.",
+            path.display(),
+            view.chain.slug()
+        );
+        return Ok(());
+    }
+
     let config = AppConfig::load().context("failed to load config")?;
 
     if cli.demo {
@@ -515,7 +599,7 @@ pub fn run() -> Result<()> {
     }
 
     if !config.has_alchemy_key() {
-        eprintln!("{NO_DATA_HINT}");
+        eprintln!("{}", no_data_hint(default_config_path().as_deref()));
         return Ok(());
     }
 
@@ -931,13 +1015,16 @@ fn alchemy_url(chain: Chain, api_key: &str) -> Url {
 #[derive(Debug, Default)]
 struct Cli {
     demo: bool,
+    init_config: bool,
 }
 
 fn parse_cli() -> Cli {
     let mut cli = Cli::default();
     for arg in std::env::args().skip(1) {
-        if arg == "--demo" {
-            cli.demo = true;
+        match arg.as_str() {
+            "--demo" => cli.demo = true,
+            "--init-config" => cli.init_config = true,
+            _ => {}
         }
     }
     cli
