@@ -213,3 +213,9 @@ mod etherscan_label;
 
 #[path = "functional/load_block_withdrawals.rs"]
 mod load_block_withdrawals;
+
+#[path = "functional/token_price_stream.rs"]
+mod token_price_stream;
+
+#[path = "functional/token_detail_screen_keys.rs"]
+mod token_detail_screen_keys;
