@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use url::Url;
 
+use super::circuit_breaker::{CircuitBreaker, is_breaker_failure};
 use super::retry::{RetryPolicy, retry_with_backoff};
 use crate::application::ports::Rng;
 use crate::domain::DomainError;
@@ -40,6 +41,12 @@ pub enum RpcError {
 
     #[error("request timed out")]
     Timeout,
+
+    /// The circuit breaker fast-failed the call. Mapped to
+    /// `DomainError::ProviderUnavailable` at the adapter boundary.
+    /// See `plan/13-alchemy-adapter.md` §8.3.
+    #[error("circuit breaker open; fast-failing the call")]
+    CircuitOpen,
 }
 
 impl RpcError {
@@ -57,9 +64,10 @@ impl RpcError {
     #[must_use]
     pub fn into_domain(self) -> DomainError {
         match self {
-            RpcError::Rate | RpcError::Timeout | RpcError::HttpServerError { .. } => {
-                DomainError::ProviderUnavailable
-            }
+            RpcError::Rate
+            | RpcError::Timeout
+            | RpcError::HttpServerError { .. }
+            | RpcError::CircuitOpen => DomainError::ProviderUnavailable,
             RpcError::Http(err) if err.is_timeout() => DomainError::ProviderUnavailable,
             RpcError::Http(err) if err.is_connect() => DomainError::ProviderUnavailable,
             RpcError::Http(err) => DomainError::Internal(err.to_string()),
@@ -100,21 +108,23 @@ pub struct RpcClient {
     http: Client,
     base_url: Url,
     retry: Arc<RetryPolicy>,
+    breaker: Option<Arc<CircuitBreaker>>,
 }
 
 impl RpcClient {
     /// Construct a new client. Callers build the `reqwest::Client` once
     /// and pass it in so connection pooling is shared across adapters.
     ///
-    /// The returned client uses [`RetryPolicy::none()`]; opt into the
-    /// hardened schedule via [`Self::with_default_retry`] or
-    /// [`Self::with_retry_policy`] in the composition root.
+    /// The returned client uses [`RetryPolicy::none()`] and has no
+    /// circuit breaker; opt in via [`Self::with_default_retry`] /
+    /// [`Self::with_retry_policy`] and [`Self::with_circuit_breaker`].
     #[must_use]
     pub fn new(base_url: Url, http: Client) -> Self {
         Self {
             http,
             base_url,
             retry: Arc::new(RetryPolicy::none()),
+            breaker: None,
         }
     }
 
@@ -148,12 +158,37 @@ impl RpcClient {
         &self.retry
     }
 
+    /// Attach a shared circuit breaker. See
+    /// `plan/13-alchemy-adapter.md` §8.3: after
+    /// `failure_threshold` consecutive retryable failures the
+    /// breaker opens and every subsequent call short-circuits with
+    /// [`RpcError::CircuitOpen`] until `cool_down` elapses.
+    #[must_use]
+    pub fn with_circuit_breaker(mut self, breaker: Arc<CircuitBreaker>) -> Self {
+        self.breaker = Some(breaker);
+        self
+    }
+
+    /// Currently-attached circuit breaker, if any. Exposed so the
+    /// composite signature directory (plan/15-backlog.md §3.2) and
+    /// tests can consult `is_open()` without a second Arc hop.
+    #[must_use]
+    pub fn circuit_breaker(&self) -> Option<&Arc<CircuitBreaker>> {
+        self.breaker.as_ref()
+    }
+
     /// Issue a JSON-RPC 2.0 call and decode the `result` field.
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &self,
         method: &str,
         params: P,
     ) -> Result<R, RpcError> {
+        if let Some(breaker) = &self.breaker
+            && breaker.is_open()
+        {
+            return Err(RpcError::CircuitOpen);
+        }
+
         let params_value = serde_json::to_value(&params)?;
         let request = json!({
             "jsonrpc": "2.0",
@@ -162,7 +197,15 @@ impl RpcClient {
             "params": params_value,
         });
 
-        retry_with_backoff(&self.retry, || self.call_once::<R>(&request)).await
+        let outcome = retry_with_backoff(&self.retry, || self.call_once::<R>(&request)).await;
+        if let Some(breaker) = &self.breaker {
+            match &outcome {
+                Ok(_) => breaker.record_success(),
+                Err(err) if is_breaker_failure(err) => breaker.record_failure(),
+                Err(_) => {}
+            }
+        }
+        outcome
     }
 
     async fn call_once<R: DeserializeOwned>(&self, request: &Value) -> Result<R, RpcError> {

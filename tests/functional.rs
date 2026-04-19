@@ -270,3 +270,6 @@ mod rpc_error_mapping;
 
 #[path = "functional/rpc_retry.rs"]
 mod rpc_retry;
+
+#[path = "functional/rpc_circuit_breaker.rs"]
+mod rpc_circuit_breaker;
