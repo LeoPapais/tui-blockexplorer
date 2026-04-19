@@ -279,3 +279,6 @@ mod cost_meter;
 
 #[path = "functional/rpc_batch.rs"]
 mod rpc_batch;
+
+#[path = "functional/alchemy_new_heads_stream.rs"]
+mod alchemy_new_heads_stream;
