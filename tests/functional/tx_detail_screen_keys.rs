@@ -11,6 +11,7 @@ use blockexplorer_tui::domain::{
     TxType, Wei,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use pretty_assertions::assert_eq;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 fn key(code: KeyCode) -> KeyEvent {

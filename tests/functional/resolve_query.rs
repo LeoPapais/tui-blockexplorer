@@ -11,6 +11,7 @@ use blockexplorer_tui::{
         ResolvedEntity, TokenMetadata, TxHash, TxSummary,
     },
 };
+use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -459,7 +460,7 @@ async fn token_ticker_returns_token_candidates() {
         .expect("ok");
 
     assert_eq!(got.len(), 1);
-    assert!(matches!(&got[0], ResolvedEntity::Token(m) if m.symbol == "USDC"));
+    assert_matches!(&got[0], ResolvedEntity::Token(m) if m.symbol == "USDC");
 }
 
 #[tokio::test]
@@ -478,7 +479,7 @@ async fn free_text_searches_by_name() {
         .await
         .expect("ok");
 
-    assert!(matches!(&got[0], ResolvedEntity::Token(m) if m.name == "USD Coin"));
+    assert_matches!(&got[0], ResolvedEntity::Token(m) if m.name == "USD Coin");
 }
 
 #[tokio::test]

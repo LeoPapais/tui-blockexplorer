@@ -10,6 +10,7 @@ use blockexplorer_tui::{
     domain::{CallKind, Chain, DiffChange, DomainError, TxHash},
 };
 use serde_json::Value;
+use pretty_assertions::assert_eq;
 use url::Url;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate, matchers::method};
 

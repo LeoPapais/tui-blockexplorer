@@ -8,6 +8,7 @@ use blockexplorer_tui::{
     domain::{BlockHash, BlockId, BlockNumber, Chain},
 };
 use serde_json::json;
+use pretty_assertions::assert_eq;
 use url::Url;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,

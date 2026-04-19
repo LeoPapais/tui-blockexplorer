@@ -27,6 +27,7 @@ use blockexplorer_tui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
 use crate::world::AppWorld;
 

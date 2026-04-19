@@ -4,6 +4,7 @@
 
 use blockexplorer_tui::adapters::ui::{Command, Screen, ScreenStack};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use pretty_assertions::assert_eq;
 use ratatui::{Frame, layout::Rect};
 
 /// Tiny screen used as a fixture for stack tests. Stores a label so

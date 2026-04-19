@@ -18,6 +18,7 @@ use blockexplorer_tui::{
     },
 };
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
 use crate::{
     steps::search::{build_stack, spawn_tx_detail},
