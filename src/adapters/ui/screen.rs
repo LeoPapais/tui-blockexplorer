@@ -174,6 +174,16 @@ impl ScreenStack {
         self.screens.len()
     }
 
+    /// Iterate over screen titles bottom-up (root first, top last).
+    ///
+    /// Drives `adapters::ui::breadcrumb::render_breadcrumb` without
+    /// exposing the internal `Box<dyn Screen>` storage. Modals are
+    /// intentionally excluded — the breadcrumb describes the back
+    /// stack the user sees once they close the current modal.
+    pub fn titles(&self) -> impl Iterator<Item = &str> + '_ {
+        self.screens.iter().map(|s| s.title())
+    }
+
     /// Clear every screen and any modal. Called in response to
     /// [`Command::Quit`] or [`Command::Switch`].
     pub fn clear(&mut self) {

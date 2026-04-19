@@ -291,3 +291,6 @@ mod init_config;
 
 #[path = "functional/cache_registry.rs"]
 mod cache_registry;
+
+#[path = "functional/render_breadcrumb.rs"]
+mod render_breadcrumb;
