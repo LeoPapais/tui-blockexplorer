@@ -48,7 +48,8 @@ use crate::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
             ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen, TxDetailScreen,
-            address_feed, block_feed, contract_feed, gas_feed, search_feed, token_feed, tx_feed,
+            address_feed, block_feed, contract_feed, gas_feed, gas_refresh_channel, search_feed,
+            token_feed, tx_feed,
         },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
@@ -676,13 +677,18 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         Box::new(move || -> Box<dyn Screen> {
             let oracle = AlchemyGasOracleAdapter::new(rpc.clone());
             let (feed, sender) = gas_feed();
-            std::mem::drop(gas_feed::spawn(
+            // plan/9 §11.2: Ctrl+R in the Gas Tracker screen kicks
+            // the listener end so the polling task skips the 6s
+            // sleep and refetches immediately.
+            let (refresh_handle, refresh_listener) = gas_refresh_channel();
+            std::mem::drop(gas_feed::spawn_with_refresh(
                 chain,
                 oracle,
                 sender,
                 gas_feed::DEFAULT_REFRESH_PERIOD,
+                Some(refresh_listener),
             ));
-            Box::new(GasTrackerScreen::new(chain, None, feed))
+            Box::new(GasTrackerScreen::new(chain, None, feed).with_refresh_handle(refresh_handle))
         })
     };
 
