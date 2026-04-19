@@ -11,5 +11,6 @@ pub mod etherscan;
 pub mod labels;
 pub mod prices;
 pub mod rpc;
+pub mod secrets;
 pub mod signatures;
 pub mod ui;

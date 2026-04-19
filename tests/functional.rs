@@ -246,3 +246,6 @@ mod alchemy_health;
 
 #[path = "functional/etherscan_health.rs"]
 mod etherscan_health;
+
+#[path = "functional/plaintext_secret_store.rs"]
+mod plaintext_secret_store;
