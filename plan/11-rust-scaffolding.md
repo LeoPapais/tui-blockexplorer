@@ -178,6 +178,11 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   rust-style rule file; they are applied in CI via `-W` flags rather than
   in source, so test code (which legitimately uses `.expect()` for
   assertion messages) is not penalised.
+- `cargo-deny check` (§9.4) and `scripts/check-layers.sh` (§9.7) are the
+  two "beyond clippy" guardrails: the first catches dependency-level
+  drift, the second catches layer-boundary drift. Both run in CI
+  (§9.6) and are optional but encouraged locally via the pre-commit
+  hook documentation in §9.5.
 
 ### 9.2 `Clock` port coverage
 
@@ -210,15 +215,18 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   ```
   Interior-mutability based (`&self`) so an `Arc<dyn Rng>` can be shared
   across tasks without wrapping every stream in a `Mutex`.
-- Production adapter: `src/adapters/rng.rs::OsRng` backed by
-  `getrandom::getrandom` (already transitively present through
-  `rustls`/`ring`; no new top-level crate). Falls back to a well-marked
-  panic only if `getrandom` fails; that is a platform-level failure.
+- Production adapter: `src/adapters/rng.rs::OsRng` reads from
+  `/dev/urandom` on Unix via `std::fs::File`; the file handle is
+  opened lazily on first use and kept open for the process lifetime
+  (the expected access pattern for `/dev/urandom`). No new top-level
+  crate. Non-Unix targets panic with a pointer at this plan section
+  until the fallback adapter lands.
 - Stub: `tests/support/stubs.rs::SeededRng` wraps a deterministic
   xorshift64* generator (inline implementation, no new crate). Exposes
-  `SeededRng::new(seed)` and `SeededRng::default()` (seed `0xdeadbeef`).
-  Unit test asserts that two `SeededRng::new(42)` instances produce the
-  same stream.
+  `SeededRng::new(seed)` (non-zero seed required) and
+  `SeededRng::default()` (seed `0xdead_beef_cafe_f00d`). Unit tests in
+  `tests/functional/rng_stub.rs` assert that two `SeededRng::new(42)`
+  instances produce the same stream.
 - The port has no callers yet; it is introduced now so the first
   feature that needs randomness (future nonce generation, jitter on
   retry back-off, etc.) can pick it up without a second refactor.
