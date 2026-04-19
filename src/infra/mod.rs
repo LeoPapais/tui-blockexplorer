@@ -16,7 +16,7 @@ pub mod health;
 pub mod home_feed;
 pub mod logging;
 pub mod mempool_feed;
-mod runtime;
+pub mod runtime;
 pub mod search_feed;
 mod token_feed;
 mod tx_feed;
@@ -48,10 +48,10 @@ use crate::{
         },
         ui::{
             AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
-            DetailPlaceholderScreen, GasTrackerScreen, HomeScreen, MempoolScreen, Screen,
-            ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen, TxDetailScreen,
-            address_feed, block_feed, contract_feed, gas_feed, gas_refresh_channel, search_feed,
-            token_feed, tx_feed,
+            DetailPlaceholderScreen, GasTrackerScreen, GlobalKeyMap, HelpModal, HomeScreen,
+            MempoolScreen, Screen, ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen,
+            TxDetailScreen, address_feed, block_feed, contract_feed, gas_feed, gas_refresh_channel,
+            search_feed, token_feed, tx_feed,
         },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
@@ -496,13 +496,16 @@ pub fn run() -> Result<()> {
         // user gets routed to Settings → Credentials before they try
         // to open a live screen.
         let first_run_hint = !config.has_alchemy_key();
-        return boot_runtime(move |_| {
-            let mut stack = ScreenStack::new();
-            stack.push(Box::new(
-                HomeScreen::with_demo_data().with_first_run_hint(first_run_hint),
-            ));
-            stack
-        });
+        return boot_runtime(
+            move |_| {
+                let mut stack = ScreenStack::new();
+                stack.push(Box::new(
+                    HomeScreen::with_demo_data().with_first_run_hint(first_run_hint),
+                ));
+                stack
+            },
+            |_| default_keymap(),
+        );
     }
 
     if !config.has_alchemy_key() {
@@ -510,14 +513,20 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    boot_runtime(move |_| build_live_stack(&config))
+    let config_for_keymap = config.clone();
+    boot_runtime(
+        move |_| build_live_stack(&config),
+        move |_| build_live_keymap(&config_for_keymap),
+    )
 }
 
 /// Thin wrapper that brings up the Tokio runtime and the event loop,
-/// producing the initial [`ScreenStack`] via `build`.
-fn boot_runtime<F>(build: F) -> Result<()>
+/// producing the initial [`ScreenStack`] and [`GlobalKeyMap`] via
+/// `build_stack` and `build_keymap`.
+fn boot_runtime<F, K>(build_stack: F, build_keymap: K) -> Result<()>
 where
     F: FnOnce(&tokio::runtime::Handle) -> ScreenStack,
+    K: FnOnce(&tokio::runtime::Handle) -> GlobalKeyMap,
 {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -525,9 +534,148 @@ where
 
     runtime.block_on(async move {
         let handle = tokio::runtime::Handle::current();
-        let stack = build(&handle);
-        runtime::run_event_loop(stack).await
+        let stack = build_stack(&handle);
+        let keymap = build_keymap(&handle);
+        runtime::run_event_loop_with_keymap(stack, keymap).await
     })
+}
+
+/// Keymap used for the `--demo` boot path: only the help modal is
+/// wired, because search depends on live adapters. See
+/// `plan/12-screen-runtime.md` §7 item 5.
+fn default_keymap() -> GlobalKeyMap {
+    GlobalKeyMap::default().with_help_factory(demo_help_factory)
+}
+
+fn demo_help_factory() -> Box<dyn Screen> {
+    Box::new(HelpModal::new(
+        "blockexplorer-tui",
+        vec![
+            ("/".to_string(), "Open search".to_string()),
+            ("?".to_string(), "Show help".to_string()),
+            ("q".to_string(), "Quit".to_string()),
+            ("Esc".to_string(), "Back / close modal".to_string()),
+            ("Ctrl+C".to_string(), "Quit".to_string()),
+        ],
+    ))
+}
+
+/// Live keymap: wires the global `/` binding to a SearchScreen that
+/// shares the live adapters, so every screen can open search as a
+/// modal. `?` opens the help modal. See `plan/12-screen-runtime.md`
+/// §7 item 5.
+fn build_live_keymap(config: &AppConfig) -> GlobalKeyMap {
+    let chain = config.chain;
+    let key = match config.credentials.alchemy.as_deref() {
+        Some(k) => k.to_string(),
+        None => return default_keymap(),
+    };
+    let etherscan_key = config.credentials.etherscan.clone();
+
+    let url = alchemy_url(chain, &key);
+    let http = Client::new();
+    let rpc = RpcClient::new(url, http);
+    let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
+
+    let search_factory = {
+        let rpc = rpc.clone();
+        let etherscan_key = etherscan_key.clone();
+        let alchemy_key = key.clone();
+        move || -> Box<dyn Screen> {
+            build_live_search_screen(
+                chain,
+                rpc.clone(),
+                alchemy_key.clone(),
+                etherscan_key.clone(),
+                search_cache.clone(),
+            )
+        }
+    };
+
+    GlobalKeyMap::default()
+        .with_search_factory(search_factory)
+        .with_help_factory(demo_help_factory)
+}
+
+fn build_live_search_screen(
+    chain: Chain,
+    rpc: RpcClient,
+    alchemy_key: String,
+    etherscan_key: Option<String>,
+    search_cache: SearchCache,
+) -> Box<dyn Screen> {
+    let block = AlchemyBlockLookup::new(rpc.clone());
+    let tx = AlchemyTxLookup::new(rpc.clone());
+    let addr = AlchemyAddressLookup::new(rpc.clone());
+    let ens = AlchemyEnsResolver::new(rpc.clone());
+    let token = build_token_search(etherscan_key.as_deref());
+    let token_reader = AlchemyTokenReader::new(rpc.clone());
+    let (search_feed_rx, sender) = search_feed();
+    std::mem::drop(search_feed::spawn_with_cache(
+        chain,
+        block,
+        tx,
+        addr,
+        ens,
+        token,
+        token_reader,
+        sender,
+        Some(search_cache),
+    ));
+
+    let detail_factory = {
+        let rpc = rpc.clone();
+        let etherscan_key = etherscan_key.clone();
+        let alchemy_key = alchemy_key.clone();
+        Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
+            match entity {
+                ResolvedEntity::Block { number, .. } => {
+                    let reader = AlchemyBlockReader::new(rpc.clone());
+                    let (feed, sender) = block_feed();
+                    std::mem::drop(block_feed::spawn(chain, reader, sender));
+                    let rpc_for_tx = rpc.clone();
+                    let etherscan_for_tx = etherscan_key.clone();
+                    let open_tx = Box::new(move |hash| {
+                        live_tx_detail_screen(
+                            chain,
+                            hash,
+                            rpc_for_tx.clone(),
+                            etherscan_for_tx.clone(),
+                        )
+                    });
+                    Box::new(BlockDetailScreen::loading(
+                        chain,
+                        BlockId::Number(number),
+                        feed,
+                        open_tx,
+                    ))
+                }
+                ResolvedEntity::Tx { hash, .. } => {
+                    live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
+                }
+                ResolvedEntity::Address { address, .. } => live_address_detail_screen(
+                    chain,
+                    address,
+                    rpc.clone(),
+                    alchemy_key.clone(),
+                    etherscan_key.clone(),
+                ),
+                ResolvedEntity::Contract { address } => {
+                    live_contract_detail_screen(chain, address, rpc.clone(), etherscan_key.clone())
+                }
+                ResolvedEntity::Token(meta) => live_token_detail_screen(
+                    chain,
+                    meta.address,
+                    rpc.clone(),
+                    &alchemy_key,
+                    etherscan_key.clone(),
+                ),
+                other => Box::new(DetailPlaceholderScreen::new(other)),
+            }
+        })
+    };
+
+    Box::new(SearchScreen::new(search_feed_rx, detail_factory))
 }
 
 fn build_live_stack(config: &AppConfig) -> ScreenStack {

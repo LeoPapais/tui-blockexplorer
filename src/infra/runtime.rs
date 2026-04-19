@@ -1,11 +1,20 @@
 //! TUI event loop.
 //!
-//! Handles terminal setup/teardown, keyboard input, the periodic tick and
-//! the main dispatch loop. Screen-agnostic: consumes any [`ScreenStack`].
+//! Handles terminal setup/teardown, keyboard input, the periodic tick
+//! and the main dispatch loop. Screen-agnostic: consumes any
+//! [`ScreenStack`] and optionally a [`GlobalKeyMap`] so the `/` and
+//! `?` bindings work on every screen.
 //!
-//! See `plan/12-screen-runtime.md` sections 3 and 4.
+//! See `plan/12-screen-runtime.md` §3 + §7.
 
-use std::{io::Stdout, time::Duration};
+use std::{
+    io::Stdout,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -14,15 +23,18 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use tokio::sync::mpsc;
+use tokio::{signal, sync::mpsc};
 
-use crate::adapters::ui::{Command, ScreenStack};
+use crate::adapters::ui::{Command, GlobalKeyMap, ScreenStack};
 
 /// Events driving the dispatcher.
 #[derive(Debug)]
 enum AppEvent {
     Key(KeyEvent),
     Tick,
+    /// SIGINT (Ctrl+C) caught via `tokio::signal::ctrl_c`. Dispatched
+    /// as a `Command::Quit` inside the main loop.
+    Interrupt,
 }
 
 /// Tick period for the `AppEvent::Tick` stream. Matches the default used
@@ -35,19 +47,82 @@ const INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
+/// One-shot guard used to ensure the terminal is torn down at most
+/// once. Shared by the panic hook and the regular exit path so `q`
+/// after a panic during startup still behaves correctly.
+#[derive(Debug, Default)]
+pub struct TeardownGate {
+    fired: AtomicBool,
+}
+
+impl TeardownGate {
+    /// Build a fresh gate (nothing fired yet).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            fired: AtomicBool::new(false),
+        }
+    }
+
+    /// Claim the gate. Returns `true` for the first caller, `false`
+    /// for every subsequent one.
+    pub fn claim(&self) -> bool {
+        self.fired
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// `true` once any caller has claimed the gate.
+    #[must_use]
+    pub fn fired(&self) -> bool {
+        self.fired.load(Ordering::Acquire)
+    }
+}
+
+/// Map a `Ctrl+C` signal to the dispatcher command. Pulled out as a
+/// pure function so it can be unit-tested without actually sending a
+/// signal.
+#[must_use]
+pub const fn signal_to_command() -> Command {
+    Command::Quit
+}
+
 /// Run the event loop until the top screen asks to quit or the stack
 /// becomes empty.
-pub async fn run_event_loop(mut stack: ScreenStack) -> Result<()> {
+pub async fn run_event_loop(stack: ScreenStack) -> Result<()> {
+    run_event_loop_with_keymap(stack, GlobalKeyMap::default()).await
+}
+
+/// Same as [`run_event_loop`] but with a caller-supplied
+/// [`GlobalKeyMap`]. The keymap is consulted *before* the current
+/// screen's `handle_key`: `/` and `?` open modals from anywhere.
+pub async fn run_event_loop_with_keymap(
+    mut stack: ScreenStack,
+    keymap: GlobalKeyMap,
+) -> Result<()> {
+    // Install the panic hook *before* switching the terminal into raw
+    // mode so a panic during `enter_tui` still restores the terminal.
+    let gate = Arc::new(TeardownGate::new());
+    install_panic_hook(Arc::clone(&gate));
+
     let mut terminal = enter_tui().context("failed to enter TUI")?;
-    install_panic_hook();
 
-    let result = drive_loop(&mut terminal, &mut stack).await;
+    let result = drive_loop(&mut terminal, &mut stack, &keymap).await;
 
-    leave_tui(&mut terminal).context("failed to leave TUI")?;
+    // Idempotent teardown: if the panic hook already claimed the gate
+    // we skip the second disable_raw_mode so crossterm does not
+    // double-swap state. See `plan/12-screen-runtime.md` §7 item 2.
+    if gate.claim() {
+        leave_tui(&mut terminal).context("failed to leave TUI")?;
+    }
     result
 }
 
-async fn drive_loop(terminal: &mut Tui, stack: &mut ScreenStack) -> Result<()> {
+async fn drive_loop(
+    terminal: &mut Tui,
+    stack: &mut ScreenStack,
+    keymap: &GlobalKeyMap,
+) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
 
     // Input task: blocking poll inside `spawn_blocking`.
@@ -55,7 +130,7 @@ async fn drive_loop(terminal: &mut Tui, stack: &mut ScreenStack) -> Result<()> {
     let input_handle = tokio::task::spawn_blocking(move || input_loop(&input_tx));
 
     // Ticker task.
-    let ticker_tx = tx;
+    let ticker_tx = tx.clone();
     let ticker_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(TICK_PERIOD);
         // Drop the first tick so we do not immediately race with the
@@ -69,44 +144,35 @@ async fn drive_loop(terminal: &mut Tui, stack: &mut ScreenStack) -> Result<()> {
         }
     });
 
+    // Ctrl+C task: `tokio::signal::ctrl_c()` completes once per
+    // SIGINT. We translate every hit into a single `AppEvent::Interrupt`
+    // and loop so the user can fire Ctrl+C again after dismissing a
+    // modal. See `plan/12-screen-runtime.md` §7 item 1.
+    let signal_tx = tx;
+    let signal_handle = tokio::spawn(async move {
+        loop {
+            if signal::ctrl_c().await.is_err() {
+                break;
+            }
+            if signal_tx.send(AppEvent::Interrupt).is_err() {
+                break;
+            }
+        }
+    });
+
     // Initial draw before any event is processed.
     redraw(terminal, stack)?;
 
     while let Some(event) = rx.recv().await {
         let cmd = match event {
-            AppEvent::Key(key) => {
-                if let Some(top) = stack.top_mut() {
-                    top.handle_key(key)
-                } else {
-                    Command::Quit
-                }
-            }
-            AppEvent::Tick => {
-                if let Some(top) = stack.top_mut() {
-                    top.tick()
-                } else {
-                    Command::None
-                }
-            }
+            AppEvent::Key(key) => dispatch_key(stack, keymap, key),
+            AppEvent::Tick => dispatch_tick(stack),
+            AppEvent::Interrupt => signal_to_command(),
         };
 
-        match cmd {
-            Command::None | Command::Refresh => {}
-            Command::Pop => {
-                stack.pop();
-                if stack.is_empty() {
-                    break;
-                }
-            }
-            Command::Quit => {
-                stack.clear();
-                break;
-            }
-            Command::Push(screen) => stack.push(screen),
-            Command::Replace(screen) => {
-                stack.pop();
-                stack.push(screen);
-            }
+        let transition = stack.apply_command(cmd);
+        if transition.should_exit() {
+            break;
         }
 
         redraw(terminal, stack)?;
@@ -114,12 +180,49 @@ async fn drive_loop(terminal: &mut Tui, stack: &mut ScreenStack) -> Result<()> {
 
     input_handle.abort();
     ticker_handle.abort();
+    signal_handle.abort();
     Ok(())
+}
+
+/// Dispatch a key press: modal first, then global keymap, then the
+/// screen at the top of the stack.
+fn dispatch_key(stack: &mut ScreenStack, keymap: &GlobalKeyMap, key: KeyEvent) -> Command {
+    if let Some(modal) = stack.modal_mut() {
+        return modal.handle_key(key);
+    }
+    // Keymap gets a crack at the key before the screen does so `/`
+    // and `?` work even when the screen has its own binding for the
+    // same key.
+    match keymap.dispatch(key) {
+        Command::None => stack
+            .top_mut()
+            .map_or(Command::Quit, |top| top.handle_key(key)),
+        other => other,
+    }
+}
+
+fn dispatch_tick(stack: &mut ScreenStack) -> Command {
+    // Tick the modal first, then the screen. Modal tick commands
+    // take precedence; screen ticks only fire when the modal returns
+    // `None`.
+    if let Some(modal) = stack.modal_mut() {
+        let cmd = modal.tick();
+        if !matches!(cmd, Command::None) {
+            return cmd;
+        }
+    }
+    stack.top_mut().map_or(Command::None, |top| top.tick())
 }
 
 fn redraw(terminal: &mut Tui, stack: &ScreenStack) -> Result<()> {
     if let Some(top) = stack.top() {
-        terminal.draw(|frame| top.render(frame, frame.area()))?;
+        terminal.draw(|frame| {
+            let area = frame.area();
+            top.render(frame, area);
+            if let Some(modal) = stack.modal() {
+                modal.render(frame, area);
+            }
+        })?;
     }
     Ok(())
 }
@@ -161,13 +264,16 @@ fn leave_tui(terminal: &mut Tui) -> Result<()> {
     Ok(())
 }
 
-/// Make sure the terminal is restored even if a panic unwinds through
-/// the event loop.
-fn install_panic_hook() {
-    let hook = std::panic::take_hook();
+/// Install a panic hook that restores the terminal exactly once.
+/// Shares the [`TeardownGate`] with the regular exit path so the
+/// two never fight over raw mode. Must run *before* `enter_tui`.
+fn install_panic_hook(gate: Arc<TeardownGate>) {
+    let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
-        hook(info);
+        if gate.claim() {
+            let _ = disable_raw_mode();
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        }
+        original(info);
     }));
 }
