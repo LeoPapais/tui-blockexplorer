@@ -66,9 +66,12 @@ use crate::{
 };
 use mempool_feed::{EmptyPendingTxStream, spawn_filter_drain};
 
-/// Per-(chain, input) TTL for the search resolution cache. Matches the
-/// figure documented in `plan/2-search.md` section 12.4.
-const SEARCH_CACHE_TTL: Duration = Duration::from_secs(60);
+/// Per-(chain, input) TTL for the search resolution cache. Pulled
+/// from `adapters::cache::SEARCH_TTL` so the composition root and the
+/// rest of the `CacheRegistry` consumers agree on a single number.
+/// Documented in `plan/2-search.md` section 12.4 and
+/// `plan/15-backlog.md` §8.16 (Cache registry).
+const SEARCH_CACHE_TTL: Duration = crate::adapters::cache::SEARCH_TTL;
 
 /// Build a live `TxDetailScreen`. Every tab is populated through the
 /// full enrichment pipeline (ABI decoding when possible + asset

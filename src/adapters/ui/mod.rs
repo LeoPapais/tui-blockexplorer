@@ -7,6 +7,7 @@
 
 pub mod address_detail;
 pub mod block_detail;
+pub mod breadcrumb;
 pub mod contract_detail;
 pub mod detail_placeholder;
 pub mod format;
@@ -32,6 +33,7 @@ pub use address_detail::{
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
 };
+pub use breadcrumb::{BREADCRUMB_SEPARATOR, breadcrumb_segments, render_breadcrumb};
 pub use contract_detail::{
     ContractDetailScreen, ContractFeed, ContractFeedSender, ContractTab, contract_feed,
 };

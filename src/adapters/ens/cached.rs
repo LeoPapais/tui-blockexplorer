@@ -15,14 +15,20 @@
 use std::time::Duration;
 
 use crate::{
-    adapters::{cache::TtlCache, clock::SystemClock},
+    adapters::{
+        cache::{ENS_REVERSE_TTL, TtlCache},
+        clock::SystemClock,
+    },
     application::ports::{Clock, EnsResolverPort},
     domain::{Address, Chain, DomainError},
 };
 
-/// Five-minute TTL for the reverse cache. Encoded here so the
-/// production composition root can pick it up directly.
-pub const DEFAULT_REVERSE_TTL: Duration = Duration::from_secs(300);
+/// Five-minute TTL for the reverse cache. Pulled from the cache
+/// registry (`adapters::cache::ENS_REVERSE_TTL`) so the decorator and
+/// the composition root agree on a single number. Kept as a re-export
+/// for backwards compatibility with the call sites that referenced
+/// this constant directly.
+pub const DEFAULT_REVERSE_TTL: Duration = ENS_REVERSE_TTL;
 
 /// Decorator that wraps any [`EnsResolverPort`] with a TTL-bounded
 /// cache for the reverse lookup. `None` results are cached too so

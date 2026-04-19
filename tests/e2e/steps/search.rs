@@ -27,6 +27,7 @@ use blockexplorer_tui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
 use crate::world::AppWorld;
 
@@ -696,14 +697,10 @@ fn current_candidates(stack: &ScreenStack) -> Vec<ResolvedEntity> {
 // Background / setup
 // ---------------------------------------------------------------------------
 
-#[given("the user is on Home")]
-async fn user_on_home(world: &mut AppWorld) {
-    build_stack(world);
-}
-
-// `Given the active chain is "..."` is already registered in
-// steps/home.rs; cucumber picks the first match across modules so we
-// do not re-register it here.
+// `Given the user is on Home` and `Given the active chain is "…"` live
+// in `steps::shared` alongside `Given the user launches the app`. The
+// shared module delegates to `search::build_stack` for the actual
+// stack construction, so the behaviour is identical.
 
 // ---------------------------------------------------------------------------
 // Given — stub priming

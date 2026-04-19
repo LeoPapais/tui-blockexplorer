@@ -13,6 +13,7 @@ use blockexplorer_tui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use cucumber::{given, then, when};
+use pretty_assertions::assert_eq;
 
 use crate::{steps::search::build_stack, world::AppWorld};
 

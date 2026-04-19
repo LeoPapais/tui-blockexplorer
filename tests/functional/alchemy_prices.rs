@@ -190,11 +190,18 @@ async fn historical_request_sends_epoch_numbers_not_strings() {
 }
 
 #[tokio::test]
-async fn server_error_maps_into_domain_internal() {
+async fn server_5xx_error_maps_into_provider_unavailable() {
+    // plan/15-backlog.md §8.16 "Global error fixtures": every
+    // adapter must map an HTTP 5xx into
+    // `DomainError::ProviderUnavailable` so the degraded-state UX
+    // and the per-client circuit breaker can treat it uniformly.
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/tokens/by-address"))
-        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_raw(load_text("prices__error__5xx.json"), "application/json"),
+        )
         .mount(&server)
         .await;
 
@@ -205,5 +212,5 @@ async fn server_error_maps_into_domain_internal() {
         .expect_err("should propagate as error");
 
     use blockexplorer_tui::domain::DomainError;
-    assert!(matches!(err, DomainError::Internal(_)));
+    assert_matches!(err, DomainError::ProviderUnavailable);
 }

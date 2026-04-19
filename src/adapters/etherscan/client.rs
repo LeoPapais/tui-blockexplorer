@@ -18,6 +18,20 @@ pub enum EtherscanError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Etherscan returned an HTTP 5xx status. We surface this as a
+    /// dedicated variant so `into_domain` can map it to
+    /// `DomainError::ProviderUnavailable` (per
+    /// `plan/15-backlog.md` §8.16 "Global error fixtures").
+    #[error("etherscan server error: HTTP {status}")]
+    HttpServerError { status: u16 },
+
+    /// Etherscan answered with HTTP 429 Too Many Requests. Kept
+    /// distinct from `HttpServerError` so future retry / breaker
+    /// logic can weigh them differently (rate limit is recoverable
+    /// with backoff; a 5xx might warrant opening the breaker).
+    #[error("etherscan rate limited")]
+    Rate,
+
     #[error("response missing `result` field")]
     MissingResult,
 
@@ -31,6 +45,9 @@ pub enum EtherscanError {
 impl EtherscanError {
     pub fn into_domain(self) -> DomainError {
         match self {
+            EtherscanError::Rate | EtherscanError::HttpServerError { .. } => {
+                DomainError::ProviderUnavailable
+            }
             EtherscanError::Http(err) if err.is_timeout() => DomainError::ProviderUnavailable,
             EtherscanError::Http(err) if err.is_connect() => DomainError::ProviderUnavailable,
             EtherscanError::Http(err) => DomainError::Internal(err.to_string()),
@@ -93,6 +110,15 @@ impl EtherscanClient {
             }
         }
         let resp = self.http.get(url).send().await?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(EtherscanError::Rate);
+        }
+        if status.is_server_error() {
+            return Err(EtherscanError::HttpServerError {
+                status: status.as_u16(),
+            });
+        }
         let body: serde_json::Value = resp.json().await?;
         Ok(body)
     }

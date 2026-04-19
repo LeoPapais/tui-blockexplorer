@@ -9,6 +9,7 @@ use blockexplorer_tui::{
     application::ports::TxTracePort,
     domain::{CallKind, Chain, DiffChange, DomainError, TxHash},
 };
+use pretty_assertions::assert_eq;
 use serde_json::Value;
 use url::Url;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate, matchers::method};

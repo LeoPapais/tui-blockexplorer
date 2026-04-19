@@ -13,5 +13,6 @@ pub mod home;
 pub mod mempool;
 pub mod search;
 pub mod settings;
+pub mod shared;
 pub mod token_detail;
 pub mod tx_detail;

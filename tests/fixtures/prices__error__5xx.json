@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": 500,
+    "message": "internal server error: prices service temporarily unavailable"
+  }
+}
