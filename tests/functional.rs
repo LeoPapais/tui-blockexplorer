@@ -264,3 +264,6 @@ mod global_keymap;
 
 #[path = "functional/runtime_teardown.rs"]
 mod runtime_teardown;
+
+#[path = "functional/rpc_error_mapping.rs"]
+mod rpc_error_mapping;
