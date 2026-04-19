@@ -1,0 +1,108 @@
+# cargo-deny configuration for blockexplorer-tui.
+#
+# Schema: https://embarkstudios.github.io/cargo-deny/
+# Run locally with `cargo install --locked cargo-deny && cargo deny check`.
+#
+# See plan/11-rust-scaffolding.md §9.4 for rationale on the allow lists
+# and the ban policy. When a new dependency lands with a license not on
+# the `allow` list, the PR must add a justification-backed exception
+# *and* cite the plan section that approves the grandfathered entry.
+
+[graph]
+# Run advisory/license checks against all targets the crate builds on.
+# `cfg(all())` == every target (cargo-deny documents this as the
+# "every target" catch-all).
+targets = []
+all-features = false
+no-default-features = false
+exclude-dev = false
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Advisories
+# ---------------------------------------------------------------------------
+#
+# RustSec advisory DB. `yanked = "deny"` keeps us honest: if a release
+# is yanked from crates.io, we notice at CI time instead of the next
+# supply-chain audit.
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Explicit-only allowlist. Add a new id here *together* with a comment
+# citing the PR that approved the exception and the next review date.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------------------
+#
+# SPDX identifiers only. See plan/11 §9.4 — anything outside this list
+# must be added as an `exceptions` entry, not bolted onto `allow`.
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+]
+exceptions = []
+
+# `ring`/`aws-lc-rs` ship the OpenSSL-licensed assembly blobs under a
+# tangled mix of SPDX ids; pin the known-good license files so the
+# scanner stops re-asking every upgrade.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+#
+# Only crates.io today. Git sources and unknown registries are denied
+# outright so a "just pin this fork" PR has to surface the fact that
+# it's doing so.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+#
+# Duplicate versions are a warning, not a hard deny, because the dep
+# graph already carries legitimate splits (getrandom 0.2/0.3/0.4,
+# `syn` 1/2, ...) that we can't force-unify without vendoring.
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = [
+    # Example: { name = "openssl", reason = "Use rustls." }
+]
+skip = []
+skip-tree = []
