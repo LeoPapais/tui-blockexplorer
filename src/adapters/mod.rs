@@ -10,6 +10,7 @@ pub mod ens;
 pub mod etherscan;
 pub mod labels;
 pub mod prices;
+pub mod rng;
 pub mod rpc;
 pub mod secrets;
 pub mod signatures;

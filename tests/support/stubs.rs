@@ -20,7 +20,7 @@ use blockexplorer_tui::{
             BlockReceiptsPort, ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort,
             EnsResolverPort, EventLogPort, GasOraclePort, LabelPort, NetworkStatusPort,
             NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
-            SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
+            Rng, SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
             TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
             TxSimulationPort, TxTracePort,
         },
@@ -1702,5 +1702,70 @@ impl Default for FrozenClock {
 impl Clock for FrozenClock {
     fn now(&self) -> Instant {
         *self.inner.lock().expect("clock lock poisoned")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: Rng
+// ---------------------------------------------------------------------------
+
+/// Deterministic `Rng` used in tests.
+///
+/// Wraps a tiny xorshift64* generator so the port has zero external
+/// dependencies and the stream is reproducible across test runs.
+/// Default seed is `0xdead_beef_cafe_f00d`; use `SeededRng::new(seed)`
+/// for per-test seeds.
+///
+/// See `plan/11-rust-scaffolding.md` §9.3.
+#[derive(Clone)]
+pub struct SeededRng {
+    state: Arc<Mutex<u64>>,
+}
+
+impl SeededRng {
+    /// Create a stub seeded with the given value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seed == 0`, which would collapse xorshift64* to the
+    /// all-zero fixed point. Use any non-zero seed.
+    #[must_use]
+    pub fn new(seed: u64) -> Self {
+        assert!(seed != 0, "SeededRng: seed must be non-zero");
+        Self {
+            state: Arc::new(Mutex::new(seed)),
+        }
+    }
+
+    fn step(state: &mut u64) -> u64 {
+        // xorshift64* — small, fast, deterministic. Constants from
+        // Marsaglia "Xorshift RNGs" (2003) + Vigna's multiplier.
+        let mut x = *state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        *state = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+}
+
+impl Default for SeededRng {
+    fn default() -> Self {
+        Self::new(0xdead_beef_cafe_f00d)
+    }
+}
+
+impl Rng for SeededRng {
+    fn fill_bytes(&self, dest: &mut [u8]) {
+        let mut guard = self.state.lock().expect("rng lock poisoned");
+        for chunk in dest.chunks_mut(8) {
+            let value = Self::step(&mut guard).to_le_bytes();
+            chunk.copy_from_slice(&value[..chunk.len()]);
+        }
+    }
+
+    fn next_u64(&self) -> u64 {
+        let mut guard = self.state.lock().expect("rng lock poisoned");
+        Self::step(&mut guard)
     }
 }
