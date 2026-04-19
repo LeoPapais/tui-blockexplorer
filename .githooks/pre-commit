@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Pre-commit hook: rustfmt + clippy on the whole crate before every commit.
+#
+# Installed via `scripts/install-hooks.sh`, which points
+# `core.hooksPath` at the `.githooks/` directory. See
+# `plan/11-rust-scaffolding.md` §9.5.
+#
+# Bypass in emergencies with `git commit --no-verify`, but the team
+# expects the next CI run to flag anything `--no-verify` skipped.
+
+set -uo pipefail
+
+# Short-circuit if there are no staged Rust files: rustfmt / clippy
+# would still run fine, but we save a couple of seconds on the common
+# case of pure-doc / pure-config commits.
+if ! git diff --cached --name-only --diff-filter=ACMR \
+    | grep -Eq '\.rs$|(^|/)Cargo\.(toml|lock)$'; then
+    exit 0
+fi
+
+log() { printf "[pre-commit] %s\n" "$*" >&2; }
+
+if ! command -v cargo >/dev/null 2>&1; then
+    log "cargo not on PATH; skipping rustfmt/clippy. Install rustup first."
+    exit 0
+fi
+
+log "running cargo fmt --all -- --check"
+if ! cargo fmt --all -- --check; then
+    log "rustfmt failed. Run 'cargo fmt --all' and re-stage the changes."
+    exit 1
+fi
+
+log "running cargo clippy --all-targets -- -D warnings"
+if ! cargo clippy --all-targets --quiet -- -D warnings; then
+    log "clippy failed. Fix the warnings above or deny this hook"
+    log "with 'git commit --no-verify' only as an emergency escape."
+    exit 1
+fi
+
+exit 0

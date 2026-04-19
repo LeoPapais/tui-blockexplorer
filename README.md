@@ -72,10 +72,23 @@ Environment variables always win over the file.
 ```bash
 cargo test                    # unit + functional + e2e
 cargo clippy --all-targets -- -D warnings
+cargo deny check              # supply-chain + license audit (see deny.toml)
 ```
 
 No test performs live network calls: adapters are exercised against
 `wiremock`, stubs load JSON fixtures from `tests/fixtures/`.
+
+## Pre-commit hooks
+
+One-time setup per clone, points `core.hooksPath` at `.githooks/`:
+
+```bash
+scripts/install-hooks.sh
+```
+
+On every `git commit` the hook runs `cargo fmt --all -- --check` and
+`cargo clippy --all-targets -- -D warnings`. Bypass in emergencies with
+`git commit --no-verify`; CI will still flag anything the bypass hid.
 
 ## Where to look
 
