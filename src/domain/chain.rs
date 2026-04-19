@@ -46,7 +46,11 @@ impl Chain {
     }
 
     /// Parse a slug into a `Chain`. Unknown slugs return
-    /// [`DomainError::InvalidInput`] with a helpful message.
+    /// [`DomainError::InvalidInput`] with a message that enumerates
+    /// every supported slug so callers (including
+    /// `BLOCKEXPLORER_TUI_CHAIN`) can correct the value without
+    /// consulting the docs. See
+    /// `plan/14-config-and-credentials.md` §8.2.
     pub fn from_slug(slug: &str) -> Result<Self, DomainError> {
         match slug {
             "ethereum" => Ok(Chain::Ethereum),
@@ -55,9 +59,16 @@ impl Chain {
             "polygon" => Ok(Chain::Polygon),
             "optimism" => Ok(Chain::Optimism),
             "arbitrum" => Ok(Chain::Arbitrum),
-            other => Err(DomainError::InvalidInput(format!(
-                "unknown chain slug: {other}"
-            ))),
+            other => {
+                let valid = Self::all()
+                    .iter()
+                    .map(|c| c.slug())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                Err(DomainError::InvalidInput(format!(
+                    "unknown chain slug: {other:?} (valid: {valid})"
+                )))
+            }
         }
     }
 

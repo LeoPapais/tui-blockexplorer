@@ -90,8 +90,7 @@ fn invalid_env_chain_enumerates_every_valid_slug() {
     // unknown slug the loader must surface a `DomainError::InvalidInput`
     // whose message lists every supported chain so the user can fix
     // the variable without grepping the codebase.
-    let loader =
-        ConfigLoader::with_env(env_map(vec![(ENV_CHAIN, "mars")])).with_config_path(None);
+    let loader = ConfigLoader::with_env(env_map(vec![(ENV_CHAIN, "mars")])).with_config_path(None);
     let err = loader.load().expect_err("unknown slug must error");
 
     let DomainError::InvalidInput(message) = err else {
