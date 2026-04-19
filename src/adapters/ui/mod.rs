@@ -19,6 +19,7 @@ pub mod screen;
 pub mod scroll;
 pub mod search;
 pub mod settings;
+pub mod theme;
 pub mod token_detail;
 pub mod tx_detail;
 
@@ -45,6 +46,7 @@ pub use search::{
     DetailFactory, SearchFeed, SearchFeedSender, SearchFeedUpdate, SearchScreen, search_feed,
 };
 pub use settings::{AppConfigSnapshot, ProviderHealthSnapshot, SettingsScreen};
+pub use theme::{Palette, PalettePreset};
 pub use token_detail::{
     OpenContractFactory as TokenOpenContractFactory, OpenTxFactory as TokenOpenTxFactory,
     TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab, token_feed,

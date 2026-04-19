@@ -249,3 +249,6 @@ mod etherscan_health;
 
 #[path = "functional/plaintext_secret_store.rs"]
 mod plaintext_secret_store;
+
+#[path = "functional/settings_theme.rs"]
+mod settings_theme;

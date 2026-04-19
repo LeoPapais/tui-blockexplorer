@@ -10,7 +10,10 @@ use ratatui::{
 };
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
+    adapters::ui::{
+        screen::{Command, Screen},
+        theme::PalettePreset,
+    },
     application::ports::{HealthLevel, HealthStatus},
     domain::Chain,
 };
@@ -36,6 +39,7 @@ pub struct ProviderHealthSnapshot {
 pub struct SettingsScreen {
     snapshot: AppConfigSnapshot,
     health: ProviderHealthSnapshot,
+    palette: PalettePreset,
 }
 
 impl SettingsScreen {
@@ -44,6 +48,7 @@ impl SettingsScreen {
         Self {
             snapshot,
             health: ProviderHealthSnapshot::default(),
+            palette: PalettePreset::DarkDefault,
         }
     }
 
@@ -55,6 +60,14 @@ impl SettingsScreen {
         self
     }
 
+    /// Seed the active palette preset (typically from the user's
+    /// saved preference). See `plan/10-settings.md` section 12.7.
+    #[must_use]
+    pub fn with_palette(mut self, preset: PalettePreset) -> Self {
+        self.palette = preset;
+        self
+    }
+
     #[must_use]
     pub fn snapshot(&self) -> &AppConfigSnapshot {
         &self.snapshot
@@ -63,6 +76,12 @@ impl SettingsScreen {
     #[must_use]
     pub fn health(&self) -> &ProviderHealthSnapshot {
         &self.health
+    }
+
+    /// Currently-selected palette preset.
+    #[must_use]
+    pub fn palette(&self) -> PalettePreset {
+        self.palette
     }
 
     fn render_providers(&self) -> String {
@@ -91,6 +110,20 @@ impl SettingsScreen {
             line("etherscan-v2", self.health.etherscan.as_ref()),
         )
     }
+
+    fn render_theme(&self) -> String {
+        let mut out = String::new();
+        for (idx, preset) in PalettePreset::all().iter().enumerate() {
+            let marker = if *preset == self.palette { "*" } else { " " };
+            out.push_str(&format!(
+                "  {marker} [{idx}] {label}\n",
+                idx = idx + 1,
+                label = preset.label(),
+            ));
+        }
+        out.push_str("Press 1-4 to switch palette (RGB picker deferred).");
+        out
+    }
 }
 
 impl Screen for SettingsScreen {
@@ -105,6 +138,7 @@ impl Screen for SettingsScreen {
                 Constraint::Length(3),
                 Constraint::Min(8),
                 Constraint::Length(6),
+                Constraint::Length(7),
             ])
             .split(area);
 
@@ -149,12 +183,27 @@ Esc to return to the previous screen, q to quit.",
                 .block(Block::default().borders(Borders::ALL).title("Providers")),
             chunks[2],
         );
+
+        frame.render_widget(
+            Paragraph::new(self.render_theme())
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Theme")),
+            chunks[3],
+        );
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
             KeyCode::Char('q') => Command::Quit,
             KeyCode::Esc => Command::Pop,
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let presets = PalettePreset::all();
+                let idx = (c as usize).saturating_sub('1' as usize);
+                if idx < presets.len() {
+                    self.palette = presets[idx];
+                }
+                Command::None
+            }
             _ => Command::None,
         }
     }

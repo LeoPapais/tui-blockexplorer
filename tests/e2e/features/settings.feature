@@ -14,3 +14,8 @@ Feature: Settings
     When the user opens Settings with no alchemy key
     Then a "Settings" screen is on top
     And the Settings screen reports the alchemy key as missing
+
+  Scenario: Switch to the high-contrast palette
+    When the user opens Settings with an alchemy key configured
+    And the user presses "3" on Settings
+    Then the Settings screen reports "High contrast" as the active palette

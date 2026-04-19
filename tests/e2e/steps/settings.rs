@@ -3,9 +3,10 @@
 //! See `plan/10-settings.md` section 11.1.
 
 use blockexplorer_tui::{
-    adapters::ui::{AppConfigSnapshot, ScreenStack, SettingsScreen},
+    adapters::ui::{AppConfigSnapshot, PalettePreset, ScreenStack, Screen, SettingsScreen},
     domain::Chain,
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cucumber::{then, when};
 
 use crate::{steps::search::build_stack, world::AppWorld};
@@ -16,6 +17,15 @@ fn current(stack: &ScreenStack) -> &SettingsScreen {
         .expect("stack non-empty")
         .as_any()
         .downcast_ref::<SettingsScreen>()
+        .expect("top of stack must be a SettingsScreen")
+}
+
+fn current_mut(stack: &mut ScreenStack) -> &mut SettingsScreen {
+    stack
+        .top_mut()
+        .expect("stack non-empty")
+        .as_any_mut()
+        .downcast_mut::<SettingsScreen>()
         .expect("top of stack must be a SettingsScreen")
 }
 
@@ -51,4 +61,23 @@ async fn reports_configured(world: &mut AppWorld) {
 async fn reports_missing(world: &mut AppWorld) {
     let stack = world.stack.as_ref().expect("stack");
     assert!(!current(stack).snapshot().alchemy_key_present);
+}
+
+#[when(regex = r#"^the user presses "(\d)" on Settings$"#)]
+async fn press_digit_on_settings(world: &mut AppWorld, digit: String) {
+    let stack = world.stack.as_mut().expect("stack");
+    let screen = current_mut(stack);
+    let ch = digit.chars().next().expect("digit char");
+    screen.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+}
+
+#[then(regex = r#"^the Settings screen reports "([^"]+)" as the active palette$"#)]
+async fn palette_is(world: &mut AppWorld, label: String) {
+    let stack = world.stack.as_ref().expect("stack");
+    let screen = current(stack);
+    let expected = PalettePreset::all()
+        .into_iter()
+        .find(|p| p.label() == label)
+        .unwrap_or_else(|| panic!("scenario references unknown palette label: {label}"));
+    assert_eq!(screen.palette(), expected);
 }
