@@ -244,6 +244,76 @@ impl RpcClient {
     }
 
     async fn call_once<R: DeserializeOwned>(&self, request: &Value) -> Result<R, RpcError> {
+        let body = self.post_and_parse(request).await?;
+        parse_single_rpc_envelope(body)
+    }
+
+    /// Issue a JSON-RPC batch request. Every entry in `calls` becomes
+    /// one element of a JSON array; the response array is parsed
+    /// element-by-element and returned in the same order (the helper
+    /// matches server-side `id` back to the request position, since
+    /// the spec does not require in-order responses). See
+    /// `plan/13-alchemy-adapter.md` §8.5.
+    ///
+    /// Outer `Result` is an all-or-nothing envelope error (network /
+    /// transport / unparseable body); inner `Result<R, RpcError>` is
+    /// the per-call status.
+    ///
+    /// Passing an empty `calls` slice returns `Ok(Vec::new())` without
+    /// touching the network.
+    pub async fn call_batch<P: Serialize, R: DeserializeOwned>(
+        &self,
+        method: &str,
+        params_list: &[P],
+    ) -> Result<Vec<Result<R, RpcError>>, RpcError> {
+        if params_list.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if let Some(breaker) = &self.breaker
+            && breaker.is_open()
+        {
+            return Err(RpcError::CircuitOpen);
+        }
+
+        let mut request_array: Vec<Value> = Vec::with_capacity(params_list.len());
+        for (idx, params) in params_list.iter().enumerate() {
+            let params_value = serde_json::to_value(params)?;
+            let id = u64::try_from(idx + 1).unwrap_or(u64::MAX);
+            request_array.push(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params_value,
+            }));
+        }
+        let request = Value::Array(request_array);
+        let expected = params_list.len();
+
+        let outcome = retry_with_backoff(&self.retry, || async {
+            let body = self.post_and_parse(&request).await?;
+            parse_batch_envelope::<R>(body, expected)
+        })
+        .await;
+
+        if let Some(breaker) = &self.breaker {
+            match &outcome {
+                Ok(_) => breaker.record_success(),
+                Err(err) if is_breaker_failure(err) => breaker.record_failure(),
+                Err(_) => {}
+            }
+        }
+        if outcome.is_ok()
+            && let Some(recorder) = &self.cost_recorder
+        {
+            let per_call = cost_hint_for(method).compute_units;
+            let total = per_call.saturating_mul(u32::try_from(expected).unwrap_or(u32::MAX));
+            recorder.record(total);
+        }
+        outcome
+    }
+
+    async fn post_and_parse(&self, request: &Value) -> Result<Value, RpcError> {
         let resp = self
             .http
             .post(self.base_url.clone())
@@ -260,25 +330,88 @@ impl RpcClient {
             });
         }
 
-        let body: Value = resp.json().await?;
-
-        if let Some(error) = body.get("error") {
-            let code = error.get("code").and_then(Value::as_i64).unwrap_or(-32000);
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown JSON-RPC error")
-                .to_string();
-            return Err(RpcError::Rpc { code, message });
-        }
-
-        let result = body.get("result").cloned().ok_or_else(|| RpcError::Rpc {
-            code: -32000,
-            message: "missing `result` field".to_string(),
-        })?;
-
-        serde_json::from_value(result).map_err(RpcError::Decode)
+        Ok(resp.json().await?)
     }
+}
+
+fn parse_single_rpc_envelope<R: DeserializeOwned>(body: Value) -> Result<R, RpcError> {
+    if let Some(error) = body.get("error") {
+        return Err(rpc_error_from_envelope(error));
+    }
+
+    let result = body.get("result").cloned().ok_or_else(|| RpcError::Rpc {
+        code: -32000,
+        message: "missing `result` field".to_string(),
+    })?;
+
+    serde_json::from_value(result).map_err(RpcError::Decode)
+}
+
+fn rpc_error_from_envelope(error: &Value) -> RpcError {
+    let code = error.get("code").and_then(Value::as_i64).unwrap_or(-32000);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown JSON-RPC error")
+        .to_string();
+    RpcError::Rpc { code, message }
+}
+
+fn parse_batch_envelope<R: DeserializeOwned>(
+    body: Value,
+    expected: usize,
+) -> Result<Vec<Result<R, RpcError>>, RpcError> {
+    let Value::Array(entries) = body else {
+        return Err(RpcError::Rpc {
+            code: -32000,
+            message: "batch response is not a JSON array".to_string(),
+        });
+    };
+    if entries.len() != expected {
+        return Err(RpcError::Rpc {
+            code: -32000,
+            message: format!(
+                "batch response size mismatch: got {}, expected {}",
+                entries.len(),
+                expected,
+            ),
+        });
+    }
+
+    // Build results placeholder; we match each entry to its `id`
+    // slot (JSON-RPC 2.0 does not guarantee response ordering). If
+    // any entry is missing a valid / unique id we fall back to
+    // pairing by sequence — that matches the behaviour of every
+    // server observed so far and keeps a well-formed batch parseable
+    // even when the provider echoes `"id":null`.
+    let mut out: Vec<Option<Result<R, RpcError>>> = (0..expected).map(|_| None).collect();
+    let mut leftovers: Vec<Value> = Vec::new();
+    for entry in entries {
+        let slot = entry
+            .get("id")
+            .and_then(Value::as_u64)
+            .and_then(|raw| usize::try_from(raw).ok())
+            .and_then(|i| i.checked_sub(1))
+            .filter(|i| *i < expected && out[*i].is_none());
+        match slot {
+            Some(idx) => out[idx] = Some(parse_single_rpc_envelope::<R>(entry)),
+            None => leftovers.push(entry),
+        }
+    }
+    for entry in leftovers {
+        if let Some(idx) = out.iter().position(Option::is_none) {
+            out[idx] = Some(parse_single_rpc_envelope::<R>(entry));
+        }
+    }
+
+    out.into_iter()
+        .map(|cell| {
+            cell.ok_or_else(|| RpcError::Rpc {
+                code: -32000,
+                message: "batch response missed a slot".to_string(),
+            })
+        })
+        .collect()
 }
 
 /// Parse a `0x`-prefixed hex string into `u128`. Used across the

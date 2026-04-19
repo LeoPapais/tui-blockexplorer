@@ -22,31 +22,57 @@ struct AlchemyResponder;
 impl Respond for AlchemyResponder {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-        let method = body
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let first_param = body
-            .get("params")
-            .and_then(Value::as_array)
-            .and_then(|a| a.first())
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_ascii_lowercase();
 
-        let fixture = match method {
-            "alchemy_getTokenBalances" => "alchemy__token_balances.json",
-            "alchemy_getTokenMetadata" => {
-                if first_param.starts_with("0xa0b86991") {
-                    "alchemy__token_metadata_usdc.json"
-                } else {
-                    "alchemy__token_metadata_usdt.json"
-                }
-            }
-            _ => "alchemy__token_balances.json",
-        };
-        ResponseTemplate::new(200).set_body_raw(load_text(fixture), "application/json")
+        // Batch path: body is an array of envelopes. Respond with a
+        // matching array so the portfolio adapter's `call_batch`
+        // wrapper can match responses by `id`.
+        if let Value::Array(envelopes) = &body {
+            let responses: Vec<Value> = envelopes
+                .iter()
+                .map(|env| response_for_single(env))
+                .collect();
+            return ResponseTemplate::new(200).set_body_json(Value::Array(responses));
+        }
+
+        let response = response_for_single(&body);
+        ResponseTemplate::new(200).set_body_json(response)
     }
+}
+
+fn response_for_single(envelope: &Value) -> Value {
+    let id = envelope
+        .get("id")
+        .cloned()
+        .unwrap_or_else(|| Value::from(1u64));
+    let method = envelope
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let first_param = envelope
+        .get("params")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let fixture = match method {
+        "alchemy_getTokenBalances" => "alchemy__token_balances.json",
+        "alchemy_getTokenMetadata" => {
+            if first_param.starts_with("0xa0b86991") {
+                "alchemy__token_metadata_usdc.json"
+            } else {
+                "alchemy__token_metadata_usdt.json"
+            }
+        }
+        _ => "alchemy__token_balances.json",
+    };
+
+    let mut parsed: Value = serde_json::from_str(&load_text(fixture)).unwrap_or(Value::Null);
+    if let Some(obj) = parsed.as_object_mut() {
+        obj.insert("id".to_string(), id);
+    }
+    parsed
 }
 
 fn adapter_for(url: &str) -> AlchemyPortfolio {

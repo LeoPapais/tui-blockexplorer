@@ -276,3 +276,6 @@ mod rpc_circuit_breaker;
 
 #[path = "functional/cost_meter.rs"]
 mod cost_meter;
+
+#[path = "functional/rpc_batch.rs"]
+mod rpc_batch;
