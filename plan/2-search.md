@@ -556,3 +556,75 @@ This covers the deferred work listed in `plan/15-backlog.md`
   exclude persistent indexing).
 - Automatic chain switching from URL hints — parked with a note in
   §12.2 but not shipped.
+
+## 13. Overlay layout (input footer + results modal)
+
+Shipped with `slice2/search-overlay`. Fixes the Bug 1 regression
+reported in the parent plan
+(`plan/unified_detail_screen_+_global_ux`): pressing `/` used to
+render `SearchScreen` across the full `frame.area()`, visually
+erasing whatever screen was underneath. The new layout treats the
+search screen as a real overlay: the backing screen (Home,
+AddressDetail, …) keeps rendering behind and only two small
+sub-rectangles are cleared and painted.
+
+### 13.1 Geometry
+
+`SearchScreen::render` receives the full `frame.area()` and
+derives two rectangles:
+
+- `input_rect = footer_rect(area, 3)` — a 3-row strip pinned to
+  the bottom of the screen: `x = area.x`, `width = area.width`,
+  `height = 3`, `y = area.bottom() - 3`. Vim-style `:` command
+  line.
+- `results_rect = centered_rect(area, 60, 50)` — a centered
+  floating block at 60% width × 50% height. Reuses the existing
+  helper in `src/adapters/ui/modal.rs` (which is now `pub(crate)`
+  so both the Help modal and the Search overlay share a single
+  implementation).
+
+### 13.2 Clear boundary
+
+`Clear` is rendered only inside `input_rect` and `results_rect`.
+No `Clear` on `area` itself. Every other cell is left as the
+backing screen painted it, so Home / AddressDetail / … stays
+visible around the overlay.
+
+### 13.3 Overlap guard
+
+On typical terminal sizes (≥ 80×24) `results_rect` ends well
+above `input_rect`. The guard exists for degenerate dimensions:
+when `results_rect.bottom() > input_rect.top()`, the results
+rectangle is shrunk so its bottom edge sits one row above the
+input strip. If that leaves zero rows, the results rectangle is
+hidden for that frame and the user still sees the input bar. The
+input bar is never clipped — the user must always be able to
+type.
+
+### 13.4 Wiring contract
+
+The dispatcher in `src/infra/runtime.rs::redraw` keeps its
+existing two-phase contract: the stack's top screen renders at
+the full area first, and then the modal (including
+`SearchScreen` when opened via `Command::OpenModal`) renders at
+the same full area. The overlay honours this contract by drawing
+into sub-rectangles only — no change is required in the runtime.
+
+### 13.5 Tests
+
+- Functional snapshot
+  `tests/functional/search_overlay_render.rs`: a 120×30
+  `TestBackend` first renders `HomeScreen`, then the
+  `SearchScreen` over the same buffer (mirroring the two-phase
+  `redraw` call). Assertions:
+  - Home's `"Chain: Ethereum"` header row is still present.
+  - Home's Network / Gas Tracker cards are still visible outside
+    the overlay rectangles.
+  - The input strip at the bottom contains the `> _` search
+    prompt.
+  - The results block shows its `Candidates` border title.
+- BDD `tests/e2e/features/search.feature`: new scenario
+  `Opening / overlays search on top of Home without erasing it`.
+  Exercises the `OpenModal` path (mirroring the runtime) and
+  asserts, via a `TestBackend` composite render, that Home's
+  content still shows through.
