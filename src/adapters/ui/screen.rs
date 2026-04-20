@@ -99,6 +99,16 @@ pub trait Screen: Send + 'static {
         Command::None
     }
 
+    /// Key bindings to advertise on the runtime footer strip (1-row
+    /// bar at the bottom of the screen). Each tuple is
+    /// `(key, action)`. Default is empty, meaning the footer is
+    /// blank for that screen. The runtime only renders the footer
+    /// when no modal is active — modals own the full area. See
+    /// `plan/12-screen-runtime.md` §7 and `plan/15-backlog.md` §8.13.
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        Vec::new()
+    }
+
     /// Expose the screen as `Any` so tests can downcast to the
     /// concrete type. Real runtime code never uses this.
     fn as_any(&self) -> &dyn std::any::Any;

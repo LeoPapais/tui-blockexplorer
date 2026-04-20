@@ -587,8 +587,12 @@ fn help_entries() -> Vec<(String, String)> {
             "[ / ]".to_string(),
             "Switch sub-tab (Contract/Token)".to_string(),
         ),
-        ("1..9".to_string(), "Jump directly to sub-tab".to_string()),
+        ("1..3".to_string(), "Chart window (Token/Chart)".to_string()),
         ("Arrows".to_string(), "Move field cursor".to_string()),
+        (
+            "Backspace".to_string(),
+            "Deactivate field cursor".to_string(),
+        ),
         (
             "Enter".to_string(),
             "Open related screen for field under cursor".to_string(),

@@ -362,3 +362,34 @@ fn replace_on_empty_stack_is_noop() {
     assert!(!transition.should_exit());
     assert!(stack.is_empty());
 }
+
+// plan/15-backlog.md §8.16: one Esc press must peel exactly one
+// screen off the stack. A user N levels deep reaches the root in N
+// Esc presses; the last press on the single-screen stack is a
+// no-op (see `pop_on_single_screen_stack_is_noop`).
+#[test]
+fn three_esc_presses_reach_the_root_from_a_three_screen_stack() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("address"));
+    stack.push(LabelScreen::boxed("tx"));
+
+    assert_eq!(stack.len(), 3);
+    let t1 = stack.apply_command(Command::Pop);
+    assert!(!t1.should_exit());
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack.top().unwrap().title(), "address");
+
+    let t2 = stack.apply_command(Command::Pop);
+    assert!(!t2.should_exit());
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+
+    let t3 = stack.apply_command(Command::Pop);
+    assert!(
+        !t3.should_exit(),
+        "Pop on the root screen must be a no-op, not an exit",
+    );
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}

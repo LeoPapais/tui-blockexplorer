@@ -441,6 +441,17 @@ impl Screen for TxDetailScreen {
         Command::None
     }
 
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("Tab", "Tabs"),
+            ("Arrows", "Move"),
+            ("Enter", "Open"),
+            ("y", "Copy"),
+            ("s", "Re-simulate"),
+            ("Esc", "Back"),
+        ]
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

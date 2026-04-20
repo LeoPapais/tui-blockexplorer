@@ -117,12 +117,22 @@ fn cursor_y_copies_hash_under_the_cursor() {
 }
 
 #[test]
-fn esc_deactivates_cursor_without_popping() {
+fn backspace_deactivates_cursor_without_popping() {
+    let block = sample_block();
+    let (mut screen, _, _) = wire_services(block);
+    screen.handle_key(key(KeyCode::Right));
+    assert!(screen.cursor().is_active());
+    let cmd = screen.handle_key(key(KeyCode::Backspace));
+    assert_eq!(cmd, Command::None);
+    assert!(!screen.cursor().is_active());
+}
+
+#[test]
+fn esc_pops_screen_even_when_cursor_is_active() {
     let block = sample_block();
     let (mut screen, _, _) = wire_services(block);
     screen.handle_key(key(KeyCode::Right));
     assert!(screen.cursor().is_active());
     let cmd = screen.handle_key(key(KeyCode::Esc));
-    assert_eq!(cmd, Command::None);
-    assert!(!screen.cursor().is_active());
+    assert_eq!(cmd, Command::Pop);
 }

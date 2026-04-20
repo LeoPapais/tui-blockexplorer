@@ -6,7 +6,7 @@
 //! `active_contract_sub = Source`.
 
 use blockexplorer_tui::{
-    adapters::ui::{AddressDetailScreen, AddressTab, ContractSubTab, Screen, address_feed},
+    adapters::ui::{AddressDetailScreen, AddressTab, Screen, address_feed},
     domain::{
         Address, AddressKind, AddressOverview, Chain, ContractOverview, ContractSource, SourceFile,
         Wei,
@@ -140,31 +140,25 @@ fn contract_screen() -> AddressDetailScreen {
 }
 
 #[test]
-fn digit_key_selects_contract_subtab() {
-    // `1`..`6` MUST land on the six Contract sub-tabs in order.
-    let cases = [
-        ('1', ContractSubTab::Overview),
-        ('2', ContractSubTab::Source),
-        ('3', ContractSubTab::Abi),
-        ('4', ContractSubTab::Read),
-        ('5', ContractSubTab::Events),
-        ('6', ContractSubTab::Storage),
-    ];
-    for (digit, expected) in cases {
+fn digit_keys_no_longer_select_contract_subtabs() {
+    // Plan/15-backlog §8.16 released the digit keys for future use;
+    // cycling sub-tabs is now `[` and `]` only.
+    for digit in '1'..='6' {
         let mut screen = contract_screen();
+        let before = screen.active_contract_sub();
         screen.handle_key(KeyEvent::new(KeyCode::Char(digit), KeyModifiers::NONE));
         assert_eq!(
             screen.active_contract_sub(),
-            expected,
-            "digit `{digit}` must land on {expected:?}",
+            before,
+            "digit `{digit}` must not change the active Contract sub-tab",
         );
     }
 }
 
 #[test]
-fn contract_subtab_strip_advertises_digit_and_bracket_hint() {
+fn contract_subtab_strip_advertises_bracket_hint() {
     // Users arrive with Contract tab active; the strip title must
-    // tell them there are TWO ways to cycle: number keys or `[ ]`.
+    // tell them to cycle with `[` / `]`.
     let screen = contract_screen();
     let buf = render_buffer(&screen, 140, 24);
     let rows = buf.area.height;
@@ -177,8 +171,13 @@ fn contract_subtab_strip_advertises_digit_and_bracket_hint() {
         haystack.push('\n');
     }
     assert!(
-        haystack.contains("[1-6]"),
-        "sub-tab strip title should advertise the digit shortcut \
-         ([1-6]); got:\n{haystack}",
+        haystack.contains("[ / ]"),
+        "sub-tab strip title should advertise `[ / ]` bracket hint; \
+         got:\n{haystack}",
+    );
+    assert!(
+        !haystack.contains("[1-6]"),
+        "sub-tab strip must no longer advertise a digit shortcut; \
+         got:\n{haystack}",
     );
 }

@@ -65,6 +65,7 @@ Esses atalhos funcionam em qualquer tela.
 | `q`        | Sai do programa                                    |
 | `Ctrl+C`   | Sai do programa                                    |
 | `Esc`      | Volta uma tela (ou fecha o modal aberto no topo)   |
+| `Backspace`| Desativa o cursor de campo sem sair da tela        |
 
 O modal de ajuda lista os atalhos principais descritos abaixo. A
 ordem do modal é fixa (testes asserem sobre ela); novas entradas
@@ -76,8 +77,13 @@ A interface organiza telas em uma pilha (`ScreenStack`):
 
 - `Enter` empurra uma tela nova na pilha a partir de seleções,
   valores sob o cursor ou resultados de busca.
-- `Esc` faz `pop` e volta para a tela anterior. Na Home, um `Esc`
-  com a pilha vazia não fecha o programa — use `q` ou `Ctrl+C`.
+- `Esc` sempre faz `pop` e volta para a tela anterior. Um único
+  `Esc` remove exatamente uma tela — se você estiver N telas
+  abaixo de Home, precisa de N `Esc`. Na Home (pilha de uma só
+  tela) o `Esc` é no-op; use `q` ou `Ctrl+C` para fechar o
+  programa.
+- Para "cancelar" apenas o cursor de campo sem voltar uma tela,
+  use `Backspace`.
 - O breadcrumb no topo mostra o caminho atual (`Home › Block › Tx`).
 - Busca é sempre modal: o overlay fica sobreposto à tela atual, e
   `Enter` numa sugestão empurra a tela correspondente.
@@ -95,13 +101,41 @@ primeira seta.
 | `y`              | Copia o valor sob o cursor (forma canônica) para o clipboard |
 | `Y`              | Copia o identificador canônico da tela (ENS ou hex)       |
 | `Enter`          | Abre a tela correspondente ao valor sob o cursor          |
-| `Esc`            | Desativa o cursor (sem sair da tela)                      |
+| `Backspace`      | Desativa o cursor (sem sair da tela)                      |
+
+`Esc` é reservado para "voltar uma tela" — um único `Esc` sempre
+faz `pop` do topo, independentemente de o cursor estar ativo ou
+não. Pressione `Backspace` se você quer apenas desativar o cursor
+e continuar na mesma tela.
 
 Quando o cursor está inativo, `y` ainda copia um valor sensato por
 tela (hash do bloco, hash da tx, endereço principal, etc.). Todas
 as cópias atravessam o adaptador `ArboardClipboard` quando o
 ambiente gráfico está disponível; em ambientes headless o adaptador
 degrada para um no-op silencioso e o TUI segue vivo.
+
+## 5.5 Rodapé de comandos
+
+A última linha da tela é um "rodapé de comandos" gerenciado pelo
+runtime: ele lista os atalhos mais úteis da tela ativa no formato
+`[tecla] ação`. Os colchetes e a tecla vêm em negrito, a descrição
+fica esmaecida.
+
+- Home → `[/]`, `[?]`, `[g]`, `[m]`, `[s]`, `[q]`.
+- AddressDetail → `[Tab]`, `[Arrows]`, `[Enter]`, `[y]`, `[Y]`, `[e]`,
+  `[Esc]`. Com o Contract ou Token como aba ativa o rodapé passa
+  a anunciar também `[` e `]` para ciclar as sub-abas; na aba
+  Chart do Token aparece `[1..3]` para a janela de preço.
+- BlockDetail → `[Tab]`, `[`, `]`, `[Arrows]`, `[Enter]`, `[y]`,
+  `[Y]`, `[Esc]`.
+- TxDetail → `[Tab]`, `[Arrows]`, `[Enter]`, `[y]`, `[s]`, `[Esc]`.
+- Mempool → `[Arrows]`, `[Enter]`, `[p]`, `[c]`, `[y]`, `[Esc]`.
+- GasTracker → `[p]`, `[Ctrl+R]`, `[u]`, `[Arrows]`, `[y]`, `[Esc]`.
+- Settings → `[Arrows]`, `[y]`, `[1..4]`, `[Esc]`.
+
+Quando um overlay modal está aberto (busca `/`, ajuda `?`, conversor
+de gas `u`, etc.), ele assume a tela inteira; nesse caso o rodapé
+do runtime não é desenhado — o próprio overlay desenha suas teclas.
 
 ## 6. Tela Home
 
@@ -166,18 +200,18 @@ Transfers, Chart.
 |--------------------|-------------------------------------------------------------|
 | `Tab` / `Shift-Tab` | Próxima / anterior aba principal                           |
 | `[` / `]`          | Anterior / próxima sub-aba (em Contract ou Token)           |
-| `1`..`6`           | Seleciona sub-aba direto em `Contract` (Overview..Storage)  |
-| `1`..`3`           | Seleciona sub-aba direto em `Token` (Overview..Chart)       |
+| `1` / `2` / `3`    | Janela do gráfico de preço na sub-aba `Token` → `Chart` (`1d` / `1m` / `1y`) |
 | `y`                | Copia o endereço em hex (ou o valor sob o cursor)           |
 | `Y`                | Copia o nome ENS (ou hex se não houver ENS)                 |
 | `e`                | Exporta a aba atual como CSV para o clipboard               |
 | `c`                | Pula para a sub-aba Contract quando o token tem metadados inválidos |
 | `Enter`            | Abre a tela do valor sob o cursor (ou da linha selecionada) |
+| `Backspace`        | Desativa o cursor na Overview (sem sair da tela)            |
 
-Os atalhos `1`..`N` foram adicionados em abril de 2026 porque `[`
-e `]` são desconfortáveis em vários layouts (em particular ABNT
-Brasileiro, onde `[` é `AltGr+=` e `]` é `AltGr++`). As duas
-formas coexistem. Enquanto o editor de argumentos da sub-aba
+Desde abril de 2026, `[` e `]` são a única forma de ciclar as
+sub-abas. Os dígitos `1`..`N` ficaram livres para outras funções:
+na sub-aba `Token` → `Chart`, `1`/`2`/`3` escolhem a janela de
+preço (D1, M1, Y1). Enquanto o editor de argumentos da sub-aba
 `Read` está em foco, os dígitos são entregues ao buffer — assim
 você consegue digitar argumentos numéricos sem trocar de sub-aba.
 
@@ -261,10 +295,15 @@ computados sobre uma janela rolante.
 | `Ctrl+R`| Força refresh imediato (despausa também)                |
 | `u`     | Abre o modal de conversão de unidades                   |
 | `y`     | Copia a primeira tarifa (ou o campo sob o cursor)       |
+| `Backspace` | Desativa o cursor (sem sair da tela)                |
 
 No modal de conversão, dígitos / `.` / `-` são aceitos no input.
 Outros caracteres são ignorados e `p` não pauta enquanto o modal
 está aberto.
+
+A escolha da janela de preço (`1` = D1, `2` = M1, `3` = Y1) vive
+na tela `AddressDetail` → aba `Token` → sub-aba `Chart`. Aqui no
+Gas Tracker os dígitos não têm efeito.
 
 ## 13. Settings
 

@@ -360,11 +360,14 @@ impl Screen for BlockDetailScreen {
         // Navigation keys apply regardless of the active tab.
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
-            KeyCode::Esc if self.cursor.is_active() => {
+            KeyCode::Esc => return Command::Pop,
+            // Backspace deactivates the field cursor without popping
+            // the screen. Moved off Esc so Esc always pops (see
+            // plan/15-backlog.md §8.16).
+            KeyCode::Backspace if self.cursor.is_active() => {
                 self.cursor.deactivate();
                 return Command::None;
             }
-            KeyCode::Esc => return Command::Pop,
             KeyCode::Char('[') => {
                 if let Some(block) = self.current.as_ref() {
                     let prev = block.number.value().saturating_sub(1);
@@ -498,6 +501,19 @@ impl Screen for BlockDetailScreen {
     fn tick(&mut self) -> Command {
         self.drain_feed();
         Command::None
+    }
+
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("Tab", "Tabs"),
+            ("[", "Prev block"),
+            ("]", "Next block"),
+            ("Arrows", "Cursor"),
+            ("Enter", "Open"),
+            ("y", "Copy"),
+            ("Y", "Number"),
+            ("Esc", "Back"),
+        ]
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

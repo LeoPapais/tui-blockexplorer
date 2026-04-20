@@ -361,6 +361,17 @@ impl Screen for MempoolScreen {
         Command::None
     }
 
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("Arrows", "Select"),
+            ("Enter", "Open"),
+            ("p", "Pause"),
+            ("c", "Clear"),
+            ("y", "Copy"),
+            ("Esc", "Back"),
+        ]
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

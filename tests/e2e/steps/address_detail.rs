@@ -1076,6 +1076,28 @@ async fn token_overview_shows_symbol_and_supply(
     assert_eq!(ov.total_supply, expected_supply);
 }
 
+#[when("the user switches to the Token Chart sub-tab")]
+async fn switches_to_token_chart_subtab(world: &mut AppWorld) {
+    use blockexplorer_tui::adapters::ui::{AddressTab, TokenSubTab};
+
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| current(s).tabs().contains(&AddressTab::Token)).await;
+    for _ in 0..8 {
+        if current(stack).active_tab() == AddressTab::Token {
+            break;
+        }
+        press_key(stack, KeyCode::Tab);
+    }
+    assert_eq!(current(stack).active_tab(), AddressTab::Token);
+    for _ in 0..6 {
+        if current(stack).active_token_sub() == TokenSubTab::Chart {
+            break;
+        }
+        press_key(stack, KeyCode::Char(']'));
+    }
+    assert_eq!(current(stack).active_token_sub(), TokenSubTab::Chart);
+}
+
 #[when(regex = r#"^the user presses "([123])" to select window "([^"]+)"$"#)]
 async fn presses_digit_to_select_window(world: &mut AppWorld, digit: char, _window: String) {
     let stack = world.stack.as_mut().expect("stack");

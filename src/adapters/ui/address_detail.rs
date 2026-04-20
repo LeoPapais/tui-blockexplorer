@@ -284,20 +284,6 @@ impl ContractSubTab {
             ContractSubTab::Storage => "Storage",
         }
     }
-
-    /// Map an ASCII digit to its sub-tab. `1` → Overview … `6` →
-    /// Storage. Returns `None` for any other character.
-    fn from_digit(d: char) -> Option<Self> {
-        match d {
-            '1' => Some(ContractSubTab::Overview),
-            '2' => Some(ContractSubTab::Source),
-            '3' => Some(ContractSubTab::Abi),
-            '4' => Some(ContractSubTab::Read),
-            '5' => Some(ContractSubTab::Events),
-            '6' => Some(ContractSubTab::Storage),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,17 +321,6 @@ impl TokenSubTab {
             TokenSubTab::Overview => "Overview",
             TokenSubTab::Transfers => "Transfers",
             TokenSubTab::Chart => "Chart",
-        }
-    }
-
-    /// Map an ASCII digit to its sub-tab. `1` → Overview … `3` →
-    /// Chart. Returns `None` for any other character.
-    fn from_digit(d: char) -> Option<Self> {
-        match d {
-            '1' => Some(TokenSubTab::Overview),
-            '2' => Some(TokenSubTab::Transfers),
-            '3' => Some(TokenSubTab::Chart),
-            _ => None,
         }
     }
 }
@@ -1249,7 +1224,7 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Contract sub-tabs  —  [1-6] or [ ]"),
+                                    .title("Contract sub-tabs  —  [ / ]"),
                             )
                             .divider(" ")
                             .highlight_style(
@@ -1272,7 +1247,7 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Token sub-tabs  —  [1-3] or [ ]"),
+                                    .title("Token sub-tabs  —  [ / ]"),
                             )
                             .divider(" ")
                             .highlight_style(
@@ -1336,6 +1311,31 @@ impl Screen for AddressDetailScreen {
         Command::None
     }
 
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        let mut hints: Vec<(&'static str, &'static str)> = vec![
+            ("Tab", "Tabs"),
+            ("Arrows", "Cursor"),
+            ("Enter", "Open"),
+            ("y", "Copy"),
+            ("Y", "Canonical"),
+            ("e", "Export"),
+        ];
+        match self.active_tab_or_fallback() {
+            AddressTab::Contract | AddressTab::Token => {
+                hints.push(("[", "Prev sub"));
+                hints.push(("]", "Next sub"));
+            }
+            _ => {}
+        }
+        if matches!(self.active_tab, AddressTab::Token)
+            && matches!(self.active_token_sub, TokenSubTab::Chart)
+        {
+            hints.push(("1..3", "Window"));
+        }
+        hints.push(("Esc", "Back"));
+        hints
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -1355,11 +1355,19 @@ impl AddressDetailScreen {
             return Command::Quit;
         }
         if matches!(key.code, KeyCode::Esc) {
-            if self.cursor.is_active() {
-                self.cursor.deactivate();
-                return Command::None;
-            }
             return Command::Pop;
+        }
+        // Backspace deactivates the field cursor on the Overview
+        // tab without popping the screen. Moved off Esc so Esc
+        // always pops (plan/15-backlog.md §8.16). Other tabs that
+        // use Backspace for text input (Read/args, Storage/slot) are
+        // dispatched further down; this arm only fires on Overview.
+        if matches!(key.code, KeyCode::Backspace)
+            && matches!(self.active_tab_or_fallback(), AddressTab::Overview)
+            && self.cursor.is_active()
+        {
+            self.cursor.deactivate();
+            return Command::None;
         }
 
         // Clipboard bindings (available from any tab). When the
@@ -1395,52 +1403,15 @@ impl AddressDetailScreen {
             _ => {}
         }
 
-        // Digit sub-tab shortcuts on Contract / Token. Primary
-        // discoverable keybinding because `[`/`]` is awkward on
-        // several layouts (notably ABNT Brazilian). `[`/`]` stays
-        // wired below for existing muscle memory.
-        //
-        // The Read tab owns the digit keys when the args editor has
-        // focus — numeric arguments to `read` calls must reach the
-        // buffer. Outside that case, digits always prefer the
-        // sub-tab selector on these two tabs.
-        if let KeyCode::Char(d) = key.code
-            && d.is_ascii_digit()
+        // Token chart window: `1` / `2` / `3` only map to
+        // `PriceWindow::{D1, M1, Y1}` when the Chart sub-tab is
+        // actually in view. Digits are no longer consumed as
+        // sub-tab selectors — `[` / `]` cycle sub-tabs instead (see
+        // plan/15-backlog.md §8.16). The Read/args editor keeps
+        // ownership of the digits whenever that focus is active.
+        if matches!(self.active_tab, AddressTab::Token)
+            && matches!(self.active_token_sub, TokenSubTab::Chart)
         {
-            let in_read_args = matches!(self.active_tab, AddressTab::Contract)
-                && matches!(self.active_contract_sub, ContractSubTab::Read)
-                && matches!(self.read_focus, ReadFocus::Args);
-            if !in_read_args {
-                match self.active_tab {
-                    AddressTab::Contract => {
-                        if let Some(sub) = ContractSubTab::from_digit(d) {
-                            self.active_contract_sub = sub;
-                            self.with_contract_scroll(|s| s.reset());
-                            return Command::None;
-                        }
-                    }
-                    AddressTab::Token => {
-                        if let Some(sub) = TokenSubTab::from_digit(d) {
-                            self.active_token_sub = sub;
-                            return Command::None;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Token chart window switches on the Token tab stay on the
-        // digits only for sub-tabs that do not have their own meaning
-        // (none today once the digit selector took over the Token
-        // tab); on any OTHER tab `1`/`2`/`3` keep their historical
-        // Chart-window behaviour so the shortcut still works from
-        // Overview / Transactions / Tokens, matching the prior
-        // TokenDetailScreen contract (plan/8 §12.4).
-        if matches!(
-            self.active_tab,
-            AddressTab::Overview | AddressTab::Transactions | AddressTab::Tokens
-        ) {
             match key.code {
                 KeyCode::Char('1') => {
                     self.set_token_window(PriceWindow::D1);

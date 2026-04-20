@@ -69,10 +69,18 @@ fn cursor_enter_on_gwei_value_is_a_noop() {
 }
 
 #[test]
-fn esc_deactivates_cursor_without_popping() {
+fn backspace_deactivates_cursor_without_popping() {
     let (mut screen, _, _) = wire_services();
     screen.handle_key(key(KeyCode::Right));
     assert!(screen.cursor().is_active());
-    assert_eq!(screen.handle_key(key(KeyCode::Esc)), Command::None);
+    assert_eq!(screen.handle_key(key(KeyCode::Backspace)), Command::None);
     assert!(!screen.cursor().is_active());
+}
+
+#[test]
+fn esc_pops_screen_even_when_cursor_is_active() {
+    let (mut screen, _, _) = wire_services();
+    screen.handle_key(key(KeyCode::Right));
+    assert!(screen.cursor().is_active());
+    assert_eq!(screen.handle_key(key(KeyCode::Esc)), Command::Pop);
 }
