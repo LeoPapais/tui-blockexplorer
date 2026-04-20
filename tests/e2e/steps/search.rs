@@ -9,9 +9,10 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        AddressDetailScreen, BlockDetailScreen, ContractDetailScreen, DetailPlaceholderScreen,
-        HomeScreen, ScreenStack, SearchScreen, TokenDetailScreen, TxDetailScreen, address_feed,
-        block_feed, contract_feed, home_feed, search_feed, token_feed, tx_feed,
+        AddressDetailScreen, BlockDetailScreen, Command, ContractDetailScreen,
+        DetailPlaceholderScreen, HomeScreen, ScreenStack, SearchScreen, TokenDetailScreen,
+        TxDetailScreen, address_feed, block_feed, contract_feed, home_feed, search_feed,
+        token_feed, tx_feed,
     },
     application::{
         ConnectionStatus, HomeViewModel,
@@ -986,4 +987,120 @@ async fn close_search_modal(world: &mut AppWorld) {
 #[then(regex = r#"^the tx lookup stub was called exactly (\d+) times?$"#)]
 async fn tx_lookup_call_count(world: &mut AppWorld, expected: usize) {
     assert_eq!(world.tx_stub.call_count(), expected, "tx lookup call count",);
+}
+
+// ---------------------------------------------------------------------------
+// Overlay scenario (plan/2-search.md §13)
+// ---------------------------------------------------------------------------
+
+/// Composite render of the current stack into a `TestBackend` so
+/// the overlay scenario can assert on the final buffer. Mirrors
+/// `src/infra/runtime.rs::redraw`: top screen first at the full
+/// area, then the modal at the same area.
+fn render_stack_to_buffer(stack: &ScreenStack, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    use ratatui::{Terminal, backend::TestBackend};
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            if let Some(top) = stack.top() {
+                top.render(frame, area);
+            }
+            if let Some(modal) = stack.modal() {
+                modal.render(frame, area);
+            }
+        })
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn overlay_row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol().to_string())
+        .collect()
+}
+
+fn overlay_buffer_contains(buffer: &ratatui::buffer::Buffer, needle: &str) -> bool {
+    (0..buffer.area.height).any(|y| overlay_row_text(buffer, y).contains(needle))
+}
+
+fn overlay_row_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<u16> {
+    (0..buffer.area.height).find(|y| overlay_row_text(buffer, *y).contains(needle))
+}
+
+#[when(regex = r#"^the user opens the search overlay with "/"$"#)]
+async fn user_opens_search_overlay(world: &mut AppWorld) {
+    build_stack(world);
+    let chain = ensure_active_chain(world);
+    // Build a real SearchScreen through the search factory and
+    // feed it into the stack's modal slot: this mirrors the
+    // real runtime, where pressing `/` goes through
+    // `GlobalKeyMap::dispatch` and returns `Command::OpenModal`.
+    let factory = build_search_factory(world, chain);
+    let stack = world.stack.as_mut().expect("stack exists");
+    stack.apply_command(Command::OpenModal(factory()));
+    assert_eq!(
+        stack.top().unwrap().title(),
+        "Home",
+        "Home must remain the back-stack top when `/` opens a modal"
+    );
+    assert_eq!(
+        stack.modal().unwrap().title(),
+        "Search",
+        "Search must live in the modal slot, not on the back stack"
+    );
+}
+
+#[then("the Home screen is still rendered behind the overlay")]
+async fn home_visible_behind_overlay(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack exists");
+    let buffer = render_stack_to_buffer(stack, 120, 30);
+
+    // Home's header shows the active chain. Search must not
+    // paint over it.
+    let chain = world.active_chain.expect("chain");
+    let needle = format!("Chain: {}", chain.display_name());
+    assert!(
+        overlay_buffer_contains(&buffer, &needle),
+        "Home header `{needle}` must survive the overlay; got:\n{}",
+        (0..buffer.area.height)
+            .map(|y| overlay_row_text(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    // Home's top-left border corner must stay intact (it lives
+    // well outside the centered overlay rectangle).
+    let corner = buffer[(0, 0)].symbol().to_string();
+    assert_eq!(
+        corner, "┌",
+        "Home's top-left border corner must stay intact (got {corner:?})",
+    );
+}
+
+#[then("the search input is rendered at the bottom of the screen")]
+async fn search_input_at_bottom(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack exists");
+    let buffer = render_stack_to_buffer(stack, 120, 30);
+
+    let prompt_row = overlay_row_of(&buffer, "> _").expect("search prompt `> _` must render");
+    assert!(
+        prompt_row >= buffer.area.height - 3,
+        "search prompt must sit inside the bottom 3 rows, got row {prompt_row} of {}",
+        buffer.area.height,
+    );
+}
+
+#[then("the results panel is rendered as a centered floating modal")]
+async fn results_panel_is_centered(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack exists");
+    let buffer = render_stack_to_buffer(stack, 120, 30);
+
+    let row =
+        overlay_row_of(&buffer, "Candidates").expect("Candidates border title must be rendered");
+    assert!(
+        row > 2 && row < buffer.area.height - 3,
+        "Candidates border must live in the middle of the buffer, got row {row}",
+    );
 }

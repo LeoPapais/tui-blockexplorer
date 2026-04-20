@@ -79,6 +79,16 @@ Feature: Universal search
     When the user opens search with "0x88DF016429689C079F3B2F6AD39FA052532C56795B733DA78A91EBE6A713944B"
     Then the primary candidate is "transaction"
 
+  Scenario: Opening / overlays search on top of Home without erasing it
+    # plan/2-search.md §13 — `SearchScreen` must render as an
+    # overlay, not an opaque screen: Home keeps drawing behind,
+    # the input sits at the bottom as a 3-row footer and the
+    # results render as a centered floating block.
+    When the user opens the search overlay with "/"
+    Then the Home screen is still rendered behind the overlay
+    And the search input is rendered at the bottom of the screen
+    And the results panel is rendered as a centered floating modal
+
   Scenario: Repeated search within 60 s reuses the cache
     Given the stub knows the transaction "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"
     And the search cache is enabled with a 60 second TTL
