@@ -300,3 +300,30 @@ mod cache_registry;
 
 #[path = "functional/render_breadcrumb.rs"]
 mod render_breadcrumb;
+
+#[path = "functional/field_cursor.rs"]
+mod field_cursor;
+
+#[path = "functional/home_cursor.rs"]
+mod home_cursor;
+
+#[path = "functional/settings_cursor.rs"]
+mod settings_cursor;
+
+#[path = "functional/gas_tracker_cursor.rs"]
+mod gas_tracker_cursor;
+
+#[path = "functional/block_detail_cursor.rs"]
+mod block_detail_cursor;
+
+#[path = "functional/mempool_cursor.rs"]
+mod mempool_cursor;
+
+#[path = "functional/tx_detail_cursor.rs"]
+mod tx_detail_cursor;
+
+#[path = "functional/address_detail_cursor.rs"]
+mod address_detail_cursor;
+
+#[path = "functional/arboard_clipboard.rs"]
+mod arboard_clipboard;
