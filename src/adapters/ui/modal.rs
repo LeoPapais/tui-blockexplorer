@@ -100,7 +100,13 @@ impl Screen for HelpModal {
     }
 }
 
-fn centered_rect(parent: Rect, percent_x: u16, percent_y: u16) -> Rect {
+/// Build a rectangle centered on `parent` that occupies
+/// `percent_x`% of the width and `percent_y`% of the height.
+///
+/// Reused by the Help modal (§7) and the Search overlay
+/// (`plan/2-search.md` §13).
+#[must_use]
+pub(crate) fn centered_rect(parent: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -118,4 +124,58 @@ fn centered_rect(parent: Rect, percent_x: u16, percent_y: u16) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(vertical)[1]
+}
+
+/// Build a rectangle pinned to the bottom of `area` that spans
+/// the full width and is `height` rows tall.
+///
+/// Used by the Search overlay (`plan/2-search.md` §13) for the
+/// vim-style `:` command line. Saturating arithmetic keeps the
+/// rectangle valid even when `height > area.height` (returns a
+/// zero-row rect flush with the bottom).
+#[must_use]
+pub(crate) fn footer_rect(area: Rect, height: u16) -> Rect {
+    let clamped = height.min(area.height);
+    Rect {
+        x: area.x,
+        y: area.bottom().saturating_sub(clamped),
+        width: area.width,
+        height: clamped,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{centered_rect, footer_rect};
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn footer_sits_at_the_bottom_of_area() {
+        let area = Rect::new(0, 0, 120, 30);
+        let rect = footer_rect(area, 3);
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.width, 120);
+        assert_eq!(rect.height, 3);
+        assert_eq!(rect.y, 27);
+        assert_eq!(rect.bottom(), area.bottom());
+    }
+
+    #[test]
+    fn footer_clamps_to_area_height() {
+        let area = Rect::new(0, 0, 120, 2);
+        let rect = footer_rect(area, 5);
+        assert_eq!(rect.height, 2);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.bottom(), area.bottom());
+    }
+
+    #[test]
+    fn centered_rect_is_actually_centered() {
+        let area = Rect::new(0, 0, 100, 100);
+        let rect = centered_rect(area, 60, 50);
+        assert_eq!(rect.width, 60);
+        assert_eq!(rect.height, 50);
+        assert_eq!(rect.x, 20);
+        assert_eq!(rect.y, 25);
+    }
 }
