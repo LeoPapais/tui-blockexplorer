@@ -11,14 +11,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
+    adapters::ui::{
+        modal::{centered_rect, footer_rect},
+        screen::{Command, Screen},
+    },
     domain::ResolvedEntity,
 };
 
@@ -158,34 +161,60 @@ impl Screen for SearchScreen {
     }
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(3)])
-            .split(area);
+        // See `plan/2-search.md` §13: the search screen renders
+        // as an overlay, not as a full-area screen. The input is
+        // a 3-row vim-style command line pinned to the bottom;
+        // the results sit in a centered floating block. Every
+        // cell outside those two rectangles is left as the
+        // backing screen painted it.
+        let input_rect = footer_rect(area, 3);
+        let mut results_rect = centered_rect(area, 60, 50);
 
+        // Overlap guard for degenerate terminal dimensions: if
+        // the centered block would crash into the footer, shrink
+        // it upwards so it stays one row above the footer. When
+        // that leaves zero rows, skip the results rectangle for
+        // this frame so we never clip the input strip — the user
+        // must always see where they are typing.
+        let hide_results = if results_rect.bottom() > input_rect.top() {
+            let new_bottom = input_rect.top().saturating_sub(1);
+            if new_bottom <= results_rect.y {
+                true
+            } else {
+                results_rect.height = new_bottom - results_rect.y;
+                false
+            }
+        } else {
+            false
+        };
+
+        if !hide_results {
+            frame.render_widget(Clear, results_rect);
+            let items: Vec<ListItem<'_>> = self
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    let marker = if i == self.selected { "> " } else { "  " };
+                    let text = format!("{marker}[{}] {}", e.kind_label(), render_entity(e));
+                    let style = if i == self.selected {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(text).style(style)
+                })
+                .collect();
+
+            let list =
+                List::new(items).block(Block::default().borders(Borders::ALL).title("Candidates"));
+            frame.render_widget(list, results_rect);
+        }
+
+        frame.render_widget(Clear, input_rect);
         let header = Paragraph::new(format!("> {}_", self.input))
             .block(Block::default().borders(Borders::ALL).title("Search"));
-        frame.render_widget(header, chunks[0]);
-
-        let items: Vec<ListItem<'_>> = self
-            .candidates
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                let marker = if i == self.selected { "> " } else { "  " };
-                let text = format!("{marker}[{}] {}", e.kind_label(), render_entity(e));
-                let style = if i == self.selected {
-                    Style::default().add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-
-        let list =
-            List::new(items).block(Block::default().borders(Borders::ALL).title("Candidates"));
-        frame.render_widget(list, chunks[1]);
+        frame.render_widget(header, input_rect);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {

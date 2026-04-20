@@ -19,6 +19,9 @@ mod home_session;
 #[path = "functional/home_screen_render.rs"]
 mod home_screen_render;
 
+#[path = "functional/search_overlay_render.rs"]
+mod search_overlay_render;
+
 #[path = "functional/screen_stack.rs"]
 mod screen_stack;
 
