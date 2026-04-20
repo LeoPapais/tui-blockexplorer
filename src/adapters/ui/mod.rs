@@ -8,6 +8,7 @@
 pub mod address_detail;
 pub mod block_detail;
 pub mod breadcrumb;
+pub mod detail_focus;
 pub mod detail_placeholder;
 pub mod field_cursor;
 pub mod format;
@@ -32,6 +33,10 @@ pub use block_detail::{
     block_feed,
 };
 pub use breadcrumb::{BREADCRUMB_SEPARATOR, breadcrumb_segments, render_breadcrumb};
+pub use detail_focus::{
+    DetailFocusLayer, DetailTabStrip, detail_body_border_style, tab_strip_border_style,
+    tab_strip_highlight_style,
+};
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry, NavigationFactory};
 pub use global_keymap::{GlobalKeyMap, ModalFactory};

@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Line,
     widgets::{Block as RatBlock, Borders, List, ListItem, Paragraph, Tabs, Wrap},
 };
@@ -17,8 +17,13 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        detail_focus::{
+            DetailFocusLayer, DetailTabStrip, detail_body_border_style, tab_strip_border_style,
+            tab_strip_highlight_style,
+        },
         field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
         screen::{Command, Screen},
+        theme::PalettePreset,
     },
     domain::{Block, BlockId, BlockNumber, Chain, NavigableValue, TxHash},
 };
@@ -99,6 +104,7 @@ pub struct BlockDetailScreen {
     feed: BlockFeed,
     open_tx_factory: OpenTxFactory,
     active_tab: BlockTab,
+    focus_layer: DetailFocusLayer,
     tx_selected: usize,
     /// Last value produced by the `y` / `Y` bindings before the
     /// cursor takes over. Retained so the existing test sink
@@ -128,6 +134,7 @@ impl BlockDetailScreen {
             feed,
             open_tx_factory,
             active_tab: BlockTab::Overview,
+            focus_layer: DetailFocusLayer::Content,
             tx_selected: 0,
             last_copied_value: None,
             cursor: FieldCursor::new(),
@@ -150,6 +157,7 @@ impl BlockDetailScreen {
             feed,
             open_tx_factory,
             active_tab: BlockTab::Overview,
+            focus_layer: DetailFocusLayer::Content,
             tx_selected: 0,
             last_copied_value: None,
             cursor: FieldCursor::new(),
@@ -245,6 +253,12 @@ impl BlockDetailScreen {
         self.active_tab
     }
 
+    /// Keyboard focus region (tabs vs body). See `plan/17-navigable-values.md`.
+    #[must_use]
+    pub const fn focus_layer(&self) -> DetailFocusLayer {
+        self.focus_layer
+    }
+
     #[must_use]
     pub fn tx_selected(&self) -> usize {
         self.tx_selected
@@ -298,21 +312,23 @@ impl Screen for BlockDetailScreen {
             BlockTab::Transactions => 1,
             BlockTab::BlobsAndWithdrawals => 2,
         };
+        let palette = PalettePreset::DarkDefault.palette();
+        let tab_border =
+            tab_strip_border_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
+        let tab_hi =
+            tab_strip_highlight_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
+        let body_border = detail_body_border_style(self.focus_layer, &palette);
         frame.render_widget(
             Tabs::new(tab_titles)
                 .select(tab_idx)
                 .block(
                     RatBlock::default()
                         .borders(Borders::ALL)
-                        .title("Tabs  —  Tab / Shift-Tab"),
+                        .border_style(tab_border)
+                        .title("Tabs  —  ←/→ tabs when focused · ↓ body"),
                 )
                 .divider(" ")
-                .highlight_style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::Indexed(238))
-                        .fg(Color::White),
-                ),
+                .highlight_style(tab_hi),
             chunks[1],
         );
 
@@ -320,17 +336,24 @@ impl Screen for BlockDetailScreen {
         match (self.current.as_ref(), self.active_tab) {
             (None, _) => {
                 frame.render_widget(
-                    Paragraph::new("Loading...")
-                        .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
+                    Paragraph::new("Loading...").block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .border_style(body_border)
+                            .title("Overview"),
+                    ),
                     chunks[2],
                 );
             }
             (Some(block), BlockTab::Overview) => {
                 let body = overview_body(block);
                 frame.render_widget(
-                    Paragraph::new(body)
-                        .wrap(Wrap { trim: false })
-                        .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
+                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                        RatBlock::default()
+                            .borders(Borders::ALL)
+                            .border_style(body_border)
+                            .title("Overview"),
+                    ),
                     chunks[2],
                 );
             }
@@ -358,6 +381,7 @@ impl Screen for BlockDetailScreen {
                     List::new(items).block(
                         RatBlock::default()
                             .borders(Borders::ALL)
+                            .border_style(body_border)
                             .title(format!("Transactions ({})", block.tx_hashes.len())),
                     ),
                     chunks[2],
@@ -369,6 +393,7 @@ impl Screen for BlockDetailScreen {
                     Paragraph::new(body).wrap(Wrap { trim: false }).block(
                         RatBlock::default()
                             .borders(Borders::ALL)
+                            .border_style(body_border)
                             .title("Blobs / Withdrawals"),
                     ),
                     chunks[2],
@@ -403,28 +428,6 @@ impl Screen for BlockDetailScreen {
                 }
                 return Command::None;
             }
-            KeyCode::Tab => {
-                self.active_tab = self.active_tab.next();
-                return Command::None;
-            }
-            KeyCode::BackTab => {
-                self.active_tab = self.active_tab.previous();
-                return Command::None;
-            }
-            // Left/Right are now owned by the field cursor on the
-            // Overview tab (see the §7 dispatch below). The legacy
-            // "Left/Right switches tabs" behaviour only kicks in
-            // when the active tab is not Overview — Transactions and
-            // Blobs/Withdrawals still flip tabs with arrows, matching
-            // the pre-cursor contract.
-            KeyCode::Right if !matches!(self.active_tab, BlockTab::Overview) => {
-                self.active_tab = self.active_tab.next();
-                return Command::None;
-            }
-            KeyCode::Left if !matches!(self.active_tab, BlockTab::Overview) => {
-                self.active_tab = self.active_tab.previous();
-                return Command::None;
-            }
             // `y` copies the identifier relevant to the active tab;
             // `Y` always copies the block number. See plan/3 §12.1.
             // Once the cursor takes over (see the §7 dispatch below)
@@ -440,12 +443,52 @@ impl Screen for BlockDetailScreen {
             _ => {}
         }
 
+        let is_back_tab = key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
+        if is_back_tab {
+            self.active_tab = self.active_tab.previous();
+            return Command::None;
+        }
+        if key.code == KeyCode::Tab {
+            self.active_tab = self.active_tab.next();
+            return Command::None;
+        }
+
+        if self.focus_layer == DetailFocusLayer::MainTabs {
+            match key.code {
+                KeyCode::Left => {
+                    self.active_tab = self.active_tab.previous();
+                    return Command::None;
+                }
+                KeyCode::Right => {
+                    self.active_tab = self.active_tab.next();
+                    return Command::None;
+                }
+                KeyCode::Down => {
+                    self.focus_layer = DetailFocusLayer::Content;
+                    return Command::None;
+                }
+                KeyCode::Up => return Command::None,
+                _ => {}
+            }
+        }
+
         // Cursor is only in scope on the Overview tab so list
         // navigation in the Transactions tab keeps its existing
         // meaning.
-        if matches!(self.active_tab, BlockTab::Overview) {
+        if matches!(self.active_tab, BlockTab::Overview)
+            && self.focus_layer == DetailFocusLayer::Content
+        {
             let fields = self.navigable_fields();
             match key.code {
+                KeyCode::Up if !self.cursor.is_active() => {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                    return Command::None;
+                }
+                KeyCode::Up if self.cursor.active() == Some(0) => {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                    return Command::None;
+                }
                 KeyCode::Left => {
                     self.cursor.move_in(fields.len(), CursorDir::Left);
                     return Command::None;
@@ -489,18 +532,16 @@ impl Screen for BlockDetailScreen {
             }
         }
 
-        // Shift+Tab is reported as `KeyCode::Tab` + SHIFT on a few
-        // terminals; handle that too.
-        if key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT) {
-            self.active_tab = self.active_tab.previous();
-            return Command::None;
-        }
-
         // Transactions-tab specific keys.
         if matches!(self.active_tab, BlockTab::Transactions)
+            && self.focus_layer == DetailFocusLayer::Content
             && let Some(block) = self.current.as_ref()
         {
             match key.code {
+                KeyCode::Up if self.tx_selected == 0 => {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                    return Command::None;
+                }
                 KeyCode::Up => {
                     self.tx_selected = self.tx_selected.saturating_sub(1);
                 }
@@ -516,6 +557,15 @@ impl Screen for BlockDetailScreen {
                 _ => {}
             }
         }
+
+        if matches!(self.active_tab, BlockTab::BlobsAndWithdrawals)
+            && self.focus_layer == DetailFocusLayer::Content
+            && matches!(key.code, KeyCode::Up)
+        {
+            self.focus_layer = DetailFocusLayer::MainTabs;
+            return Command::None;
+        }
+
         Command::None
     }
 
@@ -529,7 +579,8 @@ impl Screen for BlockDetailScreen {
             ("Tab", "Tabs"),
             ("[", "Prev block"),
             ("]", "Next block"),
-            ("Arrows", "Cursor"),
+            ("←/→", "Tabs strip"),
+            ("↑/↓", "Layers / cursor"),
             ("Enter", "Open"),
             ("y", "Copy"),
             ("Y", "Number"),

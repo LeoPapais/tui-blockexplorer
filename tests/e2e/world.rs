@@ -20,10 +20,9 @@ use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
-    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
-    StubSignatureDirectoryPort, StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort,
-    StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
-    StubTxSimulationPort, StubTxTracePort,
+    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
+    StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort, StubTokenSearchPort,
+    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession = HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
@@ -154,7 +153,6 @@ pub struct AppWorld {
     /// falls back to its hard-coded Polygon fixture so existing
     /// scenarios keep passing. See `plan/3-block-detail.md` §12.5.
     pub pending_block_detail: Option<blockexplorer_tui::domain::Block>,
-
 }
 
 impl fmt::Debug for AppWorld {

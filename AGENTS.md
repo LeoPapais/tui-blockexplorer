@@ -54,6 +54,24 @@ cargo clippy --all-targets -- -D warnings
 - `cargo clippy --all-targets -- -D warnings` clean.
 - New work documented in the corresponding `plan/*.md`.
 
+## Subagents and worktrees
+
+When the user asks to open a **subagent** for work that touches the
+tree, the orchestrator must:
+
+1. Create an isolated checkout with **`/worktree`** (see
+   [`.cursor/README.md`](.cursor/README.md#subagents-and-worktrees)).
+2. Have the subagent do its work **only** in that worktree path.
+3. Merge results back with **`/apply-worktree`**, then remove the
+   checkout with **`/delete-worktree`** (in that order).
+4. On the **primary** worktree (main branch checkout), run
+   `cargo test` (and the usual quality gates). If everything passes,
+   **commit** the merged result on main.
+
+Skip the worktree dance only when the user explicitly asks for a
+read-only subagent (for example `plan-guard`) or when no filesystem
+changes are involved.
+
 ## Tooling in this repo
 
 - **`.cursor/rules/*.mdc`** — detailed rules per concern (architecture,
@@ -68,5 +86,8 @@ cargo clippy --all-targets -- -D warnings
   repo's canonical shape.
 - **`.cursor/agents/plan-guard.md`** — readonly subagent that audits
   a would-be implementation against `plan/` before any code lands.
+- **`.cursor/agents/tab-hierarchy-navigation.md`** — implements
+  hierarchical tab / subtab / content focus (←/→ tabs, ↑/↓ depth),
+  border highlights, and ancestor styling.
 - **`.cursor/BUGBOT.md`** — review rules for pull-request-time
   enforcement (delegates to the `.cursor/rules/`).

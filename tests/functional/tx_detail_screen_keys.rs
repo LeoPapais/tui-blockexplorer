@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use blockexplorer_tui::adapters::ui::{CursorServices, Screen, TxDetailScreen, TxTab, tx_feed};
+use blockexplorer_tui::adapters::ui::{
+    CursorServices, DetailFocusLayer, Screen, TxDetailScreen, TxTab, tx_feed,
+};
 use blockexplorer_tui::application::ports::ClipboardPort;
 use blockexplorer_tui::application::{LoadStatus, TxView};
 use blockexplorer_tui::domain::{
@@ -89,8 +91,11 @@ fn shift_tab_moves_to_the_previous_tab() {
 }
 
 #[test]
-fn right_and_left_arrows_also_switch_tabs_on_overview() {
+fn left_right_switch_tabs_only_when_tab_strip_is_focused() {
     let mut screen = loaded_screen(sample_tx());
+    assert_eq!(screen.focus_layer(), DetailFocusLayer::Content);
+    screen.handle_key(key(KeyCode::Up));
+    assert_eq!(screen.focus_layer(), DetailFocusLayer::MainTabs);
     screen.handle_key(key(KeyCode::Right));
     assert_eq!(screen.active_tab(), TxTab::Logs);
     screen.handle_key(key(KeyCode::Left));

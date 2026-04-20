@@ -5,9 +5,9 @@
 //! (expansion) and 13 (follow-up fixes).
 //!
 //! Key layout:
-//! - `Tab` / `Right` advance tabs; `Shift+Tab` / `Left` go back.
-//!   Arrow keys switch tabs only when the focused widget did not
-//!   claim them (see `Logs` detail pane below).
+//! - `Tab` / `Shift+Tab` cycle main tabs from the body. When focus is
+//!   on the tab strip (`↑` from the body), `←` / `→` move main tabs
+//!   and `↓` returns to the body.
 //! - On the Overview tab, `Up` / `Down` move a row-level selection
 //!   cursor and `y` copies the selected row's canonical value.
 //!   Humanized amounts gain an inline muted "raw" suffix while the
@@ -36,10 +36,15 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        detail_focus::{
+            DetailFocusLayer, DetailTabStrip, detail_body_border_style, tab_strip_border_style,
+            tab_strip_highlight_style,
+        },
         field_cursor::CursorServices,
         format::{humanize_eth, humanize_gas_units, humanize_gwei, humanize_token_units},
         screen::{Command, Screen},
         scroll::ScrollState,
+        theme::PalettePreset,
     },
     application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
@@ -164,6 +169,7 @@ pub struct TxDetailScreen {
     current: Option<TxView>,
     feed: TxFeed,
     active_tab: TxTab,
+    focus_layer: DetailFocusLayer,
     /// Row-level cursor for the Overview tab (plan 13.1).
     overview_row: usize,
     /// Left-pane log cursor for the Logs tab (plan 13.4).
@@ -205,6 +211,7 @@ impl TxDetailScreen {
             current: None,
             feed,
             active_tab: TxTab::Overview,
+            focus_layer: DetailFocusLayer::Content,
             overview_row: 0,
             logs_selected: 0,
             logs_field: 0,
@@ -253,6 +260,12 @@ impl TxDetailScreen {
         self.active_tab
     }
 
+    /// Whether keyboard focus is on the tab strip or the body.
+    #[must_use]
+    pub const fn focus_layer(&self) -> DetailFocusLayer {
+        self.focus_layer
+    }
+
     /// Currently selected row on the Overview tab. Returns `0`
     /// when the view has not loaded yet.
     #[must_use]
@@ -296,6 +309,7 @@ impl TxDetailScreen {
     fn drain_feed(&mut self) {
         while let Ok(view) = self.feed.updates_rx.try_recv() {
             self.current = Some(view);
+            self.focus_layer = DetailFocusLayer::Content;
             self.overview_row = 0;
             self.logs_selected = 0;
             self.logs_field = 0;
@@ -356,17 +370,22 @@ impl Screen for TxDetailScreen {
             .iter()
             .map(|t| Line::from(format!(" {} ", t.label())))
             .collect();
+        let palette = PalettePreset::DarkDefault.palette();
+        let tab_border =
+            tab_strip_border_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
+        let tab_hi =
+            tab_strip_highlight_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
         frame.render_widget(
             Tabs::new(titles)
                 .select(self.active_tab.index())
-                .block(RatBlock::default().borders(Borders::ALL).title("Tabs"))
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(tab_border)
+                        .title("Tabs  —  ←/→ when strip focused · Tab cycles"),
+                )
                 .divider(" ")
-                .highlight_style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::Indexed(238))
-                        .fg(Color::White),
-                ),
+                .highlight_style(tab_hi),
             chunks[1],
         );
 
@@ -401,6 +420,25 @@ impl Screen for TxDetailScreen {
             return Command::None;
         }
 
+        if self.focus_layer == DetailFocusLayer::MainTabs {
+            match key.code {
+                KeyCode::Left => {
+                    self.switch_tab(self.active_tab.previous());
+                    return Command::None;
+                }
+                KeyCode::Right => {
+                    self.switch_tab(self.active_tab.next());
+                    return Command::None;
+                }
+                KeyCode::Down => {
+                    self.focus_layer = DetailFocusLayer::Content;
+                    return Command::None;
+                }
+                KeyCode::Up => return Command::None,
+                _ => {}
+            }
+        }
+
         // `y` copies the selected row / field, regardless of tab.
         if key.code == KeyCode::Char('y') {
             self.copy_selected();
@@ -419,7 +457,10 @@ impl Screen for TxDetailScreen {
         // (Address / Block / Tx) for the selected row, when the
         // navigation factory is wired. See
         // `plan/17-navigable-values.md` §6.
-        if key.code == KeyCode::Enter && self.active_tab == TxTab::Overview {
+        if key.code == KeyCode::Enter
+            && self.active_tab == TxTab::Overview
+            && self.focus_layer == DetailFocusLayer::Content
+        {
             if let (Some(value), Some(services)) = (
                 self.overview_navigable_value(),
                 self.cursor_services.as_ref(),
@@ -430,12 +471,14 @@ impl Screen for TxDetailScreen {
             return Command::None;
         }
 
-        match self.active_tab {
-            TxTab::Overview => self.handle_overview_key(key),
-            TxTab::Logs => self.handle_logs_key(key),
-            TxTab::Raw => self.handle_raw_key(key),
-            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges => {
-                self.handle_scroll_key(key);
+        if self.focus_layer == DetailFocusLayer::Content {
+            match self.active_tab {
+                TxTab::Overview => self.handle_overview_key(key),
+                TxTab::Logs => self.handle_logs_key(key),
+                TxTab::Raw => self.handle_raw_key(key),
+                TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges => {
+                    self.handle_scroll_key(key);
+                }
             }
         }
         Command::None
@@ -449,7 +492,8 @@ impl Screen for TxDetailScreen {
     fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
         vec![
             ("Tab", "Tabs"),
-            ("Arrows", "Move"),
+            ("←/→", "Tab row"),
+            ("↑/↓", "Focus"),
             ("Enter", "Open"),
             ("y", "Copy"),
             ("s", "Re-simulate"),
@@ -485,14 +529,23 @@ impl TxDetailScreen {
             return;
         }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
+                if self.overview_row == 0 {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                } else {
+                    self.overview_row -= 1;
+                }
+            }
+            KeyCode::Down if self.overview_row + 1 < rows.len() => {
+                self.overview_row += 1;
+            }
+            KeyCode::Down => {}
+            KeyCode::Char('k') => {
                 self.overview_row = (self.overview_row + rows.len() - 1) % rows.len();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Char('j') => {
                 self.overview_row = (self.overview_row + 1) % rows.len();
             }
-            KeyCode::Left => self.switch_tab(self.active_tab.previous()),
-            KeyCode::Right => self.switch_tab(self.active_tab.next()),
             KeyCode::Home => self.overview_row = 0,
             KeyCode::End => self.overview_row = rows.len() - 1,
             _ => {}
@@ -504,17 +557,30 @@ impl TxDetailScreen {
             return;
         };
         let log_count = view.decoded_logs.len();
+        if log_count == 0 && matches!(key.code, KeyCode::Up | KeyCode::Char('k')) {
+            self.focus_layer = DetailFocusLayer::MainTabs;
+            return;
+        }
         match self.logs_focus {
             LogsFocus::List => match key.code {
                 KeyCode::Up | KeyCode::Char('k') if log_count > 0 => {
-                    self.logs_selected = (self.logs_selected + log_count - 1) % log_count;
+                    if self.logs_selected == 0 {
+                        self.focus_layer = DetailFocusLayer::MainTabs;
+                    } else {
+                        self.logs_selected -= 1;
+                        self.logs_field = 0;
+                    }
+                }
+                KeyCode::Down if log_count > 0 => {
+                    if self.logs_selected + 1 < log_count {
+                        self.logs_selected += 1;
+                    }
                     self.logs_field = 0;
                 }
-                KeyCode::Down | KeyCode::Char('j') if log_count > 0 => {
+                KeyCode::Char('j') if log_count > 0 => {
                     self.logs_selected = (self.logs_selected + 1) % log_count;
                     self.logs_field = 0;
                 }
-                KeyCode::Left => self.switch_tab(self.active_tab.previous()),
                 KeyCode::Right | KeyCode::Enter if log_count > 0 => {
                     self.logs_focus = LogsFocus::Detail;
                     self.logs_field = 0;
@@ -551,17 +617,19 @@ impl TxDetailScreen {
     fn handle_scroll_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.with_scroll(|s| {
-                    s.scroll_by(-1);
-                });
+                if self.scroll.get().offset() == 0 {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                } else {
+                    self.with_scroll(|s| {
+                        s.scroll_by(-1);
+                    });
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.with_scroll(|s| {
                     s.scroll_by(1);
                 });
             }
-            KeyCode::Left => self.switch_tab(self.active_tab.previous()),
-            KeyCode::Right => self.switch_tab(self.active_tab.next()),
             KeyCode::PageUp => {
                 self.with_scroll(|s| {
                     s.page_up();
@@ -598,14 +666,23 @@ impl TxDetailScreen {
             self.raw_row = rows.len() - 1;
         }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
+                if self.raw_row == 0 {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                } else {
+                    self.raw_row -= 1;
+                }
+            }
+            KeyCode::Down if self.raw_row + 1 < rows.len() => {
+                self.raw_row += 1;
+            }
+            KeyCode::Down => {}
+            KeyCode::Char('k') => {
                 self.raw_row = (self.raw_row + rows.len() - 1) % rows.len();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Char('j') => {
                 self.raw_row = (self.raw_row + 1) % rows.len();
             }
-            KeyCode::Left => self.switch_tab(self.active_tab.previous()),
-            KeyCode::Right => self.switch_tab(self.active_tab.next()),
             KeyCode::Home => self.raw_row = 0,
             KeyCode::End => self.raw_row = rows.len() - 1,
             _ => {}
@@ -679,11 +756,20 @@ impl TxDetailScreen {
 }
 
 impl TxDetailScreen {
+    fn body_block_border(&self) -> Style {
+        let palette = PalettePreset::DarkDefault.palette();
+        detail_body_border_style(self.focus_layer, &palette)
+    }
+
     fn render_body(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(view) = self.current.as_ref() else {
             frame.render_widget(
-                Paragraph::new("Loading...")
-                    .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
+                Paragraph::new("Loading...").block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_block_border())
+                        .title("Overview"),
+                ),
                 area,
             );
             return;
@@ -722,16 +808,26 @@ impl TxDetailScreen {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(RatBlock::default().borders(Borders::ALL).title("Overview")),
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_block_border())
+                        .title("Overview"),
+                ),
             area,
         );
     }
 
     fn render_logs(&self, frame: &mut Frame<'_>, area: Rect, view: &TxView) {
+        let bb = self.body_block_border();
         if view.decoded_logs.is_empty() {
             frame.render_widget(
-                Paragraph::new("No logs emitted.")
-                    .block(RatBlock::default().borders(Borders::ALL).title("Logs")),
+                Paragraph::new("No logs emitted.").block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(bb)
+                        .title("Logs"),
+                ),
                 area,
             );
             return;
@@ -750,7 +846,12 @@ impl TxDetailScreen {
         let list_focused = matches!(self.logs_focus, LogsFocus::List);
         let list_title = if list_focused { "Logs *" } else { "Logs" };
         let list = List::new(items)
-            .block(RatBlock::default().borders(Borders::ALL).title(list_title))
+            .block(
+                RatBlock::default()
+                    .borders(Borders::ALL)
+                    .border_style(bb)
+                    .title(list_title),
+            )
             .highlight_style(
                 Style::default()
                     .add_modifier(Modifier::BOLD)
@@ -779,15 +880,23 @@ impl TxDetailScreen {
         frame.render_widget(
             Paragraph::new(decoded_lines)
                 .wrap(Wrap { trim: false })
-                .block(RatBlock::default().borders(Borders::ALL).title(title)),
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(bb)
+                        .title(title),
+                ),
             detail_split[0],
         );
 
         let raw_text = log_raw_dump(log);
         frame.render_widget(
-            Paragraph::new(raw_text)
-                .wrap(Wrap { trim: false })
-                .block(RatBlock::default().borders(Borders::ALL).title("Raw log")),
+            Paragraph::new(raw_text).wrap(Wrap { trim: false }).block(
+                RatBlock::default()
+                    .borders(Borders::ALL)
+                    .border_style(bb)
+                    .title("Raw log"),
+            ),
             detail_split[1],
         );
     }
@@ -796,8 +905,12 @@ impl TxDetailScreen {
         let rows = raw_rows_for_view(view);
         if rows.is_empty() {
             frame.render_widget(
-                Paragraph::new("(empty)")
-                    .block(RatBlock::default().borders(Borders::ALL).title("Raw")),
+                Paragraph::new("(empty)").block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_block_border())
+                        .title("Raw"),
+                ),
                 area,
             );
             return;
@@ -815,7 +928,12 @@ impl TxDetailScreen {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(RatBlock::default().borders(Borders::ALL).title("Raw JSON")),
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_block_border())
+                        .title("Raw JSON"),
+                ),
             area,
         );
     }
@@ -835,7 +953,12 @@ impl TxDetailScreen {
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(RatBlock::default().borders(Borders::ALL).title(title)),
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_block_border())
+                        .title(title),
+                ),
             area,
         );
     }

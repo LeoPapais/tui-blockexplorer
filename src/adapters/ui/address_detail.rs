@@ -13,7 +13,9 @@
 //!
 //! Sub-tabs draw as a second tabs row below the main tabs row when
 //! `active_tab` is `Contract` or `Token`. `Tab`/`Shift+Tab` cycle
-//! the main tabs; `]`/`[` cycle the sub-tabs.
+//! the main tabs when focus is on the body or the main tab strip;
+//! when focus is on the sub-tab strip they cycle sub-tabs only.
+//! `]`/`[` still cycle sub-tabs from any layer.
 //!
 //! The screen owns every channel that fed the three prior screens.
 //! See `plan/16-unified-address-detail.md` §4–§6 for the data
@@ -38,10 +40,15 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        detail_focus::{
+            DetailFocusLayer, DetailTabStrip, detail_body_border_style, tab_strip_border_style,
+            tab_strip_highlight_style,
+        },
         field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
         highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
+        theme::PalettePreset,
     },
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, AddressKind, AddressOverview, BlockNumber,
@@ -384,6 +391,7 @@ pub struct AddressDetailScreen {
     // UI state.
     feed: AddressFeed,
     active_tab: AddressTab,
+    focus_layer: DetailFocusLayer,
     active_contract_sub: ContractSubTab,
     active_token_sub: TokenSubTab,
     scroll: u16,
@@ -498,6 +506,7 @@ impl AddressDetailScreen {
             storage_slot_requested: None,
             feed,
             active_tab: initial_tab,
+            focus_layer: DetailFocusLayer::Content,
             active_contract_sub: ContractSubTab::Overview,
             active_token_sub: TokenSubTab::Overview,
             scroll: 0,
@@ -652,6 +661,12 @@ impl AddressDetailScreen {
     #[must_use]
     pub fn active_tab(&self) -> AddressTab {
         self.active_tab
+    }
+
+    /// Keyboard focus region for hierarchical tab navigation.
+    #[must_use]
+    pub const fn focus_layer(&self) -> DetailFocusLayer {
+        self.focus_layer
     }
 
     #[must_use]
@@ -1202,6 +1217,21 @@ impl Screen for AddressDetailScreen {
             chunks[0],
         );
 
+        let palette = PalettePreset::DarkDefault.palette();
+        let sub_visible = has_sub;
+        let main_border = tab_strip_border_style(
+            self.focus_layer,
+            DetailTabStrip::Main,
+            sub_visible,
+            &palette,
+        );
+        let main_hi = tab_strip_highlight_style(
+            self.focus_layer,
+            DetailTabStrip::Main,
+            sub_visible,
+            &palette,
+        );
+
         // Main tabs bar.
         let tabs_visible = self.visible_tabs();
         let titles: Vec<Line<'static>> = tabs_visible
@@ -1215,20 +1245,20 @@ impl Screen for AddressDetailScreen {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Tabs  —  Tab / Shift-Tab to switch"),
+                        .border_style(main_border)
+                        .title("Main tabs  —  Tab / ←→ · ↓ sub/body"),
                 )
                 .divider(" ")
-                .highlight_style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::Indexed(238))
-                        .fg(Color::White),
-                ),
+                .highlight_style(main_hi),
             chunks[1],
         );
 
         let body_rect = if has_sub {
             // Render sub-tabs row.
+            let sub_border =
+                tab_strip_border_style(self.focus_layer, DetailTabStrip::Sub, true, &palette);
+            let sub_hi =
+                tab_strip_highlight_style(self.focus_layer, DetailTabStrip::Sub, true, &palette);
             match active {
                 AddressTab::Contract => {
                     let sub_titles: Vec<Line<'static>> = ContractSubTab::ALL
@@ -1241,15 +1271,11 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Contract sub-tabs  —  [ / ]"),
+                                    .border_style(sub_border)
+                                    .title("Contract sub-tabs  —  [ / ] · ←→"),
                             )
                             .divider(" ")
-                            .highlight_style(
-                                Style::default()
-                                    .add_modifier(Modifier::BOLD)
-                                    .bg(Color::Indexed(238))
-                                    .fg(Color::White),
-                            ),
+                            .highlight_style(sub_hi),
                         chunks[2],
                     );
                 }
@@ -1264,15 +1290,11 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Token sub-tabs  —  [ / ]"),
+                                    .border_style(sub_border)
+                                    .title("Token sub-tabs  —  [ / ] · ←→"),
                             )
                             .divider(" ")
-                            .highlight_style(
-                                Style::default()
-                                    .add_modifier(Modifier::BOLD)
-                                    .bg(Color::Indexed(238))
-                                    .fg(Color::White),
-                            ),
+                            .highlight_style(sub_hi),
                         chunks[2],
                     );
                 }
@@ -1330,8 +1352,9 @@ impl Screen for AddressDetailScreen {
 
     fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
         let mut hints: Vec<(&'static str, &'static str)> = vec![
-            ("Tab", "Tabs"),
-            ("Arrows", "Cursor"),
+            ("Tab", "Tabs / subs"),
+            ("←/→", "Tab row"),
+            ("↑/↓", "Focus"),
             ("Enter", "Open"),
             ("y", "Copy"),
             ("Y", "Canonical"),
@@ -1367,6 +1390,24 @@ impl Screen for AddressDetailScreen {
 }
 
 impl AddressDetailScreen {
+    fn body_outline(&self) -> Style {
+        let palette = PalettePreset::DarkDefault.palette();
+        detail_body_border_style(self.focus_layer, &palette)
+    }
+
+    const fn main_tab_exposes_sub_strip(active: AddressTab) -> bool {
+        matches!(active, AddressTab::Contract | AddressTab::Token)
+    }
+
+    fn promote_focus_up_from_list(&mut self) {
+        self.focus_layer = match self.active_tab_or_fallback() {
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
+                DetailFocusLayer::Subtabs
+            }
+            _ => DetailFocusLayer::MainTabs,
+        };
+    }
+
     fn dispatch_key(&mut self, key: KeyEvent) -> Command {
         let is_back_tab = key.code == KeyCode::BackTab
             || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
@@ -1440,7 +1481,8 @@ impl AddressDetailScreen {
         // sub-tab selectors — `[` / `]` cycle sub-tabs instead (see
         // plan/15-backlog.md §8.16). The Read/args editor keeps
         // ownership of the digits whenever that focus is active.
-        if matches!(self.active_tab, AddressTab::Token)
+        if self.focus_layer == DetailFocusLayer::Content
+            && matches!(self.active_tab, AddressTab::Token)
             && matches!(self.active_token_sub, TokenSubTab::Chart)
         {
             match key.code {
@@ -1465,20 +1507,115 @@ impl AddressDetailScreen {
         if matches!(key.code, KeyCode::Char('c')) && self.is_incomplete_badge_active() {
             self.active_tab = AddressTab::Contract;
             self.active_contract_sub = ContractSubTab::Overview;
+            self.focus_layer = DetailFocusLayer::Content;
             self.with_contract_scroll(|s| s.reset());
             return Command::None;
         }
 
-        // Main tab cycling.
+        // Main tab / sub-tab cycling on Tab keys.
         if is_back_tab {
+            if self.focus_layer == DetailFocusLayer::Subtabs {
+                match self.active_tab_or_fallback() {
+                    AddressTab::Contract => {
+                        self.active_contract_sub = self.active_contract_sub.previous();
+                        self.with_contract_scroll(|s| s.reset());
+                        return Command::None;
+                    }
+                    AddressTab::Token => {
+                        self.active_token_sub = self.active_token_sub.previous();
+                        return Command::None;
+                    }
+                    _ => {}
+                }
+            }
             self.active_tab = self.prev_tab();
             self.scroll = 0;
             return Command::None;
         }
         if key.code == KeyCode::Tab {
+            if self.focus_layer == DetailFocusLayer::Subtabs {
+                match self.active_tab_or_fallback() {
+                    AddressTab::Contract => {
+                        self.active_contract_sub = self.active_contract_sub.next();
+                        self.with_contract_scroll(|s| s.reset());
+                        return Command::None;
+                    }
+                    AddressTab::Token => {
+                        self.active_token_sub = self.active_token_sub.next();
+                        return Command::None;
+                    }
+                    _ => {}
+                }
+            }
             self.active_tab = self.next_tab();
             self.scroll = 0;
             return Command::None;
+        }
+
+        if self.focus_layer == DetailFocusLayer::MainTabs {
+            match key.code {
+                KeyCode::Left => {
+                    self.active_tab = self.prev_tab();
+                    self.scroll = 0;
+                    return Command::None;
+                }
+                KeyCode::Right => {
+                    self.active_tab = self.next_tab();
+                    self.scroll = 0;
+                    return Command::None;
+                }
+                KeyCode::Down => {
+                    let active = self.active_tab_or_fallback();
+                    self.focus_layer = if Self::main_tab_exposes_sub_strip(active) {
+                        DetailFocusLayer::Subtabs
+                    } else {
+                        DetailFocusLayer::Content
+                    };
+                    return Command::None;
+                }
+                KeyCode::Up => return Command::None,
+                _ => {}
+            }
+        }
+
+        if self.focus_layer == DetailFocusLayer::Subtabs {
+            match key.code {
+                KeyCode::Left => {
+                    match self.active_tab_or_fallback() {
+                        AddressTab::Contract => {
+                            self.active_contract_sub = self.active_contract_sub.previous();
+                            self.with_contract_scroll(|s| s.reset());
+                        }
+                        AddressTab::Token => {
+                            self.active_token_sub = self.active_token_sub.previous();
+                        }
+                        _ => {}
+                    }
+                    return Command::None;
+                }
+                KeyCode::Right => {
+                    match self.active_tab_or_fallback() {
+                        AddressTab::Contract => {
+                            self.active_contract_sub = self.active_contract_sub.next();
+                            self.with_contract_scroll(|s| s.reset());
+                        }
+                        AddressTab::Token => {
+                            self.active_token_sub = self.active_token_sub.next();
+                        }
+                        _ => {}
+                    }
+                    return Command::None;
+                }
+                KeyCode::Down => {
+                    self.focus_layer = DetailFocusLayer::Content;
+                    return Command::None;
+                }
+                KeyCode::Up => {
+                    self.focus_layer = DetailFocusLayer::MainTabs;
+                    return Command::None;
+                }
+                _ => {}
+            }
         }
 
         // Sub-tab cycling.
@@ -1511,12 +1648,15 @@ impl AddressDetailScreen {
             }
         }
 
-        match self.active_tab_or_fallback() {
-            AddressTab::Overview => self.handle_overview_key(key),
-            AddressTab::Transactions | AddressTab::Tokens => self.handle_list_key(key),
-            AddressTab::Token => self.handle_token_key(key),
-            AddressTab::Contract => self.handle_contract_key(key),
+        if self.focus_layer == DetailFocusLayer::Content {
+            return match self.active_tab_or_fallback() {
+                AddressTab::Overview => self.handle_overview_key(key),
+                AddressTab::Transactions | AddressTab::Tokens => self.handle_list_key(key),
+                AddressTab::Token => self.handle_token_key(key),
+                AddressTab::Contract => self.handle_contract_key(key),
+            };
         }
+        Command::None
     }
 
     fn handle_overview_key(&mut self, key: KeyEvent) -> Command {
@@ -1525,6 +1665,14 @@ impl AddressDetailScreen {
         // text remains scrollable on narrow terminals.
         let fields = self.navigable_fields();
         match key.code {
+            KeyCode::Up if !self.cursor.is_active() && self.scroll == 0 => {
+                self.focus_layer = DetailFocusLayer::MainTabs;
+                return Command::None;
+            }
+            KeyCode::Up if self.cursor.active() == Some(0) => {
+                self.focus_layer = DetailFocusLayer::MainTabs;
+                return Command::None;
+            }
             KeyCode::Left => {
                 self.cursor.move_in(fields.len(), CursorDir::Left);
                 return Command::None;
@@ -1571,6 +1719,10 @@ impl AddressDetailScreen {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Command {
+        if matches!(key.code, KeyCode::Up) && self.selected() == 0 {
+            self.promote_focus_up_from_list();
+            return Command::None;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.select_delta(-1);
@@ -1632,6 +1784,10 @@ impl AddressDetailScreen {
     fn handle_token_key(&mut self, key: KeyEvent) -> Command {
         match self.active_token_sub {
             TokenSubTab::Transfers => match key.code {
+                KeyCode::Up if self.selected() == 0 => {
+                    self.promote_focus_up_from_list();
+                    Command::None
+                }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.select_delta(-1);
                     Command::None
@@ -1691,6 +1847,14 @@ impl AddressDetailScreen {
         let fields = self.navigable_fields();
         let n = fields.len();
         match key.code {
+            KeyCode::Up if !self.cursor.is_active() => {
+                self.focus_layer = DetailFocusLayer::Subtabs;
+                return Command::None;
+            }
+            KeyCode::Up if self.cursor.active() == Some(0) => {
+                self.focus_layer = DetailFocusLayer::Subtabs;
+                return Command::None;
+            }
             KeyCode::Left => {
                 self.cursor.move_in(n, CursorDir::Left);
                 return Command::None;
@@ -1948,13 +2112,21 @@ impl AddressDetailScreen {
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(Block::default().borders(Borders::ALL).title("Overview")),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Overview"),
+                ),
             area,
         );
     }
 
     fn render_transactions(&self, frame: &mut Frame<'_>, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title("Transactions");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(self.body_outline())
+            .title("Transactions");
         match self.transfers.as_ref() {
             None => {
                 frame.render_widget(Paragraph::new("Loading transactions...").block(block), area)

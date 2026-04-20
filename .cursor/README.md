@@ -11,7 +11,7 @@ and reviews.
 | `rules/*.mdc` | Source of truth for architecture / testing / TUI / planning / external API / Rust style rules. Always applied. |
 | `hooks.json` + `hooks/*.sh` | Enforcement: rustfmt check on write, network-call guard on `cargo test`, plan snapshot on session start. |
 | `skills/*/SKILL.md` | Invocable slash commands: `/new-use-case`, `/new-port`, `/new-fixture`. |
-| `agents/plan-guard.md` | Readonly subagent that audits a would-be change against the plan-first pipeline. |
+| `agents/*.md` | Project subagents (`plan-guard`, `tab-hierarchy-navigation`, …). |
 | `BUGBOT.md` | Review rules applied to pull requests (delegates to `rules/`). |
 | `mcp.json` | MCP servers made available to the agent (currently: `fetch`). |
 | `worktrees.json` + `setup-worktree-unix.sh` | Setup run for each new `/worktree` or `/best-of-n` invocation. |
@@ -61,6 +61,27 @@ chmod +x .cursor/hooks/*.sh .cursor/setup-worktree-unix.sh
 Hook scripts depend on `bash`, `rustfmt`, `git`, and `jq`. All four
 are already required by the project's test suite, so no extra
 installs.
+
+## Subagents and worktrees
+
+When the user asks to **open a subagent** for implementation or other
+repo-changing work, the parent agent must keep the main checkout clean
+of concurrent edits by using a dedicated git worktree for the
+subagent’s session:
+
+1. **`/worktree`** — create a detached worktree (see Cursor command
+   docs) and run `worktrees.json` setup. Record `WORKTREE_PATH` and use
+   it for all reads, edits, and git commands for that task until merge.
+2. **Subagent work** — only inside `WORKTREE_PATH`.
+3. **`/apply-worktree`** — copy merged changes from the worktree into
+   the primary checkout (main). Resolve conflicts on main if needed.
+4. **`/delete-worktree`** — remove the temporary worktree and prune.
+5. **Primary checkout** — run `cargo test` and `cargo clippy --all-targets -- -D warnings`
+   (same gates as [AGENTS.md](../AGENTS.md)). If green, **commit** on
+   the branch the user expects (usually `main`).
+
+Do **not** use this pipeline for readonly subagents (for example
+`plan-guard`) or when the task explicitly does not touch tracked files.
 
 ## Daily usage
 

@@ -181,6 +181,9 @@ mod search_feed_cache;
 #[path = "functional/block_detail_screen_keys.rs"]
 mod block_detail_screen_keys;
 
+#[path = "functional/detail_focus_navigation.rs"]
+mod detail_focus_navigation;
+
 #[path = "functional/address_detail_screen_keys.rs"]
 mod address_detail_screen_keys;
 

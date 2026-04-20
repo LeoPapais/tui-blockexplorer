@@ -63,10 +63,12 @@ Owned by the screen; `GlobalKeyMap` still intercepts `/` and `?`.
 
 | Key               | Effect                                                                              |
 |-------------------|-------------------------------------------------------------------------------------|
-| `Tab` / `Shift+Tab` (or `BackTab`) | Cycle the **main** tab bar forward / backward.                      |
-| `]` / `[`         | Cycle the **sub** tab bar forward / backward (only when visible).                   |
-| Arrow keys on Overview | Left/Right cycles main tabs; Up/Down scroll the Overview body.                 |
-| Arrow keys on list tabs (Transactions, Tokens, Token/Transfers, Contract/Events) | Up/Down navigate rows. |
+| `Tab` / `Shift+Tab` (or `BackTab`) | With focus on body or **main** tab strip: cycle **main** tabs. With focus on **sub** tab strip: cycle **sub** tabs only. |
+| `←` / `→`         | When **main** tab strip is focused: previous / next main tab. When **sub** strip is focused: previous / next sub-tab. |
+| `↑` / `↓`         | Move focus between main strip → sub strip (if any) → body; in body, arrows keep cursor / list / scroll semantics; `↑` at list top promotes focus upward. |
+| `]` / `[`         | Cycle the **sub** tab bar forward / backward (only when visible), from any focus layer. |
+| Arrow keys on Overview | With **body** focus: field cursor / scroll (`k`/`j` unchanged).                |
+| Arrow keys on list tabs (Transactions, Tokens, Token/Transfers, Contract/Events) | With **body** focus: Up/Down navigate rows. |
 | `q`               | `Command::Quit`.                                                                     |
 | `Esc`             | `Command::Pop`, protected by the Home-root guard shipped in Slice 1.                |
 | `Enter`           | Open the selected row (Transactions → TxDetail, Tokens/holdings → AddressDetail for the contract, Token/Transfers → TxDetail). |

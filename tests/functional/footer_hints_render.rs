@@ -86,7 +86,15 @@ fn address_detail_footer_advertises_tab_cursor_enter_and_copy() {
     let buffer = render(&screen, 120, 30);
     let footer = footer_row(&buffer);
     for needle in [
-        "[Tab]", "Tabs", "[Arrows]", "Cursor", "[y]", "Copy", "[Esc]",
+        "[Tab]",
+        "Tabs",
+        "[←/→]",
+        "Tab row",
+        "[↑/↓]",
+        "Focus",
+        "[y]",
+        "Copy",
+        "[Esc]",
     ] {
         assert!(
             footer.contains(needle),
@@ -138,7 +146,8 @@ fn block_detail_footer_lists_navigation_and_copy_hints() {
         "[Tab]",
         "Prev block",
         "Next block",
-        "[Arrows]",
+        "[←/→]",
+        "[↑/↓]",
         "[Enter]",
         "[y]",
         "[Y]",
@@ -189,7 +198,7 @@ fn tx_detail_footer_lists_tab_copy_simulate_back() {
     sender.updates_tx.send(TxView::bare(sample_tx())).unwrap();
     screen.tick();
 
-    let buffer = render(&screen, 120, 30);
+    let buffer = render(&screen, 160, 30);
     let footer = footer_row(&buffer);
     for needle in ["[Tab]", "[y]", "[s]", "Re-simulate", "[Esc]"] {
         assert!(

@@ -194,8 +194,10 @@ Transfers, Chart.
 
 | Tecla              | Ação                                                        |
 |--------------------|-------------------------------------------------------------|
-| `Tab` / `Shift-Tab` | Próxima / anterior aba principal                           |
-| `[` / `]`          | Anterior / próxima sub-aba (em Contract ou Token)           |
+| `Tab` / `Shift-Tab` | Com foco no corpo ou na faixa de abas principais: próxima / anterior aba principal. Com foco na faixa de **sub-abas**: próxima / anterior sub-aba |
+| `←` / `→`          | Só quando o foco está na faixa de abas principais ou de sub-abas: muda aba principal ou sub-aba, respetivamente |
+| `↑` / `↓`          | Move o foco entre faixa principal → sub-abas (se existirem) → corpo; no corpo, `↑` no topo de listas (ou no cursor de campos) sobe o foco para as faixas |
+| `[` / `]`          | Anterior / próxima sub-aba (em Contract ou Token), em qualquer nível de foco |
 | `1` / `2` / `3`    | Janela do gráfico de preço na sub-aba `Token` → `Chart` (`1d` / `1m` / `1y`) |
 | `y`                | Copia o endereço em hex (ou o valor sob o cursor)           |
 | `Y`                | Copia o nome ENS (ou hex se não houver ENS)                 |
@@ -222,9 +224,10 @@ você consegue digitar argumentos numéricos sem trocar de sub-aba.
 
 | Tecla       | Ação                                          |
 |-------------|-----------------------------------------------|
-| `Tab`/`Shift-Tab` | Cicla entre as abas                      |
+| `Tab`/`Shift-Tab` | Cicla as abas principais (foco no corpo ou na faixa de abas) |
+| `←`/`→`     | Só com foco na faixa de abas: aba anterior / seguinte |
+| `↑`/`↓`     | Com foco na faixa: entra no corpo ou sobe do corpo; na aba Transactions move a seleção |
 | `[` / `]`   | Bloco anterior / próximo                      |
-| `↑`/`↓`     | Move a seleção na aba Transactions            |
 | `Enter`     | Abre a tx selecionada                         |
 | `y`         | Copia hash do bloco (Overview/Blobs) ou hash da tx selecionada (Transactions) |
 | `Y`         | Copia o número do bloco                       |
@@ -248,9 +251,9 @@ você consegue digitar argumentos numéricos sem trocar de sub-aba.
 
 | Tecla                | Ação                                                 |
 |----------------------|------------------------------------------------------|
-| `Tab` / `Shift-Tab`  | Cicla entre as abas                                  |
-| `←` / `→`            | Também ciclam abas (exceto na Overview, onde entram no cursor) |
-| `↑`/`↓` ou `j`/`k`   | Rolagem ou seleção                                   |
+| `Tab` / `Shift-Tab`  | Cicla as abas principais (foco no corpo)             |
+| `←` / `→`            | Só com foco na faixa de abas: aba anterior / seguinte |
+| `↑`/`↓` ou `j`/`k`   | No corpo: seleção / scroll; `↑` no topo sobe o foco para a faixa de abas; `j`/`k` mantêm ciclo em várias vistas |
 | `PageUp`/`PageDown`  | Rolagem por página                                   |
 | `y`                  | Copia a linha selecionada (Overview) ou o hash da tx |
 | `s`                  | Re-simula a tx (apenas quando pending)               |

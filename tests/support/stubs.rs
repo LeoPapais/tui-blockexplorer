@@ -20,10 +20,10 @@ use blockexplorer_tui::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
             BlockReceiptsPort, ChainRegistryPort, ClipboardPort, Clock, ContractReaderPort,
             ContractSourcePort, EnsResolverPort, EventLogPort, GasOraclePort, LabelPort,
-            NetworkStatusPort, NewHeadsStreamPort, PortfolioPort, PricesPort,
-            ProxyDetectionPort, Rng, SignatureDirectoryPort, SignatureHit, StoragePort,
-            TokenPriceStreamPort, TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort,
-            TxReaderPort, TxSimulationPort, TxTracePort,
+            NetworkStatusPort, NewHeadsStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
+            Rng, SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
+            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
+            TxSimulationPort, TxTracePort,
         },
     },
     domain::{
@@ -31,9 +31,8 @@ use blockexplorer_tui::{
         BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode, Chain,
         ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
         NavigableValue, NetworkStatus, NewHead, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
-        StateDiff, TokenHolding, TokenMetadata,
-        TokenOverview, TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary,
-        Wei,
+        StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
+        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use serde::Deserialize;

@@ -109,6 +109,27 @@ The cursor is deliberately a 1-D index into a reading-order `Vec<FieldEntry>`:
 Visual layout nuances (multi-column forms, etc.) are honoured by the
 screen populating `fields()` in reading order.
 
+### 4.1 Hierarchical `DetailFocusLayer` (main tabs, sub-tabs, body)
+
+`src/adapters/ui/detail_focus.rs` defines `DetailFocusLayer` (`MainTabs`,
+`Subtabs`, `Content`) plus `tab_strip_border_style`,
+`tab_strip_highlight_style`, and `detail_body_border_style` backed by
+`Palette` semantic tokens (`PalettePreset::DarkDefault` until Settings
+threads the live palette into detail screens).
+
+BlockDetail, TxDetail, and AddressDetail default focus to `Content`.
+`←` / `→` change main or sub tabs **only** while that strip is focused;
+with body focus, arrows keep their per-widget meaning (`FieldCursor`,
+lists, scroll). `↑` from the top of several list views (and from
+saturated overview rows) moves focus up to the tab strip(s); `↓` from
+a focused main tab strip enters sub-tabs when the active main tab has a
+sub-row, otherwise the body. `Tab` / `Shift+Tab` cycle **main** tabs when
+body or main-strip focus is active; when **sub-tab** strip focus is
+active they cycle **sub** tabs only. AddressDetail keeps `[` / `]` as
+sub-tab shortcuts from any layer.
+
+Functional coverage: `tests/functional/detail_focus_navigation.rs`.
+
 ## 5. Adapters
 
 ### 5.1 Production clipboard (`src/adapters/clipboard/arboard.rs`)
@@ -206,6 +227,9 @@ On every screen that opts in:
   `right_arrow_moves_to_next_field_in_reading_order`,
   `down_arrow_advances`, `wrap_around_at_edges_is_a_noop`,
   `esc_deactivates_cursor_without_popping_screen`).
+* `detail_focus_navigation.rs` — `DetailFocusLayer` transitions on
+  BlockDetail, AddressDetail, and TxDetail (`↑` from first tx row,
+  Transactions tab, Overview row 0).
 * `arboard_clipboard.rs` — one `#[ignore]` test documenting the real
   arboard path and one graceful-degradation test that injects a failing
   factory.
