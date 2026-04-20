@@ -88,9 +88,6 @@ mod load_contract_events_page;
 #[path = "functional/highlight_solidity.rs"]
 mod highlight_solidity;
 
-#[path = "functional/contract_detail_source_highlight.rs"]
-mod contract_detail_source_highlight;
-
 #[path = "functional/alchemy_proxy_detector.rs"]
 mod alchemy_proxy_detector;
 
@@ -222,9 +219,6 @@ mod load_block_withdrawals;
 
 #[path = "functional/token_price_stream.rs"]
 mod token_price_stream;
-
-#[path = "functional/token_detail_screen_keys.rs"]
-mod token_detail_screen_keys;
 
 #[path = "functional/gas_unit_conversion.rs"]
 mod gas_unit_conversion;

@@ -1,68 +1,120 @@
-//! Address Detail screen.
+//! Address Detail screen (unified — see plan/16).
 //!
-//! Renders Overview + Transactions tabs today; Tokens and Contract
-//! tabs land in the follow-up commits of the plan-6 expansion
-//! (`plan/6-address-detail.md` section 12.4).
+//! Single screen that replaces the three previous detail screens
+//! (`AddressDetailScreen`, `ContractDetailScreen`,
+//! `TokenDetailScreen`). Main tabs adapt to the loaded address:
 //!
-//! Overview summarises balance + kind + nonce + ENS hint. The
-//! Transactions tab consumes a `TransferPage` fed by a background
-//! task and exposes a selectable list; pressing Enter on a row
-//! pushes a TxDetail screen through the supplied `OpenTxFactory`.
+//! - **EOA**: `Overview`, `Transactions`, `Tokens`.
+//! - **Plain contract**: same three + `Contract` (sub-tabs Source,
+//!   ABI, Read, Events, Storage — the `Contract/Overview` sub-tab
+//!   keeps the contract dossier with proxy + compiler metadata).
+//! - **ERC-20**: same four + `Token` (sub-tabs Overview, Transfers,
+//!   Chart).
+//!
+//! Sub-tabs draw as a second tabs row below the main tabs row when
+//! `active_tab` is `Contract` or `Token`. `Tab`/`Shift+Tab` cycle
+//! the main tabs; `]`/`[` cycle the sub-tabs.
+//!
+//! The screen owns every channel that fed the three prior screens.
+//! See `plan/16-unified-address-detail.md` §4–§6 for the data
+//! plumbing and the lazy-dispatch rules followed by
+//! `src/infra/address_feed::spawn`.
 
-use std::any::Any;
+use std::{any::Any, collections::HashMap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
+    symbols,
+    text::{Line, Span},
+    widgets::{
+        Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, ListState, Paragraph,
+        Tabs, Wrap,
+    },
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        highlight::highlight_solidity,
         screen::{Command, Screen},
-        token_detail::render_inline_token_panel,
+        scroll::ScrollState,
     },
     domain::{
-        Address, AddressKind, AddressOverview, Chain, PriceLookup, PriceSeries, PriceWindow,
-        TokenHolding, TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage,
-        TxHash,
+        AbiFunction, AbiParamType, AbiValue, Address, AddressKind, AddressOverview, BlockNumber,
+        Chain, ContractOverview, ContractSource, DecodedValue, DomainError, EventsPage,
+        NftKind, PriceLookup, PricePoint, PriceSeries, PriceWindow, SourceFile, TokenHolding,
+        TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash,
+        parse_abi_functions,
     },
 };
 
 // ---------------------------------------------------------------------------
-// Channels
+// On-demand requests (formerly lived in src/adapters/ui/contract_detail.rs)
 // ---------------------------------------------------------------------------
 
-/// Channel half owned by the screen.
-///
-/// `token_overview_rx` / `token_price_rx` / `token_series_rx` feed
-/// the inline Token tab that appears only when the address happens
-/// to be an ERC-20 contract. See `plan/6-address-detail.md` section
-/// 12.4.4.
+/// Single-request envelope for the Read sub-tab.
+#[derive(Debug, Clone)]
+pub struct ReadRequest {
+    pub function: AbiFunction,
+    pub args: Vec<AbiValue>,
+}
+
+/// Result of a single read invocation.
+pub type ReadResult = Result<Vec<DecodedValue>, DomainError>;
+
+/// Request shape for the Events sub-tab.
+#[derive(Debug, Clone, Copy)]
+pub struct EventsRequest {
+    pub head_hint: Option<BlockNumber>,
+    pub offset: u32,
+}
+
+/// Result of a single Events sub-tab refresh.
+pub type EventsResult = Result<EventsPage, DomainError>;
+
+/// Request shape for the Storage sub-tab.
+#[derive(Debug, Clone)]
+pub struct StorageRequest {
+    pub slot: [u8; 32],
+}
+
+/// Result of a single Storage sub-tab read.
+pub type StorageResult = Result<[u8; 32], DomainError>;
+
+// ---------------------------------------------------------------------------
+// Feed / sender
+// ---------------------------------------------------------------------------
+
+/// Channel half owned by the screen. The UI drains every `*_rx`
+/// inside `tick`, and emits requests on every `*_tx` in response to
+/// keypresses. See plan/16 §4.
 pub struct AddressFeed {
     pub input_tx: UnboundedSender<Address>,
+    // Always-on channels.
     pub updates_rx: UnboundedReceiver<AddressOverview>,
     pub transfers_rx: UnboundedReceiver<TransferPage>,
     pub portfolio_rx: UnboundedReceiver<Vec<TokenHolding>>,
-    /// `Some(overview)` when the address is detected as an ERC-20
-    /// contract; `None` means "probed and not a token" (the feed
-    /// sends `None` explicitly to flip the tri-state).
+    // ERC-20 gated.
     pub token_overview_rx: UnboundedReceiver<Option<TokenOverview>>,
-    /// Spot-price status for the ERC-20 token. See
-    /// `plan/15-backlog.md` §3.4: `PriceLookup` carries the
-    /// `Available` / `Unsupported` / `Pending` branches the UI
-    /// needs to distinguish.
     pub token_price_rx: UnboundedReceiver<PriceLookup>,
-    /// Historical series for the inline mini-chart (default window
-    /// is `PriceWindow::D1`).
     pub token_series_rx: UnboundedReceiver<PriceSeries>,
+    pub token_window_req_tx: UnboundedSender<PriceWindow>,
+    pub token_transfers_rx: UnboundedReceiver<TransferPage>,
+    // Contract gated.
+    pub contract_overview_rx: UnboundedReceiver<ContractOverview>,
+    pub source_rx: UnboundedReceiver<ContractSource>,
+    pub read_tx: UnboundedSender<ReadRequest>,
+    pub read_rx: UnboundedReceiver<ReadResult>,
+    pub events_tx: UnboundedSender<EventsRequest>,
+    pub events_rx: UnboundedReceiver<EventsResult>,
+    pub storage_tx: UnboundedSender<StorageRequest>,
+    pub storage_rx: UnboundedReceiver<StorageResult>,
 }
 
-/// Channel half owned by the background tasks.
+/// Channel half owned by the background task.
 pub struct AddressFeedSender {
     pub updates_tx: UnboundedSender<AddressOverview>,
     pub transfers_tx: UnboundedSender<TransferPage>,
@@ -70,6 +122,16 @@ pub struct AddressFeedSender {
     pub token_overview_tx: UnboundedSender<Option<TokenOverview>>,
     pub token_price_tx: UnboundedSender<PriceLookup>,
     pub token_series_tx: UnboundedSender<PriceSeries>,
+    pub token_window_req_rx: UnboundedReceiver<PriceWindow>,
+    pub token_transfers_tx: UnboundedSender<TransferPage>,
+    pub contract_overview_tx: UnboundedSender<ContractOverview>,
+    pub source_tx: UnboundedSender<ContractSource>,
+    pub read_rx: UnboundedReceiver<ReadRequest>,
+    pub read_tx: UnboundedSender<ReadResult>,
+    pub events_rx: UnboundedReceiver<EventsRequest>,
+    pub events_tx: UnboundedSender<EventsResult>,
+    pub storage_rx: UnboundedReceiver<StorageRequest>,
+    pub storage_tx: UnboundedSender<StorageResult>,
     pub input_rx: UnboundedReceiver<Address>,
 }
 
@@ -82,6 +144,16 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
     let (token_overview_tx, token_overview_rx) = unbounded_channel();
     let (token_price_tx, token_price_rx) = unbounded_channel();
     let (token_series_tx, token_series_rx) = unbounded_channel();
+    let (token_window_req_tx, token_window_req_rx) = unbounded_channel();
+    let (token_transfers_tx, token_transfers_rx) = unbounded_channel();
+    let (contract_overview_tx, contract_overview_rx) = unbounded_channel();
+    let (source_tx, source_rx) = unbounded_channel();
+    let (read_req_tx, read_req_rx) = unbounded_channel();
+    let (read_res_tx, read_res_rx) = unbounded_channel();
+    let (events_req_tx, events_req_rx) = unbounded_channel();
+    let (events_res_tx, events_res_rx) = unbounded_channel();
+    let (storage_req_tx, storage_req_rx) = unbounded_channel();
+    let (storage_res_tx, storage_res_rx) = unbounded_channel();
     (
         AddressFeed {
             input_tx,
@@ -91,6 +163,16 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
             token_overview_rx,
             token_price_rx,
             token_series_rx,
+            token_window_req_tx,
+            token_transfers_rx,
+            contract_overview_rx,
+            source_rx,
+            read_tx: read_req_tx,
+            read_rx: read_res_rx,
+            events_tx: events_req_tx,
+            events_rx: events_res_rx,
+            storage_tx: storage_req_tx,
+            storage_rx: storage_res_rx,
         },
         AddressFeedSender {
             updates_tx,
@@ -99,26 +181,34 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
             token_overview_tx,
             token_price_tx,
             token_series_tx,
+            token_window_req_rx,
+            token_transfers_tx,
+            contract_overview_tx,
+            source_tx,
+            read_rx: read_req_rx,
+            read_tx: read_res_tx,
+            events_rx: events_req_rx,
+            events_tx: events_res_tx,
+            storage_rx: storage_req_rx,
+            storage_tx: storage_res_tx,
             input_rx,
         },
     )
 }
 
-/// Factory used by the Transactions tab to spawn a TxDetail screen
-/// when the user presses Enter on a row.
+/// Factory used by list-based tabs to spawn a TxDetail screen when
+/// the user presses Enter on a row.
 pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 
-/// Factory used by the Tokens tab to spawn a TokenDetail screen
-/// when the user presses Enter on a row.
+/// Factory used by the Tokens main tab (and by the Token/Transfers
+/// sub-tab) to open another AddressDetail when the user presses
+/// Enter on a holding. Kept under the old "token" name so existing
+/// BDD helpers keep compiling; the returned screen is always an
+/// `AddressDetailScreen`.
 pub type OpenTokenFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
 
-/// Factory used by the Contract tab to spawn a ContractDetailScreen
-/// when the user presses Enter. Only consulted when the loaded
-/// `AddressOverview.kind` is `Contract`.
-pub type OpenContractFactory = Box<dyn Fn(Address) -> Box<dyn Screen> + Send + Sync>;
-
 // ---------------------------------------------------------------------------
-// Tabs
+// Tabs / sub-tabs
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,12 +216,9 @@ pub enum AddressTab {
     Overview,
     Transactions,
     Tokens,
-    /// Only rendered when the address is detected as an ERC-20
-    /// contract (see `token_overview` tri-state). Embeds the Token
-    /// summary panel (symbol/supply/price/market cap + mini-chart)
-    /// inline.
+    /// Visible only when the ERC-20 probe confirmed `IsToken`.
     Token,
-    /// Only rendered when `AddressOverview.kind` is `Contract`.
+    /// Visible only when the loaded overview reports `Contract`.
     Contract,
 }
 
@@ -147,18 +234,110 @@ impl AddressTab {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractSubTab {
+    Overview,
+    Source,
+    Abi,
+    Read,
+    Events,
+    Storage,
+}
+
+impl ContractSubTab {
+    const ALL: [ContractSubTab; 6] = [
+        ContractSubTab::Overview,
+        ContractSubTab::Source,
+        ContractSubTab::Abi,
+        ContractSubTab::Read,
+        ContractSubTab::Events,
+        ContractSubTab::Storage,
+    ];
+
+    fn index(self) -> usize {
+        match self {
+            ContractSubTab::Overview => 0,
+            ContractSubTab::Source => 1,
+            ContractSubTab::Abi => 2,
+            ContractSubTab::Read => 3,
+            ContractSubTab::Events => 4,
+            ContractSubTab::Storage => 5,
+        }
+    }
+
+    fn next(self) -> Self {
+        Self::ALL[(self.index() + 1) % Self::ALL.len()]
+    }
+
+    fn previous(self) -> Self {
+        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ContractSubTab::Overview => "Overview",
+            ContractSubTab::Source => "Source",
+            ContractSubTab::Abi => "ABI",
+            ContractSubTab::Read => "Read",
+            ContractSubTab::Events => "Events",
+            ContractSubTab::Storage => "Storage",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenSubTab {
+    Overview,
+    Transfers,
+    Chart,
+}
+
+impl TokenSubTab {
+    pub const ALL: [TokenSubTab; 3] = [
+        TokenSubTab::Overview,
+        TokenSubTab::Transfers,
+        TokenSubTab::Chart,
+    ];
+
+    fn index(self) -> usize {
+        match self {
+            TokenSubTab::Overview => 0,
+            TokenSubTab::Transfers => 1,
+            TokenSubTab::Chart => 2,
+        }
+    }
+
+    fn next(self) -> Self {
+        Self::ALL[(self.index() + 1) % Self::ALL.len()]
+    }
+
+    fn previous(self) -> Self {
+        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            TokenSubTab::Overview => "Overview",
+            TokenSubTab::Transfers => "Transfers",
+            TokenSubTab::Chart => "Chart",
+        }
+    }
+}
+
 /// Tri-state for the inline Token tab.
 #[derive(Debug, Clone, PartialEq)]
 enum TokenProbeState {
-    /// The address is an EOA or the ERC-20 probe has not completed
-    /// yet; the tab must stay hidden.
     Unknown,
-    /// The address is a contract but the ERC-20 probe returned
-    /// `Ok(None)`; tab stays hidden.
     NotToken,
-    /// The probe succeeded: the tab is visible and renders this
-    /// overview.
     IsToken(TokenOverview),
+}
+
+/// Focus within the Read sub-tab: the function picker on the left,
+/// or the argument editor on the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadFocus {
+    FunctionList,
+    Args,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,48 +348,65 @@ pub struct AddressDetailScreen {
     #[allow(dead_code)]
     chain: Chain,
     address: Address,
+
     current: Option<AddressOverview>,
     transfers: Option<TransferPage>,
     holdings: Option<Vec<TokenHolding>>,
-    /// Tri-state: see [`TokenProbeState`]. Controls visibility of
-    /// the `AddressTab::Token` tab.
+
+    // Token-gated state.
     token_probe: TokenProbeState,
-    /// Spot-price status for the inline Token tab. See
-    /// `plan/15-backlog.md` §3.4.
     token_price: PriceLookup,
-    /// Historical series for the inline mini-chart (D1 only in MVP).
-    token_series: Option<PriceSeries>,
+    token_series: HashMap<PriceWindow, PriceSeries>,
+    token_transfers: Option<TransferPage>,
+    active_token_window: PriceWindow,
+    live_samples: usize,
+
+    // Contract-gated state.
+    contract_overview: Option<ContractOverview>,
+    source: Option<ContractSource>,
+    functions: Vec<AbiFunction>,
+    function_list_state: ListState,
+    file_list_state: ListState,
+    read_focus: ReadFocus,
+    arg_buffers: Vec<String>,
+    arg_cursor: usize,
+    last_result: Option<Result<Vec<DecodedValue>, String>>,
+    last_result_for: Option<String>,
+    events: Option<Result<EventsPage, String>>,
+    events_offset: u32,
+    events_head: Option<BlockNumber>,
+    events_requested: bool,
+    slot_buffer: String,
+    storage_result: Option<Result<[u8; 32], String>>,
+    storage_slot_requested: Option<[u8; 32]>,
+
+    // UI state.
     feed: AddressFeed,
     active_tab: AddressTab,
+    active_contract_sub: ContractSubTab,
+    active_token_sub: TokenSubTab,
     scroll: u16,
-    /// Upper bound on `scroll` for the currently rendered Overview
-    /// body, refreshed on every render; used to stop `handle_key`
-    /// from scrolling past the last visible row (plan 13.3).
     scroll_cap: std::cell::Cell<u16>,
+    contract_scroll: std::cell::Cell<ScrollState>,
+
     tx_list_state: ListState,
     token_list_state: ListState,
+    token_transfers_list_state: ListState,
+
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
-    open_contract: Option<OpenContractFactory>,
-    /// Latest value produced by the `y` / `Y` / `e` bindings. A real
-    /// OS clipboard adapter stays deferred (see `plan/3-block-detail.md`
-    /// §12.1 and `plan/15-backlog.md` §8.16); the field lets tests
-    /// inspect the payload without any terminal wiring. Mirrors
-    /// `BlockDetailScreen::last_copied_value`.
     last_copied_value: Option<String>,
 }
 
 impl AddressDetailScreen {
-    /// Build a screen in the loading state for `address`. The address
-    /// is pushed through the input channel so the background task
-    /// starts fetching immediately.
+    /// Loading constructor without any factories wired.
     #[must_use]
     pub fn loading(chain: Chain, address: Address, feed: AddressFeed) -> Self {
-        Self::with_factories(chain, address, feed, None, None, None)
+        Self::with_factories_and_tab(chain, address, feed, None, None, AddressTab::Overview)
     }
 
-    /// Same as [`loading`] but wires the Transactions tab to open a
-    /// TxDetail screen when the user hits Enter on a row.
+    /// Loading constructor that wires Enter on the Transactions /
+    /// Token-Transfers lists to a TxDetail factory.
     #[must_use]
     pub fn with_open_tx(
         chain: Chain,
@@ -218,13 +414,10 @@ impl AddressDetailScreen {
         feed: AddressFeed,
         open_tx: Option<OpenTxFactory>,
     ) -> Self {
-        Self::with_factories(chain, address, feed, open_tx, None, None)
+        Self::with_factories_and_tab(chain, address, feed, open_tx, None, AddressTab::Overview)
     }
 
-    /// Fully-wired constructor: Enter on the Transactions tab opens a
-    /// TxDetail, Enter on the Tokens tab opens a TokenDetail, Enter
-    /// on the Contract tab (only visible when kind == Contract) opens
-    /// a ContractDetailScreen.
+    /// Fully-wired constructor (default main tab = Overview).
     #[must_use]
     pub fn with_factories(
         chain: Chain,
@@ -232,13 +425,35 @@ impl AddressDetailScreen {
         feed: AddressFeed,
         open_tx: Option<OpenTxFactory>,
         open_token: Option<OpenTokenFactory>,
-        open_contract: Option<OpenContractFactory>,
+    ) -> Self {
+        Self::with_factories_and_tab(chain, address, feed, open_tx, open_token, AddressTab::Overview)
+    }
+
+    /// Fully-wired constructor with an initial main tab. The tab is
+    /// applied blindly even before the overview has loaded: if the
+    /// tab is not in `visible_tabs()` yet, rendering falls back to
+    /// the first visible tab until the feeds confirm the tab is
+    /// available.
+    #[must_use]
+    pub fn with_factories_and_tab(
+        chain: Chain,
+        address: Address,
+        feed: AddressFeed,
+        open_tx: Option<OpenTxFactory>,
+        open_token: Option<OpenTokenFactory>,
+        initial_tab: AddressTab,
     ) -> Self {
         let _ = feed.input_tx.send(address);
         let mut tx_list_state = ListState::default();
         tx_list_state.select(Some(0));
         let mut token_list_state = ListState::default();
         token_list_state.select(Some(0));
+        let mut token_transfers_list_state = ListState::default();
+        token_transfers_list_state.select(Some(0));
+        let mut function_list_state = ListState::default();
+        function_list_state.select(Some(0));
+        let mut file_list_state = ListState::default();
+        file_list_state.select(Some(0));
         Self {
             chain,
             address,
@@ -247,34 +462,49 @@ impl AddressDetailScreen {
             holdings: None,
             token_probe: TokenProbeState::Unknown,
             token_price: PriceLookup::Pending,
-            token_series: None,
+            token_series: HashMap::new(),
+            token_transfers: None,
+            active_token_window: PriceWindow::D1,
+            live_samples: 0,
+            contract_overview: None,
+            source: None,
+            functions: Vec::new(),
+            function_list_state,
+            file_list_state,
+            read_focus: ReadFocus::FunctionList,
+            arg_buffers: Vec::new(),
+            arg_cursor: 0,
+            last_result: None,
+            last_result_for: None,
+            events: None,
+            events_offset: 0,
+            events_head: None,
+            events_requested: false,
+            slot_buffer: "0".to_string(),
+            storage_result: None,
+            storage_slot_requested: None,
             feed,
-            active_tab: AddressTab::Overview,
+            active_tab: initial_tab,
+            active_contract_sub: ContractSubTab::Overview,
+            active_token_sub: TokenSubTab::Overview,
             scroll: 0,
             scroll_cap: std::cell::Cell::new(0),
+            contract_scroll: std::cell::Cell::new(ScrollState::new()),
             tx_list_state,
             token_list_state,
+            token_transfers_list_state,
             open_tx,
             open_token,
-            open_contract,
             last_copied_value: None,
         }
     }
 
-    /// Tabs currently visible in the tab bar. Contract is included
-    /// only when the loaded overview reports `AddressKind::Contract`.
-    /// Token is included only when the ERC-20 probe resolved
-    /// positively (see `plan/6-address-detail.md` section 12.4.4).
     fn visible_tabs(&self) -> Vec<AddressTab> {
         let mut tabs = vec![
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Tokens,
         ];
-        // Inline Token tab: only shown once we have a confirmed
-        // ERC-20 TokenOverview in hand. Sits between Tokens
-        // (portfolio) and Contract so all contract-specific tabs
-        // cluster together.
         if matches!(self.token_probe, TokenProbeState::IsToken(_)) {
             tabs.push(AddressTab::Token);
         }
@@ -286,21 +516,33 @@ impl AddressDetailScreen {
         tabs
     }
 
+    fn active_tab_or_fallback(&self) -> AddressTab {
+        let tabs = self.visible_tabs();
+        if tabs.contains(&self.active_tab) {
+            self.active_tab
+        } else {
+            tabs.first().copied().unwrap_or(AddressTab::Overview)
+        }
+    }
+
     fn next_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
-        tabs[(current_idx + 1) % tabs.len()]
+        let idx = tabs
+            .iter()
+            .position(|&t| t == self.active_tab)
+            .unwrap_or(0);
+        tabs[(idx + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let current_idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
-        tabs[(current_idx + tabs.len() - 1) % tabs.len()]
+        let idx = tabs
+            .iter()
+            .position(|&t| t == self.active_tab)
+            .unwrap_or(0);
+        tabs[(idx + tabs.len() - 1) % tabs.len()]
     }
 
-    /// Public accessor so BDD scenarios can assert the tab bar
-    /// composition (e.g. the Contract tab only appears for contract
-    /// addresses).
     #[must_use]
     pub fn tabs(&self) -> Vec<AddressTab> {
         self.visible_tabs()
@@ -326,8 +568,16 @@ impl AddressDetailScreen {
         self.active_tab
     }
 
-    /// Inline Token overview recognised for this address, if any.
-    /// Exposed so BDD scenarios can assert without downcasting.
+    #[must_use]
+    pub fn active_contract_sub(&self) -> ContractSubTab {
+        self.active_contract_sub
+    }
+
+    #[must_use]
+    pub fn active_token_sub(&self) -> TokenSubTab {
+        self.active_token_sub
+    }
+
     #[must_use]
     pub fn token_overview(&self) -> Option<&TokenOverview> {
         match &self.token_probe {
@@ -336,54 +586,141 @@ impl AddressDetailScreen {
         }
     }
 
-    /// Spot price for the inline Token tab, if the lookup resolved
-    /// to `PriceLookup::Available`. Returns `None` for both
-    /// `Unsupported` and `Pending` to mirror the previous shape.
     #[must_use]
     pub fn token_price(&self) -> Option<&TokenPrice> {
         self.token_price.as_available()
     }
 
-    /// Full [`PriceLookup`] status for the inline Token tab. See
-    /// `plan/15-backlog.md` §3.4.
     #[must_use]
     pub fn token_price_lookup(&self) -> &PriceLookup {
         &self.token_price
     }
 
-    /// Historical series (D1 window) feeding the inline mini-chart.
     #[must_use]
     pub fn token_series(&self) -> Option<&PriceSeries> {
-        self.token_series.as_ref()
+        self.token_series.get(&self.active_token_window)
     }
 
-    /// Current selection index in the active list tab, clamped to the
-    /// available rows. Returns 0 when the list is empty.
+    #[must_use]
+    pub fn active_window(&self) -> PriceWindow {
+        self.active_token_window
+    }
+
+    #[must_use]
+    pub fn token_transfers(&self) -> Option<&TransferPage> {
+        self.token_transfers.as_ref()
+    }
+
+    #[must_use]
+    pub fn live_samples_count(&self) -> usize {
+        self.live_samples
+    }
+
+    #[must_use]
+    pub fn is_incomplete_badge_active(&self) -> bool {
+        match &self.token_probe {
+            TokenProbeState::IsToken(ov) => ov.is_incomplete(),
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn contract_overview(&self) -> Option<&ContractOverview> {
+        self.contract_overview.as_ref()
+    }
+
+    #[must_use]
+    pub fn source(&self) -> Option<&ContractSource> {
+        self.source.as_ref()
+    }
+
+    /// Test helper: Events sub-tab row count once loaded.
+    #[must_use]
+    pub fn events_count(&self) -> Option<usize> {
+        match self.events.as_ref() {
+            Some(Ok(page)) => Some(page.logs.len()),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn events_offset(&self) -> u32 {
+        self.events_offset
+    }
+
+    #[must_use]
+    pub fn events_window(&self) -> Option<(u64, u64)> {
+        match self.events.as_ref() {
+            Some(Ok(page)) => Some((page.window_from.value(), page.window_to.value())),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn last_result_matches_uint(&self, expected: u128) -> bool {
+        match self.last_result.as_ref() {
+            Some(Ok(values)) if values.len() == 1 => {
+                matches!(values[0], DecodedValue::Uint(v) if v == expected)
+            }
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn last_result_is_error_containing(&self, needle: &str) -> bool {
+        matches!(self.last_result.as_ref(), Some(Err(msg)) if msg.contains(needle))
+    }
+
+    #[must_use]
+    pub fn storage_value_u128(&self) -> Option<u128> {
+        let Some(Ok(word)) = self.storage_result.as_ref() else {
+            return None;
+        };
+        if word[..16].iter().any(|b| *b != 0) {
+            return None;
+        }
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&word[16..]);
+        Some(u128::from_be_bytes(buf))
+    }
+
     #[must_use]
     pub fn selected(&self) -> usize {
         self.active_list_state().selected().unwrap_or(0)
     }
 
     fn active_list_state(&self) -> &ListState {
-        match self.active_tab {
+        match self.active_tab_or_fallback() {
             AddressTab::Tokens => &self.token_list_state,
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
+                &self.token_transfers_list_state
+            }
             _ => &self.tx_list_state,
         }
     }
 
     fn active_list_state_mut(&mut self) -> &mut ListState {
-        match self.active_tab {
+        match self.active_tab_or_fallback() {
             AddressTab::Tokens => &mut self.token_list_state,
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
+                &mut self.token_transfers_list_state
+            }
             _ => &mut self.tx_list_state,
         }
     }
 
     fn active_list_len(&self) -> usize {
-        match self.active_tab {
+        match self.active_tab_or_fallback() {
             AddressTab::Transactions => {
                 self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0)
             }
             AddressTab::Tokens => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
+                self.token_transfers
+                    .as_ref()
+                    .map(|p| p.events.len())
+                    .unwrap_or(0)
+            }
             _ => 0,
         }
     }
@@ -407,31 +744,86 @@ impl AddressDetailScreen {
             };
         }
         while let Ok(lookup) = self.feed.token_price_rx.try_recv() {
+            if let TokenProbeState::IsToken(ref mut ov) = self.token_probe {
+                ov.price = lookup.clone();
+            }
+            if let PriceLookup::Available(ref p) = lookup {
+                self.append_live_sample(p.clone());
+            }
             self.token_price = lookup;
         }
         while let Ok(series) = self.feed.token_series_rx.try_recv() {
-            self.token_series = Some(series);
+            self.token_series.insert(series.window, series);
         }
+        while let Ok(page) = self.feed.token_transfers_rx.try_recv() {
+            self.token_transfers = Some(page);
+            self.clamp_token_transfers_selection();
+        }
+        while let Ok(ov) = self.feed.contract_overview_rx.try_recv() {
+            self.contract_overview = Some(ov);
+        }
+        while let Ok(src) = self.feed.source_rx.try_recv() {
+            self.functions = parse_abi_functions(&src.abi);
+            self.functions.sort_by(|a, b| a.name.cmp(&b.name));
+            self.source = Some(src);
+            self.clamp_file_selection();
+            self.reset_args_for_current_fn();
+        }
+        while let Ok(result) = self.feed.read_rx.try_recv() {
+            self.last_result = Some(result.map_err(|e| domain_error_message(&e)));
+            self.last_result_for = self.selected_function().map(|f| f.signature());
+        }
+        while let Ok(result) = self.feed.events_rx.try_recv() {
+            if let Ok(page) = result.as_ref() {
+                self.events_head = Some(page.head);
+            }
+            self.events = Some(result.map_err(|e| domain_error_message(&e)));
+        }
+        while let Ok(result) = self.feed.storage_rx.try_recv() {
+            self.storage_result = Some(result.map_err(|e| domain_error_message(&e)));
+        }
+    }
+
+    fn append_live_sample(&mut self, price: TokenPrice) {
+        let window = self.active_token_window;
+        let entry = self
+            .token_series
+            .entry(window)
+            .or_insert_with(|| PriceSeries::empty(window));
+        entry.points.push(PricePoint {
+            at: price.as_of,
+            value: price.value,
+        });
+        let cap = PriceSeries::ROLLING_CAP;
+        if entry.points.len() > cap {
+            let excess = entry.points.len() - cap;
+            entry.points.drain(..excess);
+        }
+        self.live_samples = self.live_samples.saturating_add(1);
     }
 
     fn clamp_tx_selection(&mut self) {
         let len = self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0);
-        if len == 0 {
-            self.tx_list_state.select(None);
-            return;
-        }
-        let current = self.tx_list_state.selected().unwrap_or(0);
-        self.tx_list_state.select(Some(current.min(len - 1)));
+        clamp_selection(&mut self.tx_list_state, len);
     }
 
     fn clamp_token_selection(&mut self) {
         let len = self.holdings.as_ref().map(|h| h.len()).unwrap_or(0);
-        if len == 0 {
-            self.token_list_state.select(None);
-            return;
-        }
-        let current = self.token_list_state.selected().unwrap_or(0);
-        self.token_list_state.select(Some(current.min(len - 1)));
+        clamp_selection(&mut self.token_list_state, len);
+    }
+
+    fn clamp_token_transfers_selection(&mut self) {
+        let len = self
+            .token_transfers
+            .as_ref()
+            .map(|p| p.events.len())
+            .unwrap_or(0);
+        clamp_selection(&mut self.token_transfers_list_state, len);
+    }
+
+    fn clamp_file_selection(&mut self) {
+        let len = self.source.as_ref().map(|s| s.files.len()).unwrap_or(0);
+        clamp_selection(&mut self.file_list_state, len);
     }
 
     fn select_delta(&mut self, delta: i32) {
@@ -445,21 +837,11 @@ impl AddressDetailScreen {
         state.select(Some(next as usize));
     }
 
-    /// Latest value produced by the `y` / `Y` / `e` clipboard
-    /// bindings. Returns `None` until the user triggers a copy.
-    ///
-    /// Mirrors `BlockDetailScreen::last_copied_value`; an OS-backed
-    /// clipboard adapter stays deferred (see plan/15 §8.16).
     #[must_use]
     pub fn last_copied_value(&self) -> Option<&str> {
         self.last_copied_value.as_deref()
     }
 
-    /// Copy the hex address to the in-screen clipboard sink. No-op
-    /// while the overview is still loading — the address field is
-    /// populated from the initial `AddressDetailScreen::loading`
-    /// call, but we gate on the overview for symmetry with the
-    /// block-detail screen (`plan/3-block-detail.md` §12.1).
     fn copy_address_hex(&mut self) {
         if self.current.is_none() {
             return;
@@ -467,10 +849,6 @@ impl AddressDetailScreen {
         self.last_copied_value = Some(self.address.to_hex());
     }
 
-    /// Copy the ENS name when the loaded overview has one; otherwise
-    /// fall back to the hex address so the binding still feels
-    /// useful for wallets without a reverse record.
-    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
     fn copy_ens_or_address(&mut self) {
         let Some(ov) = self.current.as_ref() else {
             return;
@@ -481,15 +859,11 @@ impl AddressDetailScreen {
         });
     }
 
-    /// Serialise the currently-active tab into a CSV blob and land
-    /// it in `last_copied_value`. No filesystem I/O is performed —
-    /// the clipboard sink keeps the export testable end-to-end.
-    /// See `plan/6-address-detail.md` §11 and §8.7 in the backlog.
     fn copy_active_as_csv(&mut self) {
         if self.current.is_none() {
             return;
         }
-        let csv = match self.active_tab {
+        let csv = match self.active_tab_or_fallback() {
             AddressTab::Transactions => csv_for_transfers(self.transfers.as_ref()),
             AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
             AddressTab::Overview | AddressTab::Token | AddressTab::Contract => {
@@ -500,9 +874,9 @@ impl AddressDetailScreen {
     }
 
     // ------------------------------------------------------------------
-    // Test-only seeding helpers. The production feed populates these
-    // fields through `drain_feed`; functional tests for the key
-    // bindings use these setters to bypass the async runtime.
+    // Test-only seeding helpers. Production feeds populate these
+    // fields via `drain_feed`; the setters let functional tests
+    // bypass the async runtime.
     // ------------------------------------------------------------------
 
     #[doc(hidden)]
@@ -521,6 +895,157 @@ impl AddressDetailScreen {
         self.holdings = Some(holdings);
         self.clamp_token_selection();
     }
+
+    #[doc(hidden)]
+    pub fn set_token_overview_for_test(&mut self, overview: Option<TokenOverview>) {
+        self.token_probe = match overview {
+            Some(ov) => TokenProbeState::IsToken(ov),
+            None => TokenProbeState::NotToken,
+        };
+    }
+
+    #[doc(hidden)]
+    pub fn set_contract_source_for_test(&mut self, source: ContractSource) {
+        self.functions = parse_abi_functions(&source.abi);
+        self.functions.sort_by(|a, b| a.name.cmp(&b.name));
+        self.source = Some(source);
+        self.clamp_file_selection();
+        self.reset_args_for_current_fn();
+    }
+
+    // ------------------------------------------------------------------
+    // Contract Read helpers
+    // ------------------------------------------------------------------
+
+    fn selected_function(&self) -> Option<&AbiFunction> {
+        let idx = self.function_list_state.selected().unwrap_or(0);
+        self.functions.get(idx)
+    }
+
+    fn selected_file(&self) -> Option<&SourceFile> {
+        let files = self.source.as_ref().map(|s| &s.files)?;
+        let idx = self.file_list_state.selected().unwrap_or(0);
+        files.get(idx)
+    }
+
+    fn reset_args_for_current_fn(&mut self) {
+        let arg_count = self
+            .selected_function()
+            .map(|f| f.inputs.len())
+            .unwrap_or(0);
+        self.arg_buffers = vec![String::new(); arg_count];
+        self.arg_cursor = 0;
+        self.last_result = None;
+        self.last_result_for = None;
+    }
+
+    fn select_function_delta(&mut self, delta: i32) {
+        if self.functions.is_empty() {
+            return;
+        }
+        let current = self.function_list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, self.functions.len() as i32 - 1);
+        self.function_list_state.select(Some(next as usize));
+        self.reset_args_for_current_fn();
+    }
+
+    fn build_args(&self) -> Result<Vec<AbiValue>, String> {
+        let function = self
+            .selected_function()
+            .ok_or_else(|| "no function selected".to_string())?;
+        if function.inputs.len() != self.arg_buffers.len() {
+            return Err(format!(
+                "arg buffer mismatch ({} vs {})",
+                function.inputs.len(),
+                self.arg_buffers.len()
+            ));
+        }
+        let mut values = Vec::with_capacity(function.inputs.len());
+        for (param, raw) in function.inputs.iter().zip(self.arg_buffers.iter()) {
+            let raw = raw.trim();
+            let value = match &param.kind {
+                AbiParamType::Address => Address::from_hex(raw)
+                    .map(AbiValue::Address)
+                    .map_err(|e| format!("{}: {e}", param.name))?,
+                AbiParamType::Uint { .. } => {
+                    let n = if let Some(hex) = raw.strip_prefix("0x") {
+                        u128::from_str_radix(hex, 16)
+                    } else {
+                        raw.parse::<u128>()
+                    }
+                    .map_err(|e| format!("{}: invalid uint: {e}", param.name))?;
+                    AbiValue::Uint(n)
+                }
+                AbiParamType::Bool => match raw.to_ascii_lowercase().as_str() {
+                    "true" | "1" => AbiValue::Bool(true),
+                    "false" | "0" => AbiValue::Bool(false),
+                    other => {
+                        return Err(format!("{}: expected true/false, got {other}", param.name));
+                    }
+                },
+                AbiParamType::String => AbiValue::String(raw.to_string()),
+                other => {
+                    return Err(format!("{}: unsupported input type {other:?}", param.name));
+                }
+            };
+            values.push(value);
+        }
+        Ok(values)
+    }
+
+    fn execute_current(&mut self) {
+        let Some(function) = self.selected_function().cloned() else {
+            return;
+        };
+        if !function.is_executable() {
+            self.last_result = Some(Err("function has unsupported ABI input types".to_string()));
+            self.last_result_for = Some(function.signature());
+            return;
+        }
+        match self.build_args() {
+            Ok(args) => {
+                let _ = self.feed.read_tx.send(ReadRequest { function, args });
+            }
+            Err(msg) => {
+                self.last_result = Some(Err(msg));
+                self.last_result_for = Some(function.signature());
+            }
+        }
+    }
+
+    fn file_delta(&mut self, delta: i32) {
+        let len = self.source.as_ref().map(|s| s.files.len()).unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let current = self.file_list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).clamp(0, len as i32 - 1);
+        self.file_list_state.select(Some(next as usize));
+        self.with_contract_scroll(|s| s.reset());
+    }
+
+    fn with_contract_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.contract_scroll.get();
+        f(&mut s);
+        self.contract_scroll.set(s);
+    }
+
+    fn bound_scroll_for(&self, body: &str, area: Rect) -> u16 {
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        self.with_contract_scroll(|s| s.set_dimensions(content_lines, viewport));
+        self.contract_scroll.get().offset()
+    }
+
+    fn set_token_window(&mut self, window: PriceWindow) {
+        if self.active_token_window == window {
+            return;
+        }
+        self.active_token_window = window;
+        if !self.token_series.contains_key(&window) {
+            let _ = self.feed.token_window_req_tx.send(window);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -533,18 +1058,29 @@ impl Screen for AddressDetailScreen {
     }
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
+        let active = self.active_tab_or_fallback();
+        let has_sub = matches!(active, AddressTab::Contract | AddressTab::Token);
+
+        let constraints: Vec<Constraint> = if has_sub {
+            vec![
+                Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Min(3),
-            ])
+            ]
+        } else {
+            vec![
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(3),
+            ]
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
             .split(area);
 
-        // Header. When the account is a 7702-delegated EOA, surface a
-        // compact "delegated to 0x…" badge next to the address so the
-        // user sees the delegation without opening a Contract tab.
+        // Header.
         let header = match self.current.as_ref() {
             Some(ov) => {
                 let ens = match ov.ens_name.as_deref() {
@@ -567,8 +1103,7 @@ impl Screen for AddressDetailScreen {
             chunks[0],
         );
 
-        // Tab bar — the Contract tab only shows up once the overview
-        // loads and reports `AddressKind::Contract`.
+        // Main tabs bar.
         let tabs_visible = self.visible_tabs();
         let titles: Vec<Line<'static>> = tabs_visible
             .iter()
@@ -576,7 +1111,7 @@ impl Screen for AddressDetailScreen {
             .collect();
         let active_idx = tabs_visible
             .iter()
-            .position(|&t| t == self.active_tab)
+            .position(|&t| t == active)
             .unwrap_or(0);
         frame.render_widget(
             Tabs::new(titles)
@@ -592,181 +1127,104 @@ impl Screen for AddressDetailScreen {
             chunks[1],
         );
 
-        // Body
-        match self.active_tab {
-            AddressTab::Overview => {
-                let body = overview_body(
-                    self.current.as_ref(),
-                    self.transfers.as_ref(),
-                    self.holdings.as_ref(),
-                );
-                let content_lines = body.lines().count() as u16;
-                let viewport = chunks[2].height.saturating_sub(2);
-                let cap = content_lines.saturating_sub(viewport);
-                self.scroll_cap.set(cap);
-                let offset = self.scroll.min(cap);
-                frame.render_widget(
-                    Paragraph::new(body)
-                        .wrap(Wrap { trim: false })
-                        .scroll((offset, 0))
-                        .block(Block::default().borders(Borders::ALL).title("Overview")),
-                    chunks[2],
-                );
-            }
-            AddressTab::Transactions => {
-                let block = Block::default().borders(Borders::ALL).title("Transactions");
-                match self.transfers.as_ref() {
-                    None => frame.render_widget(
-                        Paragraph::new("Loading transactions...").block(block),
-                        chunks[2],
-                    ),
-                    Some(page) if page.events.is_empty() => frame.render_widget(
-                        Paragraph::new("No transfers found for this address.").block(block),
-                        chunks[2],
-                    ),
-                    Some(page) => {
-                        let items: Vec<ListItem> = page
-                            .events
-                            .iter()
-                            .map(|event| ListItem::new(render_transfer_row(event)))
-                            .collect();
-                        let mut state = self.tx_list_state;
-                        frame.render_stateful_widget(
-                            List::new(items)
-                                .block(block)
-                                .highlight_style(
-                                    Style::default()
-                                        .add_modifier(Modifier::BOLD)
-                                        .bg(Color::Indexed(238)),
-                                )
-                                .highlight_symbol("> "),
-                            chunks[2],
-                            &mut state,
-                        );
-                    }
-                }
-            }
-            AddressTab::Contract => {
-                let body = format!(
-                    "This address holds contract bytecode.\n\
-\n\
-Address   {addr}\n\
-\n\
-Press [Enter] to open the Contract Detail view (proxy hints,\n\
-implementation resolution, source on Etherscan once wired).",
-                    addr = self.address.to_hex(),
-                );
-                frame.render_widget(
-                    Paragraph::new(body)
-                        .wrap(Wrap { trim: false })
-                        .block(Block::default().borders(Borders::ALL).title("Contract")),
-                    chunks[2],
-                );
-            }
-            AddressTab::Tokens => {
-                match self.holdings.as_ref() {
-                    None => frame.render_widget(
-                        Paragraph::new("Loading tokens...")
-                            .block(Block::default().borders(Borders::ALL).title("Tokens")),
-                        chunks[2],
-                    ),
-                    Some(holdings) if holdings.is_empty() => frame.render_widget(
-                        Paragraph::new("No ERC-20 holdings found for this address.")
-                            .block(Block::default().borders(Borders::ALL).title("Tokens")),
-                        chunks[2],
-                    ),
-                    Some(holdings) => {
-                        // Plan/6 §11 "Shipped": Tokens tab gains a USD
-                        // total header + top-5 distribution chart. The
-                        // chart height grows with the number of priced
-                        // holdings (up to five rows) and the list eats
-                        // the remainder.
-                        let summary = portfolio_summary(holdings);
-                        let chart_rows =
-                            u16::try_from(summary.top_by_usd.len().min(5)).unwrap_or(0);
-                        let chart_block_height = if chart_rows == 0 {
-                            0
-                        } else {
-                            chart_rows + 2 // borders
-                        };
-                        let tokens_chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([
-                                Constraint::Length(3),
-                                Constraint::Length(chart_block_height),
-                                Constraint::Min(3),
-                            ])
-                            .split(chunks[2]);
-
-                        frame.render_widget(
-                            Paragraph::new(portfolio_header_line(&summary)).block(
+        let body_rect = if has_sub {
+            // Render sub-tabs row.
+            match active {
+                AddressTab::Contract => {
+                    let sub_titles: Vec<Line<'static>> = ContractSubTab::ALL
+                        .iter()
+                        .map(|t| Line::from(format!(" {} ", t.label())))
+                        .collect();
+                    frame.render_widget(
+                        Tabs::new(sub_titles)
+                            .select(self.active_contract_sub.index())
+                            .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Portfolio USD"),
+                                    .title("Contract sub-tabs"),
+                            )
+                            .divider(" ")
+                            .highlight_style(
+                                Style::default()
+                                    .add_modifier(Modifier::BOLD)
+                                    .bg(Color::Indexed(238))
+                                    .fg(Color::White),
                             ),
-                            tokens_chunks[0],
-                        );
-
-                        if chart_block_height > 0 {
-                            let bar_width =
-                                (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
-                            frame.render_widget(
-                                Paragraph::new(render_top_distribution(&summary, bar_width)).block(
-                                    Block::default().borders(Borders::ALL).title("Top 5 by USD"),
-                                ),
-                                tokens_chunks[1],
-                            );
-                        }
-
-                        let items: Vec<ListItem> = holdings
-                            .iter()
-                            .map(|h| ListItem::new(render_token_row(h)))
-                            .collect();
-                        let mut state = self.token_list_state;
-                        frame.render_stateful_widget(
-                            List::new(items)
-                                .block(Block::default().borders(Borders::ALL).title("Tokens"))
-                                .highlight_style(
-                                    Style::default()
-                                        .add_modifier(Modifier::BOLD)
-                                        .bg(Color::Indexed(238)),
-                                )
-                                .highlight_symbol("> "),
-                            tokens_chunks[2],
-                            &mut state,
-                        );
-                    }
-                }
-            }
-            AddressTab::Token => {
-                // `visible_tabs` guarantees we only reach this arm
-                // when `token_probe == IsToken(..)`, so the unwrap
-                // below is unreachable in practice.
-                if let TokenProbeState::IsToken(ref ov) = self.token_probe {
-                    render_inline_token_panel(
-                        frame,
                         chunks[2],
-                        ov,
-                        &self.token_price,
-                        self.token_series.as_ref(),
-                        PriceWindow::D1,
                     );
                 }
+                AddressTab::Token => {
+                    let sub_titles: Vec<Line<'static>> = TokenSubTab::ALL
+                        .iter()
+                        .map(|t| Line::from(format!(" {} ", t.label())))
+                        .collect();
+                    frame.render_widget(
+                        Tabs::new(sub_titles)
+                            .select(self.active_token_sub.index())
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title("Token sub-tabs"),
+                            )
+                            .divider(" ")
+                            .highlight_style(
+                                Style::default()
+                                    .add_modifier(Modifier::BOLD)
+                                    .bg(Color::Indexed(238))
+                                    .fg(Color::White),
+                            ),
+                        chunks[2],
+                    );
+                }
+                _ => {}
             }
+            chunks[3]
+        } else {
+            chunks[2]
+        };
+
+        // Body.
+        match active {
+            AddressTab::Overview => self.render_overview(frame, body_rect),
+            AddressTab::Transactions => self.render_transactions(frame, body_rect),
+            AddressTab::Tokens => self.render_tokens(frame, body_rect),
+            AddressTab::Token => match self.active_token_sub {
+                TokenSubTab::Overview => self.render_token_overview(frame, body_rect),
+                TokenSubTab::Transfers => self.render_token_transfers(frame, body_rect),
+                TokenSubTab::Chart => self.render_token_chart(frame, body_rect),
+            },
+            AddressTab::Contract => match self.active_contract_sub {
+                ContractSubTab::Overview => self.render_contract_overview(frame, body_rect),
+                ContractSubTab::Source => self.render_source_tab(frame, body_rect),
+                ContractSubTab::Abi => self.render_abi_tab(frame, body_rect),
+                ContractSubTab::Read => self.render_read_tab(frame, body_rect),
+                ContractSubTab::Events => self.render_events_tab(frame, body_rect),
+                ContractSubTab::Storage => self.render_storage_tab(frame, body_rect),
+            },
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
         let cmd = self.dispatch_key(key);
-        // Clamp to the upper bound measured during the previous
-        // render (plan 13.3), so `End` / `PageDown` stop exactly at
-        // the last visible row instead of scrolling into the void.
         self.scroll = self.scroll.min(self.scroll_cap.get());
         cmd
     }
 
     fn tick(&mut self) -> Command {
         self.drain_feed();
+        // Fire the first Events request lazily once the user enters
+        // the Events sub-tab, so we never issue eth_getLogs for
+        // contracts the user just glances at.
+        if matches!(self.active_tab, AddressTab::Contract)
+            && matches!(self.active_contract_sub, ContractSubTab::Events)
+            && !self.events_requested
+        {
+            let _ = self.feed.events_tx.send(EventsRequest {
+                head_hint: self.events_head,
+                offset: self.events_offset,
+            });
+            self.events_requested = true;
+        }
         Command::None
     }
 
@@ -783,101 +1241,146 @@ impl AddressDetailScreen {
     fn dispatch_key(&mut self, key: KeyEvent) -> Command {
         let is_back_tab = key.code == KeyCode::BackTab
             || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
-        match (self.active_tab, key.code) {
-            (_, KeyCode::Char('q')) => Command::Quit,
-            (_, KeyCode::Esc) => Command::Pop,
 
-            // Clipboard bindings — see plan/6 §3 + §11 "Shipped":
-            //   `y` copies the hex address,
-            //   `Y` copies the ENS name (falls back to hex),
-            //   `e` exports the active tab as CSV.
-            // All three feed the same `last_copied_value` sink used
-            // by snapshot tests and the future OS clipboard adapter.
-            (_, KeyCode::Char('y')) => {
+        // Global keys first.
+        if matches!(key.code, KeyCode::Char('q')) {
+            return Command::Quit;
+        }
+        if matches!(key.code, KeyCode::Esc) {
+            return Command::Pop;
+        }
+
+        // Clipboard bindings (available from any tab).
+        match key.code {
+            KeyCode::Char('y') => {
                 self.copy_address_hex();
-                Command::None
+                return Command::None;
             }
-            (_, KeyCode::Char('Y')) => {
+            KeyCode::Char('Y') => {
                 self.copy_ens_or_address();
-                Command::None
+                return Command::None;
             }
-            (_, KeyCode::Char('e')) => {
+            KeyCode::Char('e') => {
                 self.copy_active_as_csv();
-                Command::None
+                return Command::None;
             }
-            (_, _) if is_back_tab => {
-                self.active_tab = self.prev_tab();
-                self.scroll = 0;
-                Command::None
-            }
-            (_, KeyCode::Tab) => {
-                self.active_tab = self.next_tab();
-                self.scroll = 0;
-                Command::None
-            }
-            (AddressTab::Overview, KeyCode::Left) => {
-                self.active_tab = self.prev_tab();
-                self.scroll = 0;
-                Command::None
-            }
-            (AddressTab::Overview, KeyCode::Right) => {
-                self.active_tab = self.next_tab();
-                self.scroll = 0;
-                Command::None
-            }
+            _ => {}
+        }
 
-            // Overview scroll
-            (AddressTab::Overview, KeyCode::Up | KeyCode::Char('k')) => {
+        // Main tab cycling.
+        if is_back_tab {
+            self.active_tab = self.prev_tab();
+            self.scroll = 0;
+            return Command::None;
+        }
+        if key.code == KeyCode::Tab {
+            self.active_tab = self.next_tab();
+            self.scroll = 0;
+            return Command::None;
+        }
+
+        // Sub-tab cycling.
+        if matches!(key.code, KeyCode::Char(']')) {
+            match self.active_tab_or_fallback() {
+                AddressTab::Contract => {
+                    self.active_contract_sub = self.active_contract_sub.next();
+                    self.with_contract_scroll(|s| s.reset());
+                    return Command::None;
+                }
+                AddressTab::Token => {
+                    self.active_token_sub = self.active_token_sub.next();
+                    return Command::None;
+                }
+                _ => {}
+            }
+        }
+        if matches!(key.code, KeyCode::Char('[')) {
+            match self.active_tab_or_fallback() {
+                AddressTab::Contract => {
+                    self.active_contract_sub = self.active_contract_sub.previous();
+                    self.with_contract_scroll(|s| s.reset());
+                    return Command::None;
+                }
+                AddressTab::Token => {
+                    self.active_token_sub = self.active_token_sub.previous();
+                    return Command::None;
+                }
+                _ => {}
+            }
+        }
+
+        match self.active_tab_or_fallback() {
+            AddressTab::Overview => self.handle_overview_key(key),
+            AddressTab::Transactions | AddressTab::Tokens => self.handle_list_key(key),
+            AddressTab::Token => self.handle_token_key(key),
+            AddressTab::Contract => self.handle_contract_key(key),
+        }
+    }
+
+    fn handle_overview_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Left => {
+                self.active_tab = self.prev_tab();
+                self.scroll = 0;
+            }
+            KeyCode::Right => {
+                self.active_tab = self.next_tab();
+                self.scroll = 0;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.scroll = self.scroll.saturating_sub(1);
-                Command::None
             }
-            (AddressTab::Overview, KeyCode::Down | KeyCode::Char('j')) => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.scroll = self.scroll.saturating_add(1);
-                Command::None
             }
-            (AddressTab::Overview, KeyCode::PageUp) => {
+            KeyCode::PageUp => {
                 self.scroll = self.scroll.saturating_sub(10);
-                Command::None
             }
-            (AddressTab::Overview, KeyCode::PageDown) => {
+            KeyCode::PageDown => {
                 self.scroll = self.scroll.saturating_add(10);
-                Command::None
             }
-            (AddressTab::Overview, KeyCode::Home) => {
+            KeyCode::Home => {
                 self.scroll = 0;
-                Command::None
             }
+            _ => {}
+        }
+        Command::None
+    }
 
-            // Shared list navigation for Transactions / Tokens.
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Up | KeyCode::Char('k')) => {
+    fn handle_list_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.select_delta(-1);
-                Command::None
             }
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Down | KeyCode::Char('j')) => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.select_delta(1);
-                Command::None
             }
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::PageUp) => {
+            KeyCode::PageUp => {
                 self.select_delta(-10);
-                Command::None
             }
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::PageDown) => {
+            KeyCode::PageDown => {
                 self.select_delta(10);
-                Command::None
             }
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::Home) => {
+            KeyCode::Home => {
                 self.active_list_state_mut().select(Some(0));
-                Command::None
             }
-            (AddressTab::Transactions | AddressTab::Tokens, KeyCode::End) => {
+            KeyCode::End => {
                 let len = self.active_list_len();
                 if len > 0 {
                     self.active_list_state_mut().select(Some(len - 1));
                 }
-                Command::None
             }
+            KeyCode::Enter => {
+                return self.enter_on_active_list();
+            }
+            _ => {}
+        }
+        Command::None
+    }
 
-            (AddressTab::Transactions, KeyCode::Enter) => {
+    fn enter_on_active_list(&self) -> Command {
+        match self.active_tab_or_fallback() {
+            AddressTab::Transactions => {
                 let hash = self
                     .transfers
                     .as_ref()
@@ -888,7 +1391,7 @@ impl AddressDetailScreen {
                     _ => Command::None,
                 }
             }
-            (AddressTab::Tokens, KeyCode::Enter) => {
+            AddressTab::Tokens => {
                 let contract = self
                     .holdings
                     .as_ref()
@@ -899,27 +1402,917 @@ impl AddressDetailScreen {
                     _ => Command::None,
                 }
             }
-            (AddressTab::Contract, KeyCode::Enter) => match self.open_contract.as_ref() {
-                Some(factory) => Command::Push(factory(self.address)),
-                None => Command::None,
+            _ => Command::None,
+        }
+    }
+
+    fn handle_token_key(&mut self, key: KeyEvent) -> Command {
+        // Chart window shortcuts are active from any token sub-tab.
+        match key.code {
+            KeyCode::Char('1') => {
+                self.set_token_window(PriceWindow::D1);
+                return Command::None;
+            }
+            KeyCode::Char('2') => {
+                self.set_token_window(PriceWindow::M1);
+                return Command::None;
+            }
+            KeyCode::Char('3') => {
+                self.set_token_window(PriceWindow::Y1);
+                return Command::None;
+            }
+            _ => {}
+        }
+
+        // Incomplete-token shortcut: `c` jumps to the Contract
+        // sub-tab on the same screen. See plan/8 §13.2.
+        if matches!(key.code, KeyCode::Char('c')) && self.is_incomplete_badge_active() {
+            self.active_tab = AddressTab::Contract;
+            self.active_contract_sub = ContractSubTab::Overview;
+            self.with_contract_scroll(|s| s.reset());
+            return Command::None;
+        }
+
+        match self.active_token_sub {
+            TokenSubTab::Transfers => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.select_delta(-1);
+                    Command::None
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.select_delta(1);
+                    Command::None
+                }
+                KeyCode::PageUp => {
+                    self.select_delta(-10);
+                    Command::None
+                }
+                KeyCode::PageDown => {
+                    self.select_delta(10);
+                    Command::None
+                }
+                KeyCode::Home => {
+                    self.active_list_state_mut().select(Some(0));
+                    Command::None
+                }
+                KeyCode::End => {
+                    let len = self.active_list_len();
+                    if len > 0 {
+                        self.active_list_state_mut().select(Some(len - 1));
+                    }
+                    Command::None
+                }
+                KeyCode::Enter => {
+                    let hash = self
+                        .token_transfers
+                        .as_ref()
+                        .and_then(|p| p.events.get(self.selected()))
+                        .map(|e| e.tx_hash);
+                    match (hash, self.open_tx.as_ref()) {
+                        (Some(hash), Some(factory)) => Command::Push(factory(hash)),
+                        _ => Command::None,
+                    }
+                }
+                _ => Command::None,
             },
-            // Token tab: `o` (or Enter) opens the full TokenDetail
-            // screen for the same address. The inline panel is
-            // read-only — no list navigation to handle.
-            (AddressTab::Token, KeyCode::Char('o') | KeyCode::Enter) => {
-                match self.open_token.as_ref() {
-                    Some(factory) => Command::Push(factory(self.address)),
-                    None => Command::None,
+            _ => Command::None,
+        }
+    }
+
+    fn handle_contract_key(&mut self, key: KeyEvent) -> Command {
+        match self.active_contract_sub {
+            ContractSubTab::Overview => self.handle_contract_overview_key(key),
+            ContractSubTab::Source => self.handle_source_key(key),
+            ContractSubTab::Abi => self.handle_paragraph_scroll_key(key),
+            ContractSubTab::Read => self.handle_read_key(key),
+            ContractSubTab::Events => self.handle_events_key(key),
+            ContractSubTab::Storage => self.handle_storage_key(key),
+        }
+    }
+
+    fn handle_contract_overview_key(&mut self, key: KeyEvent) -> Command {
+        self.handle_paragraph_scroll_key(key)
+    }
+
+    fn handle_paragraph_scroll_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.with_contract_scroll(|s| {
+                    s.scroll_by(-1);
+                });
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.with_contract_scroll(|s| {
+                    s.scroll_by(1);
+                });
+            }
+            KeyCode::PageUp => {
+                self.with_contract_scroll(|s| {
+                    s.page_up();
+                });
+            }
+            KeyCode::PageDown => {
+                self.with_contract_scroll(|s| {
+                    s.page_down();
+                });
+            }
+            KeyCode::Home => {
+                self.with_contract_scroll(|s| {
+                    s.home();
+                });
+            }
+            KeyCode::End => {
+                self.with_contract_scroll(|s| {
+                    s.end();
+                });
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_source_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up => self.file_delta(-1),
+            KeyCode::Down => self.file_delta(1),
+            KeyCode::Char('k') => self.with_contract_scroll(|s| {
+                s.scroll_by(-1);
+            }),
+            KeyCode::Char('j') => self.with_contract_scroll(|s| {
+                s.scroll_by(1);
+            }),
+            KeyCode::PageUp => self.with_contract_scroll(|s| {
+                s.page_up();
+            }),
+            KeyCode::PageDown => self.with_contract_scroll(|s| {
+                s.page_down();
+            }),
+            KeyCode::Home => self.with_contract_scroll(|s| {
+                s.home();
+            }),
+            KeyCode::End => self.with_contract_scroll(|s| {
+                s.end();
+            }),
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_read_key(&mut self, key: KeyEvent) -> Command {
+        match self.read_focus {
+            ReadFocus::FunctionList => self.handle_read_list_key(key),
+            ReadFocus::Args => self.handle_read_args_key(key),
+        }
+    }
+
+    fn handle_read_list_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.select_function_delta(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.select_function_delta(1),
+            KeyCode::PageUp => self.select_function_delta(-10),
+            KeyCode::PageDown => self.select_function_delta(10),
+            KeyCode::Home if !self.functions.is_empty() => {
+                self.function_list_state.select(Some(0));
+                self.reset_args_for_current_fn();
+            }
+            KeyCode::End if !self.functions.is_empty() => {
+                let last = self.functions.len() - 1;
+                self.function_list_state.select(Some(last));
+                self.reset_args_for_current_fn();
+            }
+            KeyCode::Enter | KeyCode::Right => {
+                if let Some(f) = self.selected_function() {
+                    if f.inputs.is_empty() {
+                        self.execute_current();
+                    } else {
+                        self.read_focus = ReadFocus::Args;
+                        self.arg_cursor = 0;
+                    }
                 }
             }
-            _ => Command::None,
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_read_args_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up if self.arg_cursor > 0 => {
+                self.arg_cursor -= 1;
+            }
+            KeyCode::Down if self.arg_cursor + 1 < self.arg_buffers.len() => {
+                self.arg_cursor += 1;
+            }
+            KeyCode::Left => {
+                self.read_focus = ReadFocus::FunctionList;
+            }
+            KeyCode::Backspace => {
+                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                    buf.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                    buf.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                self.execute_current();
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_events_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Char('r') | KeyCode::Enter => {
+                self.events = None;
+                let _ = self.feed.events_tx.send(EventsRequest {
+                    head_hint: self.events_head,
+                    offset: self.events_offset,
+                });
+            }
+            KeyCode::Char('n') => {
+                let can_advance = matches!(
+                    self.events.as_ref(),
+                    Some(Ok(page)) if page.has_older
+                );
+                if can_advance {
+                    self.events_offset = self.events_offset.saturating_add(1);
+                    self.events = None;
+                    let _ = self.feed.events_tx.send(EventsRequest {
+                        head_hint: self.events_head,
+                        offset: self.events_offset,
+                    });
+                }
+            }
+            KeyCode::Char('N') if self.events_offset > 0 => {
+                self.events_offset -= 1;
+                self.events = None;
+                let _ = self.feed.events_tx.send(EventsRequest {
+                    head_hint: self.events_head,
+                    offset: self.events_offset,
+                });
+            }
+            _ => return self.handle_paragraph_scroll_key(key),
+        }
+        Command::None
+    }
+
+    fn handle_storage_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Backspace => {
+                self.slot_buffer.pop();
+            }
+            KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
+                self.slot_buffer.push(c);
+            }
+            KeyCode::Enter => match parse_slot(&self.slot_buffer) {
+                Ok(slot) => {
+                    self.storage_slot_requested = Some(slot);
+                    self.storage_result = None;
+                    let _ = self.feed.storage_tx.send(StorageRequest { slot });
+                }
+                Err(msg) => {
+                    self.storage_result = Some(Err(msg));
+                }
+            },
+            _ => {}
+        }
+        Command::None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering helpers (main body)
+// ---------------------------------------------------------------------------
+
+impl AddressDetailScreen {
+    fn render_overview(&self, frame: &mut Frame<'_>, area: Rect) {
+        let body = overview_body(
+            self.current.as_ref(),
+            self.transfers.as_ref(),
+            self.holdings.as_ref(),
+        );
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        let cap = content_lines.saturating_sub(viewport);
+        self.scroll_cap.set(cap);
+        let offset = self.scroll.min(cap);
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(Block::default().borders(Borders::ALL).title("Overview")),
+            area,
+        );
+    }
+
+    fn render_transactions(&self, frame: &mut Frame<'_>, area: Rect) {
+        let block = Block::default().borders(Borders::ALL).title("Transactions");
+        match self.transfers.as_ref() {
+            None => frame.render_widget(
+                Paragraph::new("Loading transactions...").block(block),
+                area,
+            ),
+            Some(page) if page.events.is_empty() => frame.render_widget(
+                Paragraph::new("No transfers found for this address.").block(block),
+                area,
+            ),
+            Some(page) => {
+                let items: Vec<ListItem> = page
+                    .events
+                    .iter()
+                    .map(|event| ListItem::new(render_transfer_row(event)))
+                    .collect();
+                let mut state = self.tx_list_state;
+                frame.render_stateful_widget(
+                    List::new(items)
+                        .block(block)
+                        .highlight_style(
+                            Style::default()
+                                .add_modifier(Modifier::BOLD)
+                                .bg(Color::Indexed(238)),
+                        )
+                        .highlight_symbol("> "),
+                    area,
+                    &mut state,
+                );
+            }
+        }
+    }
+
+    fn render_tokens(&self, frame: &mut Frame<'_>, area: Rect) {
+        match self.holdings.as_ref() {
+            None => frame.render_widget(
+                Paragraph::new("Loading tokens...")
+                    .block(Block::default().borders(Borders::ALL).title("Tokens")),
+                area,
+            ),
+            Some(holdings) if holdings.is_empty() => frame.render_widget(
+                Paragraph::new("No ERC-20 holdings found for this address.")
+                    .block(Block::default().borders(Borders::ALL).title("Tokens")),
+                area,
+            ),
+            Some(holdings) => {
+                let summary = portfolio_summary(holdings);
+                let chart_rows = u16::try_from(summary.top_by_usd.len().min(5)).unwrap_or(0);
+                let chart_block_height = if chart_rows == 0 { 0 } else { chart_rows + 2 };
+                let tokens_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Length(chart_block_height),
+                        Constraint::Min(3),
+                    ])
+                    .split(area);
+
+                frame.render_widget(
+                    Paragraph::new(portfolio_header_line(&summary)).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Portfolio USD"),
+                    ),
+                    tokens_chunks[0],
+                );
+
+                if chart_block_height > 0 {
+                    let bar_width =
+                        (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
+                    frame.render_widget(
+                        Paragraph::new(render_top_distribution(&summary, bar_width)).block(
+                            Block::default().borders(Borders::ALL).title("Top 5 by USD"),
+                        ),
+                        tokens_chunks[1],
+                    );
+                }
+
+                let items: Vec<ListItem> = holdings
+                    .iter()
+                    .map(|h| ListItem::new(render_token_row(h)))
+                    .collect();
+                let mut state = self.token_list_state;
+                frame.render_stateful_widget(
+                    List::new(items)
+                        .block(Block::default().borders(Borders::ALL).title("Tokens"))
+                        .highlight_style(
+                            Style::default()
+                                .add_modifier(Modifier::BOLD)
+                                .bg(Color::Indexed(238)),
+                        )
+                        .highlight_symbol("> "),
+                    tokens_chunks[2],
+                    &mut state,
+                );
+            }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Render helpers
+// Token sub-tab rendering
 // ---------------------------------------------------------------------------
+
+impl AddressDetailScreen {
+    fn render_token_overview(&self, frame: &mut Frame<'_>, area: Rect) {
+        let block = Block::default().borders(Borders::ALL).title("Overview");
+        let body = match self.token_probe {
+            TokenProbeState::IsToken(ref ov) if ov.is_incomplete() => {
+                render_incomplete_body(ov, self.address)
+            }
+            TokenProbeState::IsToken(ref ov) => {
+                let price_cell = format_price_lookup(&self.token_price);
+                let synth = TokenOverview {
+                    metadata: ov.metadata.clone(),
+                    total_supply: ov.total_supply,
+                    price: self.token_price.clone(),
+                };
+                let mcap = synth
+                    .market_cap()
+                    .map(format_market_cap)
+                    .unwrap_or_else(|| "-".to_string());
+                format!(
+                    "Address       {addr}\n\
+Symbol        {symbol}\n\
+Name          {name}\n\
+Decimals      {decimals}\n\
+Total supply  {supply} (raw)\n\
+\n\
+Price         {price}\n\
+Market cap    {mcap}\n\
+\n\
+[Tab] cycle tabs    [1] 1d  [2] 1m  [3] 1y    [] / []] sub-tabs    [Esc] back",
+                    addr = ov.metadata.address.to_hex(),
+                    symbol = ov.metadata.symbol,
+                    name = ov.metadata.name,
+                    decimals = ov.metadata.decimals,
+                    supply = ov.total_supply,
+                    price = price_cell,
+                    mcap = mcap,
+                )
+            }
+            _ => "Loading...".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(body).wrap(Wrap { trim: false }).block(block),
+            area,
+        );
+    }
+
+    fn render_token_transfers(&self, frame: &mut Frame<'_>, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Transfers (ERC-20)");
+        match self.token_transfers.as_ref() {
+            None => frame.render_widget(Paragraph::new("Loading transfers...").block(block), area),
+            Some(page) if page.events.is_empty() => frame.render_widget(
+                Paragraph::new("No transfers found for this token yet.").block(block),
+                area,
+            ),
+            Some(page) => {
+                let items: Vec<ListItem> = page
+                    .events
+                    .iter()
+                    .map(|e| ListItem::new(render_token_transfer_row(e)))
+                    .collect();
+                let mut state = self.token_transfers_list_state;
+                frame.render_stateful_widget(
+                    List::new(items)
+                        .block(block)
+                        .highlight_style(
+                            Style::default()
+                                .add_modifier(Modifier::BOLD)
+                                .bg(Color::Indexed(238)),
+                        )
+                        .highlight_symbol("> "),
+                    area,
+                    &mut state,
+                );
+            }
+        }
+    }
+
+    fn render_token_chart(&self, frame: &mut Frame<'_>, area: Rect) {
+        let title = format!("Price chart ({})", self.active_token_window.label());
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let series = match self.token_series.get(&self.active_token_window) {
+            None => {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "Loading {label} price history...\n\
+[1] 1d (1h)  [2] 1m (1d)  [3] 1y (1w)",
+                        label = self.active_token_window.label(),
+                    ))
+                    .block(block),
+                    area,
+                );
+                return;
+            }
+            Some(s) => s,
+        };
+        if series.points.is_empty() {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "No price data for window {label}.\n\
+[1] 1d (1h)  [2] 1m (1d)  [3] 1y (1w)",
+                    label = self.active_token_window.label(),
+                ))
+                .block(block),
+                area,
+            );
+            return;
+        }
+        let data: Vec<(f64, f64)> = series
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i as f64, p.value))
+            .collect();
+        let (lo, hi) = series.y_bounds().unwrap_or((0.0, 1.0));
+        let y_min = if (hi - lo).abs() < f64::EPSILON {
+            lo - 0.05 * lo.abs().max(1.0)
+        } else {
+            lo - (hi - lo) * 0.05
+        };
+        let y_max = if (hi - lo).abs() < f64::EPSILON {
+            hi + 0.05 * hi.abs().max(1.0)
+        } else {
+            hi + (hi - lo) * 0.05
+        };
+        let x_max = (series.points.len().saturating_sub(1)) as f64;
+        let datasets = vec![
+            Dataset::default()
+                .name("usd")
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::Cyan))
+                .data(&data),
+        ];
+        let x_axis = Axis::default()
+            .bounds([0.0, x_max.max(1.0)])
+            .labels(vec![Span::raw("older"), Span::raw("now")])
+            .style(Style::default().fg(Color::DarkGray));
+        let y_axis = Axis::default()
+            .bounds([y_min, y_max])
+            .labels(vec![
+                Span::raw(format_price(y_min)),
+                Span::raw(format_price((y_min + y_max) / 2.0)),
+                Span::raw(format_price(y_max)),
+            ])
+            .style(Style::default().fg(Color::DarkGray));
+        let chart = Chart::new(datasets)
+            .block(block)
+            .x_axis(x_axis)
+            .y_axis(y_axis);
+        frame.render_widget(chart, area);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contract sub-tab rendering
+// ---------------------------------------------------------------------------
+
+impl AddressDetailScreen {
+    fn render_contract_overview(&self, frame: &mut Frame<'_>, area: Rect) {
+        let body = contract_overview_body(
+            self.address,
+            self.contract_overview.as_ref(),
+            self.source.as_ref(),
+        );
+        let offset = self.bound_scroll_for(&body, area);
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(Block::default().borders(Borders::ALL).title("Overview")),
+            area,
+        );
+    }
+
+    fn render_abi_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let (title, body) = abi_body(self.source.as_ref());
+        let offset = self.bound_scroll_for(&body, area);
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(Block::default().borders(Borders::ALL).title(title)),
+            area,
+        );
+    }
+
+    fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(source) = self.source.as_ref() else {
+            frame.render_widget(
+                Paragraph::new("Loading source...")
+                    .block(Block::default().borders(Borders::ALL).title("Source")),
+                area,
+            );
+            return;
+        };
+        if !source.is_verified || source.files.is_empty() {
+            frame.render_widget(
+                Paragraph::new(
+                    "Contract is not verified on Etherscan.\n\
+Open the ABI tab for a raw ABI read (empty when unverified) or come back\n\
+once a decompiler integration lands (see plan/7 section 13).",
+                )
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Source")),
+                area,
+            );
+            return;
+        }
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(area);
+        let items: Vec<ListItem> = source
+            .files
+            .iter()
+            .map(|f| ListItem::new(f.path.clone()))
+            .collect();
+        let mut state = self.file_list_state;
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Files"))
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238)),
+                )
+                .highlight_symbol("> "),
+            columns[0],
+            &mut state,
+        );
+        let file = self.selected_file();
+        let title = file
+            .map(|f| f.path.clone())
+            .unwrap_or_else(|| "Source".to_string());
+        let content = file.map(|f| f.content.as_str()).unwrap_or("");
+        let offset = self.bound_scroll_for(content, columns[1]);
+        let is_solidity = file
+            .map(|f| f.path.to_ascii_lowercase().ends_with(".sol"))
+            .unwrap_or(false);
+        let paragraph = if is_solidity && !content.is_empty() {
+            Paragraph::new(highlight_solidity(content))
+        } else {
+            Paragraph::new(content.to_string())
+        };
+        frame.render_widget(
+            paragraph
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(Block::default().borders(Borders::ALL).title(title)),
+            columns[1],
+        );
+    }
+
+    fn render_read_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        if self.source.is_none() {
+            frame.render_widget(
+                Paragraph::new("Loading ABI...")
+                    .block(Block::default().borders(Borders::ALL).title("Read")),
+                area,
+            );
+            return;
+        }
+        if self.functions.is_empty() {
+            frame.render_widget(
+                Paragraph::new(
+                    "No callable functions in this ABI.\n\
+Contract may be unverified or expose only events / constructors.",
+                )
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Read")),
+                area,
+            );
+            return;
+        }
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(area);
+        let items: Vec<ListItem> = self
+            .functions
+            .iter()
+            .map(|f| {
+                let marker = if f.is_read_only { " " } else { "!" };
+                ListItem::new(format!("{marker} {}", f.signature()))
+            })
+            .collect();
+        let mut state = self.function_list_state;
+        let list_title = match self.read_focus {
+            ReadFocus::FunctionList => "Functions (focused)",
+            ReadFocus::Args => "Functions",
+        };
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(list_title))
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238)),
+                )
+                .highlight_symbol("> "),
+            columns[0],
+            &mut state,
+        );
+        let detail_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(5),
+                Constraint::Min(5),
+            ])
+            .split(columns[1]);
+        let function = self.selected_function();
+        let meta_text = match function {
+            Some(f) => {
+                let mutability = if f.is_read_only {
+                    "view/pure"
+                } else {
+                    "!! state-changing (not executable)"
+                };
+                let outputs = if f.outputs.is_empty() {
+                    "()".to_string()
+                } else {
+                    f.outputs
+                        .iter()
+                        .map(|o| o.kind.canonical())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!("{sig}\n-> ({outputs})\n{mutability}", sig = f.signature(),)
+            }
+            None => "(no function selected)".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(meta_text)
+                .block(Block::default().borders(Borders::ALL).title("Signature")),
+            detail_chunks[0],
+        );
+        let args_title = match self.read_focus {
+            ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
+            ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
+        };
+        let args_body = match function {
+            Some(f) if f.inputs.is_empty() => "(no arguments)".to_string(),
+            Some(f) => {
+                let mut lines = Vec::with_capacity(f.inputs.len());
+                for (idx, (param, buf)) in f.inputs.iter().zip(self.arg_buffers.iter()).enumerate()
+                {
+                    let cursor =
+                        if matches!(self.read_focus, ReadFocus::Args) && idx == self.arg_cursor {
+                            ">"
+                        } else {
+                            " "
+                        };
+                    lines.push(format!(
+                        "{cursor} {name} ({ty}) = {buf}",
+                        name = if param.name.is_empty() {
+                            format!("arg{idx}")
+                        } else {
+                            param.name.clone()
+                        },
+                        ty = param.kind.canonical(),
+                        buf = buf,
+                    ));
+                }
+                lines.join("\n")
+            }
+            None => String::new(),
+        };
+        frame.render_widget(
+            Paragraph::new(args_body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title(args_title)),
+            detail_chunks[1],
+        );
+        let result_body = match (
+            self.last_result.as_ref(),
+            self.last_result_for.as_deref(),
+            function.map(|f| f.signature()),
+        ) {
+            (Some(Ok(values)), Some(sig), Some(current)) if sig == current => {
+                if values.is_empty() {
+                    "(no return values)".to_string()
+                } else {
+                    values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| format!("[{i}] {v}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+            (Some(Err(msg)), Some(sig), Some(current)) if sig == current => {
+                format!("ERROR: {msg}")
+            }
+            _ => "(press Enter on the arguments pane to execute)".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(result_body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Result")),
+            detail_chunks[2],
+        );
+    }
+
+    fn render_events_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let page_num = self.events_offset + 1;
+        let header = match self.events.as_ref() {
+            Some(Ok(page)) => format!(
+                "Window #{from}..#{to}  (page {page_num})   [n] older  [N] newer  [r] refresh",
+                from = page.window_from.value(),
+                to = page.window_to.value(),
+            ),
+            _ => format!("Window (pending)  (page {page_num})   [n] older  [N] newer  [r] refresh"),
+        };
+        let body = match self.events.as_ref() {
+            None => format!("{header}\n\nLoading events..."),
+            Some(Err(msg)) => format!("{header}\n\nERROR: {msg}"),
+            Some(Ok(page)) if page.logs.is_empty() => {
+                let tail = if page.has_older {
+                    "\n[n] page to older blocks"
+                } else {
+                    ""
+                };
+                format!("{header}\n\nNo events in this window.{tail}")
+            }
+            Some(Ok(page)) => {
+                let mut out = format!("{header}\n\n");
+                for (idx, log) in page.logs.iter().enumerate() {
+                    let topic0 = log
+                        .topics
+                        .first()
+                        .map(|t| format!("0x{}", hex::encode(t)))
+                        .unwrap_or_else(|| "(anonymous)".to_string());
+                    out.push_str(&format!("#{idx}  {topic0}\n"));
+                    for (ti, topic) in log.topics.iter().enumerate().skip(1) {
+                        out.push_str(&format!("  t{ti}:   0x{}\n", hex::encode(topic)));
+                    }
+                    if !log.data.is_empty() {
+                        out.push_str(&format!("  data: 0x{}\n", hex::encode(&log.data)));
+                    }
+                    out.push('\n');
+                }
+                out
+            }
+        };
+        let offset = self.bound_scroll_for(&body, area);
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(Block::default().borders(Borders::ALL).title("Events")),
+            area,
+        );
+    }
+
+    fn render_storage_tab(&self, frame: &mut Frame<'_>, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Min(3)])
+            .split(area);
+        let prompt = format!(
+            "Slot (decimal or 0x-hex): {}\n[Enter] to read, [Backspace] to edit",
+            self.slot_buffer,
+        );
+        frame.render_widget(
+            Paragraph::new(prompt).block(Block::default().borders(Borders::ALL).title("Slot")),
+            chunks[0],
+        );
+        let body = match (self.storage_slot_requested, self.storage_result.as_ref()) {
+            (Some(slot), Some(Ok(word))) => format_storage_word(slot, word),
+            (Some(_), Some(Err(msg))) => format!("ERROR: {msg}"),
+            (Some(_), None) => "Reading...".to_string(),
+            (None, None) => "(press Enter to read the current slot)".to_string(),
+            (None, Some(Err(msg))) => format!("ERROR: {msg}"),
+            (None, Some(Ok(_))) => unreachable!(),
+        };
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .block(Block::default().borders(Borders::ALL).title("Value")),
+            chunks[1],
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Free helpers
+// ---------------------------------------------------------------------------
+
+fn clamp_selection(state: &mut ListState, len: usize) {
+    if len == 0 {
+        state.select(None);
+        return;
+    }
+    let current = state.selected().unwrap_or(0);
+    state.select(Some(current.min(len - 1)));
+}
 
 fn overview_body(
     overview: Option<&AddressOverview>,
@@ -966,11 +2359,6 @@ Tokens loaded {token_count}\n\
 }
 
 fn render_token_row(h: &TokenHolding) -> String {
-    // plan/6 §11 "Shipped": decorate the holding row with its USD
-    // value when the price lookup resolved, or a compact badge for
-    // `Unsupported` / `Pending`. Falls back silently when no price
-    // is available so narrow terminals keep the raw columns in
-    // view.
     let price_column = match &h.price {
         PriceLookup::Available(p) => {
             let usd = token_usd_value(h.balance.value(), h.metadata.decimals, p.value);
@@ -1008,6 +2396,22 @@ fn render_transfer_row(event: &TransferEvent) -> String {
     )
 }
 
+fn render_token_transfer_row(event: &TransferEvent) -> String {
+    let from = short_addr(event.from.to_hex().as_str());
+    let to = event
+        .to
+        .map(|a| short_addr(a.to_hex().as_str()))
+        .unwrap_or_else(|| "(create)".to_string());
+    let amount = format_token_transfer_amount(event);
+    format!(
+        "#{block:<10}  {from} -> {to}  {amount}",
+        block = event.block_number.value(),
+        from = from,
+        to = to,
+        amount = amount,
+    )
+}
+
 fn format_amount(event: &TransferEvent) -> String {
     let symbol = event.asset.symbol();
     match &event.asset {
@@ -1024,11 +2428,28 @@ fn format_amount(event: &TransferEvent) -> String {
         }
         TransferAsset::Nft { token_id, kind, .. } => {
             let kind_label = match kind {
-                crate::domain::NftKind::Erc721 => "721",
-                crate::domain::NftKind::Erc1155 => "1155",
+                NftKind::Erc721 => "721",
+                NftKind::Erc1155 => "1155",
             };
             format!("{symbol} #{token_id} ({kind_label})")
         }
+    }
+}
+
+fn format_token_transfer_amount(event: &TransferEvent) -> String {
+    match &event.asset {
+        TransferAsset::Erc20 {
+            symbol, decimals, ..
+        } => {
+            let human = raw_to_human(event.value.value(), *decimals);
+            format!("{human} {symbol}")
+        }
+        TransferAsset::Native { symbol } => {
+            format!("{} {symbol}", event.value.value())
+        }
+        TransferAsset::Nft {
+            symbol, token_id, ..
+        } => format!("{symbol} #{token_id}"),
     }
 }
 
@@ -1039,15 +2460,25 @@ fn short_addr(s: &str) -> String {
     format!("{}...{}", &s[..6], &s[s.len() - 4..])
 }
 
+fn raw_to_human(raw: u128, decimals: u8) -> String {
+    if decimals == 0 {
+        return raw.to_string();
+    }
+    let divisor = 10u128.pow(u32::from(decimals));
+    let whole = raw / divisor;
+    let frac = raw % divisor;
+    let frac_str = format!("{:0width$}", frac, width = decimals as usize);
+    let frac_trim = frac_str.trim_end_matches('0');
+    if frac_trim.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{frac_trim}")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CSV export helpers
 // ---------------------------------------------------------------------------
-//
-// See `plan/6-address-detail.md` §11 "Shipped" and
-// `plan/15-backlog.md` §8.7. The exporters are deterministic and do
-// not touch the filesystem; they feed `last_copied_value` so tests
-// can assert on the CSV body and a future clipboard adapter can
-// forward the same blob to the OS.
 
 fn csv_for_overview(overview: Option<&AddressOverview>) -> String {
     let mut buf = String::from("address,ens,kind,balance,nonce\n");
@@ -1082,8 +2513,8 @@ fn csv_for_transfers(page: Option<&TransferPage>) -> String {
                 symbol, decimals, ..
             } => ("erc20", symbol.as_str(), decimals.to_string()),
             TransferAsset::Nft { kind, .. } => match kind {
-                crate::domain::NftKind::Erc721 => ("erc721", "", String::new()),
-                crate::domain::NftKind::Erc1155 => ("erc1155", "", String::new()),
+                NftKind::Erc721 => ("erc721", "", String::new()),
+                NftKind::Erc1155 => ("erc1155", "", String::new()),
             },
         };
         let to = event
@@ -1142,64 +2573,39 @@ fn csv_for_holdings(holdings: Option<&Vec<TokenHolding>>) -> String {
     buf
 }
 
-/// Compute the USD value of a holding given the raw balance, the
-/// token's decimals, and the per-token USD spot price. The balance
-/// is an unsigned 128-bit integer in the token's smallest
-/// denomination; the returned float is the sum of integer and
-/// fractional parts scaled independently so we do not lose
-/// precision on tokens with 18 decimals and balances above 2^53.
 pub fn token_usd_value(raw_balance: u128, decimals: u8, price_usd: f64) -> f64 {
     if decimals == 0 {
         return (raw_balance as f64) * price_usd;
     }
-    // Clamp the divisor at 10^38 — anything above that produces
-    // infinity anyway on IEEE-754 doubles.
     let power = u32::from(decimals.min(38));
     let divisor = 10f64.powi(power as i32);
     (raw_balance as f64) / divisor * price_usd
 }
 
 // ---------------------------------------------------------------------------
-// Portfolio summary (Tokens tab header + distribution chart)
+// Portfolio summary
 // ---------------------------------------------------------------------------
-//
-// Pure aggregation over a `&[TokenHolding]`. `Unsupported` and
-// `Pending` holdings are counted as "not priced" and contribute
-// nothing to `total_usd`; only `Available` entries land in the
-// `top_by_usd` list. See `plan/6-address-detail.md` §11 "Shipped".
 
-/// One row of the top-5 distribution table shown on the Tokens tab.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortfolioTopEntry {
     pub symbol: String,
     pub usd_value: f64,
 }
 
-/// Aggregate figures used by the Tokens tab header, empty-state
-/// badge and top-5 bar chart.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortfolioSummary {
-    /// Sum of USD values across every `PriceLookup::Available`
-    /// holding in the input.
     pub total_usd: f64,
-    /// Count of holdings with a resolved price.
     pub priced: usize,
-    /// Count of holdings flagged as `Unsupported` or `Pending`.
     pub not_priced: usize,
-    /// Up to five rows ordered by USD value descending.
     pub top_by_usd: Vec<PortfolioTopEntry>,
 }
 
-/// Derive a [`PortfolioSummary`] from a slice of holdings. Pure
-/// function, no I/O. Keeps the Tokens tab render path free of
-/// per-frame allocation for the summary.
 #[must_use]
 pub fn portfolio_summary(holdings: &[TokenHolding]) -> PortfolioSummary {
     let mut total = 0.0f64;
     let mut priced = 0usize;
     let mut not_priced = 0usize;
     let mut ranked: Vec<PortfolioTopEntry> = Vec::new();
-
     for h in holdings {
         match &h.price {
             PriceLookup::Available(p) => {
@@ -1218,10 +2624,8 @@ pub fn portfolio_summary(holdings: &[TokenHolding]) -> PortfolioSummary {
             }
         }
     }
-    // Descending USD value. `total_cmp` avoids NaN ambiguity.
     ranked.sort_by(|a, b| b.usd_value.total_cmp(&a.usd_value));
     ranked.truncate(5);
-
     PortfolioSummary {
         total_usd: total,
         priced,
@@ -1250,10 +2654,6 @@ fn format_usd(v: f64) -> String {
     format!("${v:.2}")
 }
 
-/// Render the top-5 distribution as `symbol ████ $value` rows in a
-/// deterministic, terminal-friendly format. `width` is the maximum
-/// number of glyphs used for the bar; the longest bar always equals
-/// `width` so tests can assert on relative widths.
 pub fn render_top_distribution(summary: &PortfolioSummary, width: usize) -> String {
     if summary.top_by_usd.is_empty() {
         return "(no priced holdings yet)".to_string();
@@ -1292,9 +2692,6 @@ pub fn render_top_distribution(summary: &PortfolioSummary, width: usize) -> Stri
     out.trim_end_matches('\n').to_string()
 }
 
-/// Format a float with at most 6 significant decimals and strip
-/// trailing zeros. Keeps CSV output compact without pulling in a
-/// dedicated formatting crate.
 fn format_csv_number(v: f64) -> String {
     if !v.is_finite() {
         return String::new();
@@ -1305,5 +2702,276 @@ fn format_csv_number(v: f64) -> String {
         "0".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Contract overview body + ABI pretty-print
+// ---------------------------------------------------------------------------
+
+fn contract_overview_body(
+    address: Address,
+    overview: Option<&ContractOverview>,
+    source: Option<&ContractSource>,
+) -> String {
+    let Some(ov) = overview else {
+        return "Loading...".to_string();
+    };
+    let proxy_line = match ov.proxy {
+        Some(info) => {
+            let role = match info.kind {
+                crate::domain::ProxyKind::Transparent => "admin",
+                _ => "impl",
+            };
+            format!(
+                "Proxy       {kind} [{source}] -> {role} {impl_addr}",
+                kind = info.kind.label(),
+                source = info.source.label(),
+                role = role,
+                impl_addr = info.implementation.to_hex(),
+            )
+        }
+        None => "Proxy       not detected".to_string(),
+    };
+    let source_line = match source {
+        Some(s) if s.is_verified => {
+            let optimizer = if s.optimizer_enabled {
+                format!("enabled ({} runs)", s.optimizer_runs)
+            } else {
+                "disabled".to_string()
+            };
+            format!(
+                "Verified    yes\n\
+Name        {name}\n\
+Compiler    {compiler}\n\
+Optimizer   {optimizer}\n\
+License     {license}",
+                name = if s.contract_name.is_empty() {
+                    "(unknown)".to_string()
+                } else {
+                    s.contract_name.clone()
+                },
+                compiler = if s.compiler_version.is_empty() {
+                    "(unknown)".to_string()
+                } else {
+                    s.compiler_version.clone()
+                },
+                optimizer = optimizer,
+                license = if s.license.is_empty() {
+                    "(unknown)".to_string()
+                } else {
+                    s.license.clone()
+                },
+            )
+        }
+        Some(_) => "Verified    no".to_string(),
+        None => "Verified    (loading...)".to_string(),
+    };
+    format!(
+        "Address     {addr}\n\
+Balance     {balance} wei\n\
+Nonce       {nonce}\n\
+{proxy_line}\n\
+\n\
+{source_line}\n\
+\n\
+[]/[]] cycle sub-tabs    [Up/Down] pick file on Source    [PageUp/PageDown] scroll",
+        addr = address.to_hex(),
+        balance = ov.account.balance.value(),
+        nonce = ov.account.nonce,
+    )
+}
+
+fn abi_body(source: Option<&ContractSource>) -> (String, String) {
+    let Some(source) = source else {
+        return ("ABI".to_string(), "Loading ABI...".to_string());
+    };
+    if !source.is_verified || source.abi.trim().is_empty() {
+        return (
+            "ABI".to_string(),
+            "No ABI available (contract unverified).".to_string(),
+        );
+    }
+    let pretty = serde_json::from_str::<serde_json::Value>(&source.abi)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or_else(|| source.abi.clone());
+    ("ABI".to_string(), pretty)
+}
+
+fn parse_slot(raw: &str) -> Result<[u8; 32], String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("slot input is empty".into());
+    }
+    let (radix, digits) = if let Some(rest) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else {
+        (10, trimmed)
+    };
+    if radix == 16 {
+        if digits.len() > 64 {
+            return Err(format!("slot hex too long ({} > 64)", digits.len()));
+        }
+        let padded = format!("{:0>64}", digits);
+        let mut bytes = [0u8; 32];
+        hex::decode_to_slice(&padded, &mut bytes).map_err(|e| format!("invalid hex: {e}"))?;
+        Ok(bytes)
+    } else {
+        let n: u128 = digits
+            .parse()
+            .map_err(|e| format!("invalid decimal: {e}"))?;
+        let mut bytes = [0u8; 32];
+        bytes[16..].copy_from_slice(&n.to_be_bytes());
+        Ok(bytes)
+    }
+}
+
+fn format_storage_word(slot: [u8; 32], word: &[u8; 32]) -> String {
+    let hex_out = format!("0x{}", hex::encode(word));
+    let slot_hex = format!("0x{}", hex::encode(slot));
+    let as_u128 = if word[..16].iter().all(|b| *b == 0) {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&word[16..]);
+        Some(u128::from_be_bytes(buf))
+    } else {
+        None
+    };
+    let as_address = if word[..12].iter().all(|b| *b == 0) {
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&word[12..]);
+        Some(Address::from_bytes(bytes).to_hex())
+    } else {
+        None
+    };
+    let mut out = format!("Slot      {slot_hex}\nHex       {hex_out}\n");
+    if let Some(n) = as_u128 {
+        out.push_str(&format!("Decimal   {n}\n"));
+    }
+    if let Some(addr) = as_address {
+        out.push_str(&format!("Address   {addr}\n"));
+    }
+    out
+}
+
+fn domain_error_message(err: &DomainError) -> String {
+    match err {
+        DomainError::ExecutionReverted { reason } => format!("revert: {reason}"),
+        other => other.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Incomplete token copy (plan/8 §13.2)
+// ---------------------------------------------------------------------------
+
+fn render_incomplete_body(ov: &TokenOverview, address: Address) -> String {
+    let addr_hex = ov.metadata.address.to_hex();
+    let shown_addr = if addr_hex.is_empty() {
+        address.to_hex()
+    } else {
+        addr_hex
+    };
+    let symbol_cell = if ov.metadata.symbol.is_empty() {
+        "(none)".to_string()
+    } else {
+        ov.metadata.symbol.clone()
+    };
+    let name_cell = if ov.metadata.name.is_empty() {
+        "(none)".to_string()
+    } else {
+        ov.metadata.name.clone()
+    };
+    format!(
+        "Address       {addr}\n\
+Symbol        {symbol}\n\
+Name          {name}\n\
+Decimals      {decimals}\n\
+\n\
+This address does not look like a standard ERC-20.\n\
+Decimals / symbol are missing from alchemy_getTokenMetadata.\n\
+\n\
+[c] View as Contract    [Esc] back",
+        addr = shown_addr,
+        symbol = symbol_cell,
+        name = name_cell,
+        decimals = ov.metadata.decimals,
+    )
+}
+
+fn format_price_lookup(lookup: &PriceLookup) -> String {
+    match lookup {
+        PriceLookup::Available(p) => format_price(p.value),
+        PriceLookup::Unsupported { provider } => format!("(not indexed by {provider})"),
+        PriceLookup::Pending => "loading...".to_string(),
+    }
+}
+
+fn format_price(value: f64) -> String {
+    if !value.is_finite() {
+        return "-".to_string();
+    }
+    if value == 0.0 {
+        return "$0".to_string();
+    }
+    let abs = value.abs();
+    if abs >= 1.0 {
+        format!("${value:.4}")
+    } else if abs >= 0.01 {
+        format!("${value:.6}")
+    } else {
+        format!("${value:.8}")
+    }
+}
+
+fn format_market_cap(value: f64) -> String {
+    if !value.is_finite() || value <= 0.0 {
+        return "-".to_string();
+    }
+    let rounded = value.round() as u128;
+    let with_commas = group_thousands(rounded);
+    format!("${with_commas}")
+}
+
+fn group_thousands(mut n: u128) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut parts = Vec::new();
+    while n > 0 {
+        parts.push(format!("{:03}", n % 1000));
+        n /= 1000;
+    }
+    let first = parts.pop().unwrap();
+    let first = first.trim_start_matches('0');
+    let first = if first.is_empty() { "0" } else { first };
+    let mut out = String::from(first);
+    for chunk in parts.into_iter().rev() {
+        out.push(',');
+        out.push_str(&chunk);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_thousands_formats_values_with_us_grouping() {
+        assert_eq!(group_thousands(0), "0");
+        assert_eq!(group_thousands(7), "7");
+        assert_eq!(group_thousands(1234), "1,234");
+        assert_eq!(group_thousands(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn raw_to_human_trims_trailing_zeros() {
+        assert_eq!(raw_to_human(1_000_000, 6), "1");
+        assert_eq!(raw_to_human(1_234_500, 6), "1.2345");
+        assert_eq!(raw_to_human(0, 18), "0");
     }
 }

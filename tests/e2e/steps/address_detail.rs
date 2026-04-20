@@ -8,8 +8,9 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{AddressDetailScreen, AddressTab, Command, ScreenStack},
     domain::{
-        Address, AddressKind, AddressOverview, BlockNumber, Chain, TokenHolding, TokenMetadata,
-        TransferAsset, TransferCategory, TransferEvent, TransferPage, TxHash, Wei,
+        Address, AddressKind, AddressOverview, BlockNumber, Chain, PriceLookup, PricePoint,
+        PriceSeries, PriceWindow, TokenHolding, TokenMetadata, TokenOverview, TokenPrice,
+        TransferAsset, TransferCategory, TransferEvent, TransferPage, TxHash, UnixTimestamp, Wei,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -603,5 +604,90 @@ async fn inline_token_shows_symbol_and_price(
         "price {} differs from expected {}",
         price.value,
         expected_price,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Steps migrated from the deleted token_detail.rs (plan/16 §8.1).
+// These prime the stubs shared with `spawn_address_detail_with_erc20_probe`
+// and with the Token sub-tab scenarios.
+// ---------------------------------------------------------------------------
+
+fn parse_window_label(label: &str) -> PriceWindow {
+    match label {
+        "1d" => PriceWindow::D1,
+        "1m" => PriceWindow::M1,
+        "1y" => PriceWindow::Y1,
+        other => panic!("unknown window {other}"),
+    }
+}
+
+#[given(
+    regex = r#"^the token reader knows "(0x[0-9a-fA-F]{40})" as "([^"]+)" / "([^"]+)" decimals (\d+) supply (\d+)$"#
+)]
+async fn reader_knows_token(
+    world: &mut AppWorld,
+    addr_hex: String,
+    symbol: String,
+    name: String,
+    decimals: u8,
+    supply: u128,
+) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    world.token_reader_stub.insert(TokenOverview {
+        metadata: TokenMetadata {
+            address,
+            symbol,
+            name,
+            decimals,
+        },
+        total_supply: supply,
+        price: PriceLookup::Pending,
+    });
+}
+
+#[given(regex = r#"^the prices stub returns (\d+(?:\.\d+)?) USD for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn prices_stub_has_spot(world: &mut AppWorld, value: f64, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    world.prices_stub.set_single(
+        addr,
+        TokenPrice {
+            currency: "usd".into(),
+            value,
+            as_of: UnixTimestamp::from_seconds(1_700_000_000),
+        },
+    );
+}
+
+#[given(regex = r#"^the Prices API returns 404 for "(0x[0-9a-fA-F]{40})"$"#)]
+async fn prices_api_returns_404(world: &mut AppWorld, addr_hex: String) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    world.prices_stub.set_unsupported(addr, "alchemy-prices");
+}
+
+#[given(
+    regex = r#"^the prices stub returns (\d+) points for window "([^"]+)" on "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn prices_stub_has_history(
+    world: &mut AppWorld,
+    n: u64,
+    window_label: String,
+    addr_hex: String,
+) {
+    let addr = Address::from_hex(&addr_hex).unwrap();
+    let window = parse_window_label(&window_label);
+    let points = (0..n)
+        .map(|i| PricePoint {
+            at: UnixTimestamp::from_seconds(1_700_000_000 + i * 3600),
+            value: 1.0 + (i as f64) * 0.01,
+        })
+        .collect();
+    world.prices_stub.set_history(
+        addr,
+        PriceSeries {
+            window,
+            currency: "usd".into(),
+            points,
+        },
     );
 }

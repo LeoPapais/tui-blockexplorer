@@ -9,10 +9,9 @@ use std::time::Duration;
 
 use blockexplorer_tui::{
     adapters::ui::{
-        AddressDetailScreen, BlockDetailScreen, Command, ContractDetailScreen,
-        DetailPlaceholderScreen, HomeScreen, ScreenStack, SearchScreen, TokenDetailScreen,
-        TxDetailScreen, address_feed, block_feed, contract_feed, home_feed, search_feed,
-        token_feed, tx_feed,
+        AddressDetailScreen, AddressTab, BlockDetailScreen, Command, DetailPlaceholderScreen,
+        HomeScreen, ScreenStack, SearchScreen, TxDetailScreen, address_feed, block_feed,
+        home_feed, search_feed, tx_feed,
     },
     application::{
         ConnectionStatus, HomeViewModel,
@@ -149,9 +148,12 @@ pub(crate) fn build_search_factory(
                 ResolvedEntity::DelegatedEoa { address, .. } => {
                     spawn_address_detail(chain, address, address_reader.clone())
                 }
-                ResolvedEntity::Token(meta) => {
-                    spawn_token_detail(chain, meta.address, token_reader.clone())
-                }
+                ResolvedEntity::Token(meta) => spawn_token_detail(
+                    chain,
+                    meta.address,
+                    token_reader.clone(),
+                    address_reader.clone(),
+                ),
                 other => Box::new(DetailPlaceholderScreen::new(other))
                     as Box<dyn blockexplorer_tui::adapters::ui::Screen>,
             })
@@ -190,6 +192,12 @@ pub(crate) fn spawn_block_detail<
     Box::new(BlockDetailScreen::loading(chain, id, feed, open_tx))
 }
 
+/// Spawn a unified AddressDetail focused on the Contract tab.
+/// Feeds the contract-overview channel (Overview sub-tab) by
+/// loading the ContractOverview through the use case. Other
+/// contract-specific channels (source, read, events, storage) stay
+/// unanswered, matching the old minimal `spawn_contract_detail`
+/// helper's shape.
 pub(crate) fn spawn_contract_detail<
     A: AddressReaderPort + Clone + 'static,
     P: ProxyDetectionPort + Clone + 'static,
@@ -199,167 +207,106 @@ pub(crate) fn spawn_contract_detail<
     address_reader: A,
     proxy_detector: P,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
-    let (feed, sender) = contract_feed();
+    let (feed, sender) = address_feed();
     let reader = address_reader.clone();
     let detector = proxy_detector.clone();
     tokio::spawn(async move {
-        let blockexplorer_tui::adapters::ui::ContractFeedSender {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
             updates_tx,
-            source_tx: _,
-            read_rx: _,
-            read_tx: _,
-            events_rx: _,
-            events_tx: _,
-            storage_rx: _,
-            storage_tx: _,
+            contract_overview_tx,
             mut input_rx,
+            ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
-            if let Ok(ov) = load_contract_overview::run(&reader, &detector, addr, chain).await
+            // First publish the AddressOverview so the screen can
+            // reveal the Contract tab.
+            if let Ok(Some(ov)) = reader.get(addr, chain).await
                 && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+            if let Ok(cov) = load_contract_overview::run(&reader, &detector, addr, chain).await
+                && contract_overview_tx.send(cov).is_err()
             {
                 break;
             }
         }
     });
-    Box::new(ContractDetailScreen::loading(chain, address, feed))
+    Box::new(AddressDetailScreen::with_factories_and_tab(
+        chain,
+        address,
+        feed,
+        None,
+        None,
+        AddressTab::Contract,
+    ))
 }
 
-pub(crate) fn spawn_token_detail<R: TokenReaderPort + Clone + 'static>(
-    chain: Chain,
-    address: Address,
-    reader: R,
-) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
-    // Tests that only prime the token reader stub reuse this
-    // minimal helper: price / transfers / history channels are
-    // drained but never answered, so the Chart tab stays in the
-    // "loading..." state.
-    let (feed, sender) = token_feed();
-    let reader_for_task = reader.clone();
-    tokio::spawn(async move {
-        let blockexplorer_tui::adapters::ui::TokenFeedSender {
-            updates_tx,
-            price_tx: _,
-            transfers_tx: _,
-            history_tx: _,
-            mut input_rx,
-            window_req_rx: _,
-        } = sender;
-        while let Some(addr) = input_rx.recv().await {
-            if let Ok(Some(ov)) = reader_for_task.get(addr, chain).await
-                && updates_tx.send(ov).is_err()
-            {
-                break;
-            }
-        }
-    });
-    Box::new(TokenDetailScreen::loading(chain, address, feed))
-}
-
-/// Fully-wired TokenDetail feed: pumps overview + spot price +
-/// transfers + historical series against the provided stubs, and
-/// wires Enter on a Transfers row to open a TxDetail built through
-/// `spawn_tx_detail`. Accepts an optional
-/// [`TokenPriceStreamPort`](blockexplorer_tui::application::ports::TokenPriceStreamPort)
-/// so the scenarios covering `plan/8-token-detail.md` §13.1 can push
-/// live samples on demand, and an optional open-contract factory for
-/// the unsupported-token `c` shortcut described in §13.2.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_token_detail_with_full_feeds<
-    R: TokenReaderPort + Clone + Send + Sync + 'static,
-    Pr: blockexplorer_tui::application::ports::PricesPort + Clone + Send + Sync + 'static,
-    Tr: blockexplorer_tui::application::ports::TransfersPort + Clone + Send + Sync + 'static,
-    Tx: blockexplorer_tui::application::ports::TxReaderPort + Clone + Send + Sync + 'static,
-    S: blockexplorer_tui::application::ports::TokenPriceStreamPort + Clone + Send + Sync + 'static,
+/// Spawn a unified AddressDetail focused on the Token tab. Only
+/// the token-reader port is wired so price / transfers / history
+/// channels stay in the "loading..." state, matching the old
+/// minimal `spawn_token_detail` helper. The address reader is
+/// primed as well so the screen exposes the Contract tab next to
+/// Token (required by plan/16 §2).
+pub(crate) fn spawn_token_detail<
+    R: TokenReaderPort + Clone + 'static,
+    A: AddressReaderPort + Clone + 'static,
 >(
     chain: Chain,
     address: Address,
     reader: R,
-    prices: Pr,
-    transfers: Tr,
-    tx_reader: Tx,
-    stream: Option<S>,
-    open_contract: Option<blockexplorer_tui::adapters::ui::TokenOpenContractFactory>,
+    address_reader: A,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
-    let (feed, sender) = token_feed();
+    let (feed, sender) = address_feed();
     let reader_for_task = reader.clone();
-    let prices_for_task = prices.clone();
-    let transfers_for_task = transfers.clone();
+    let address_reader_for_task = address_reader.clone();
     tokio::spawn(async move {
-        let blockexplorer_tui::adapters::ui::TokenFeedSender {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
             updates_tx,
-            price_tx,
-            transfers_tx,
-            history_tx,
+            token_overview_tx,
             mut input_rx,
-            mut window_req_rx,
+            ..
         } = sender;
-        let mut current: Option<Address> = None;
-        let mut price_stream_rx: Option<
-            tokio::sync::mpsc::UnboundedReceiver<blockexplorer_tui::domain::PriceLookup>,
-        > = None;
-        loop {
-            tokio::select! {
-                biased;
-                maybe_addr = input_rx.recv() => {
-                    let Some(addr) = maybe_addr else { break; };
-                    current = Some(addr);
-                    let (ov, price, page) = tokio::join!(
-                        reader_for_task.get(addr, chain),
-                        prices_for_task.get_single(addr, chain),
-                        transfers_for_task.get_for_contract(addr, chain, None),
-                    );
-                    if let Ok(Some(ov)) = ov { let _ = updates_tx.send(ov); }
-                    if let Ok(opt) = price { let _ = price_tx.send(opt); }
-                    if let Ok(page) = page { let _ = transfers_tx.send(page); }
-                    // Subscribe to the live stream (if wired) after
-                    // the initial fetch so the warm-up price does
-                    // not race against the one-shot `get_single`.
-                    price_stream_rx = match stream.as_ref() {
-                        Some(s) => s.subscribe(addr, chain).await.ok(),
-                        None => None,
-                    };
-                }
-                maybe_window = window_req_rx.recv() => {
-                    let Some(window) = maybe_window else { break; };
-                    let Some(addr) = current else { continue; };
-                    let series = prices_for_task
-                        .get_history(addr, chain, window)
-                        .await
-                        .unwrap_or_else(|_| blockexplorer_tui::domain::PriceSeries::empty(window));
-                    let _ = history_tx.send(series);
-                }
-                maybe_lookup = async {
-                    match price_stream_rx.as_mut() {
-                        Some(rx) => rx.recv().await,
-                        None => std::future::pending().await,
+        while let Some(addr) = input_rx.recv().await {
+            // Publish an Address overview (Contract) so Token +
+            // Contract main tabs surface. When the address reader
+            // has no entry, fall back to a synthesized Contract
+            // overview so the screen can still reveal tabs.
+            let overview = match address_reader_for_task.get(addr, chain).await {
+                Ok(Some(ov)) => Some(ov),
+                _ => None,
+            };
+            if let Some(ov) = overview
+                && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+            match reader_for_task.get(addr, chain).await {
+                Ok(Some(ov)) => {
+                    if token_overview_tx.send(Some(ov)).is_err() {
+                        break;
                     }
-                } => {
-                    match maybe_lookup {
-                        Some(lookup) => {
-                            if price_tx.send(lookup).is_err() {
-                                break;
-                            }
-                        }
-                        None => {
-                            price_stream_rx = None;
-                        }
-                    }
+                }
+                _ => {
+                    let _ = token_overview_tx.send(None);
                 }
             }
         }
     });
-
-    let open_tx: blockexplorer_tui::adapters::ui::token_detail::OpenTxFactory =
-        Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader.clone()));
-    Box::new(TokenDetailScreen::with_factories(
+    Box::new(AddressDetailScreen::with_factories_and_tab(
         chain,
         address,
         feed,
-        Some(open_tx),
-        open_contract,
+        None,
+        None,
+        AddressTab::Token,
     ))
 }
+
+// `spawn_token_detail_with_full_feeds` was deleted alongside the
+// `TokenDetailScreen` in Slice 3. Scenarios that exercised the
+// full token feed migrated to `tests/e2e/features/address_detail.feature`
+// backed by `spawn_address_detail_as_token_with_full_feeds` below.
 
 pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
     chain: Chain,
@@ -508,8 +455,14 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
         Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
 
     let token_reader_for_open = token_reader.clone();
+    let address_reader_for_open = reader.clone();
     let open_token: OpenTokenFactory = Box::new(move |contract| {
-        spawn_token_detail(chain, contract, token_reader_for_open.clone())
+        spawn_token_detail(
+            chain,
+            contract,
+            token_reader_for_open.clone(),
+            address_reader_for_open.clone(),
+        )
     });
 
     Box::new(
@@ -519,7 +472,6 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
             feed,
             Some(open_tx),
             Some(open_token),
-            None,
         ),
     )
 }
@@ -569,11 +521,10 @@ pub(crate) fn spawn_address_detail_with_reverse_ens<
 }
 
 /// Address-detail spawner for the ERC-20 inline Token tab
-/// scenarios. Uses the production `infra::address_feed::spawn`
-/// directly so the gated-probe behaviour is exercised end-to-end.
-/// Injects stubs for every port: address reader, transfers,
-/// portfolio, token reader (for the probe) and prices (for the
-/// inline mini-chart).
+/// scenarios. Runs a local spawn loop mirroring the `Contract /
+/// IsToken` branch of `infra::address_feed::spawn`. Cheaper to
+/// compose than the production path (no proxy / source / storage
+/// ports needed for the inline tab assertions).
 #[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn spawn_address_detail_with_erc20_probe<
     R: AddressReaderPort + Clone + Send + Sync + 'static,
@@ -593,28 +544,96 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
     prices: Pr,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     use blockexplorer_tui::adapters::ui::{OpenTokenFactory, address_detail::OpenTxFactory};
+    use blockexplorer_tui::domain::PriceWindow;
     let (feed, sender) = address_feed();
-    // The ERC-20 probe scenarios do not assert on reverse ENS; reuse
-    // an empty resolver stub so the production feed still composes
-    // `load_address_overview::run`.
-    let ens = crate::support::stubs::StubEnsResolverPort::new();
-    std::mem::drop(blockexplorer_tui::infra::address_feed::spawn(
-        chain,
-        reader,
-        transfers,
-        portfolio,
-        token_reader.clone(),
-        prices,
-        ens,
-        sender,
-    ));
+    let reader_for_open = reader.clone();
+    let token_reader_for_open = token_reader.clone();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
+            updates_tx,
+            transfers_tx,
+            portfolio_tx,
+            token_overview_tx,
+            token_price_tx,
+            token_series_tx,
+            token_transfers_tx,
+            mut input_rx,
+            ..
+        } = sender;
+        while let Some(addr) = input_rx.recv().await {
+            let (ov_res, tr_res, pf_res) = tokio::join!(
+                reader.get(addr, chain),
+                transfers.get_for_address(addr, chain, None),
+                portfolio.get_token_balances(addr, chain),
+            );
+            let kind_contract = matches!(
+                ov_res.as_ref(),
+                Ok(Some(ov)) if matches!(
+                    ov.kind,
+                    blockexplorer_tui::domain::AddressKind::Contract
+                )
+            );
+            if let Ok(Some(ov)) = ov_res
+                && updates_tx.send(ov).is_err()
+            {
+                break;
+            }
+            if let Ok(page) = tr_res
+                && transfers_tx.send(page).is_err()
+            {
+                break;
+            }
+            if let Ok(holdings) = pf_res
+                && portfolio_tx.send(holdings).is_err()
+            {
+                break;
+            }
+            if !kind_contract {
+                continue;
+            }
+            match token_reader.get(addr, chain).await {
+                Ok(Some(tov)) => {
+                    if token_overview_tx.send(Some(tov)).is_err() {
+                        break;
+                    }
+                    let (price_res, series_res, token_tr_res) = tokio::join!(
+                        prices.get_single(addr, chain),
+                        prices.get_history(addr, chain, PriceWindow::D1),
+                        transfers.get_for_contract(addr, chain, None),
+                    );
+                    if let Ok(lookup) = price_res
+                        && token_price_tx.send(lookup).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(series) = series_res
+                        && token_series_tx.send(series).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(page) = token_tr_res
+                        && token_transfers_tx.send(page).is_err()
+                    {
+                        break;
+                    }
+                }
+                _ => {
+                    let _ = token_overview_tx.send(None);
+                }
+            }
+        }
+    });
 
     let tx_reader_for_open = tx_reader.clone();
     let open_tx: OpenTxFactory =
         Box::new(move |hash| spawn_tx_detail(chain, hash, tx_reader_for_open.clone()));
-    let token_reader_for_open = token_reader.clone();
     let open_token: OpenTokenFactory = Box::new(move |contract| {
-        spawn_token_detail(chain, contract, token_reader_for_open.clone())
+        spawn_token_detail(
+            chain,
+            contract,
+            token_reader_for_open.clone(),
+            reader_for_open.clone(),
+        )
     });
 
     Box::new(
@@ -624,7 +643,6 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
             feed,
             Some(open_tx),
             Some(open_token),
-            None,
         ),
     )
 }
