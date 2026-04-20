@@ -8,7 +8,6 @@
 pub mod address_detail;
 pub mod block_detail;
 pub mod breadcrumb;
-pub mod contract_detail;
 pub mod detail_placeholder;
 pub mod format;
 pub mod gas_tracker;
@@ -23,20 +22,17 @@ pub mod scroll;
 pub mod search;
 pub mod settings;
 pub mod theme;
-pub mod token_detail;
 pub mod tx_detail;
 
 pub use address_detail::{
-    AddressDetailScreen, AddressFeed, AddressFeedSender, AddressTab, OpenContractFactory,
-    OpenTokenFactory, address_feed,
+    AddressDetailScreen, AddressFeed, AddressFeedSender, AddressTab, ContractSubTab,
+    OpenTokenFactory, OpenTxFactory, TokenSubTab, address_feed,
 };
 pub use block_detail::{
-    BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory, block_feed,
+    BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory as BlockOpenTxFactory,
+    block_feed,
 };
 pub use breadcrumb::{BREADCRUMB_SEPARATOR, breadcrumb_segments, render_breadcrumb};
-pub use contract_detail::{
-    ContractDetailScreen, ContractFeed, ContractFeedSender, ContractTab, contract_feed,
-};
 pub use detail_placeholder::DetailPlaceholderScreen;
 pub use gas_tracker::{
     GasFeed, GasFeedSender, GasRefreshHandle, GasRefreshListener, GasTrackerScreen, gas_feed,
@@ -53,8 +49,4 @@ pub use search::{
 };
 pub use settings::{AppConfigSnapshot, ProviderHealthSnapshot, SettingsScreen};
 pub use theme::{Palette, PalettePreset};
-pub use token_detail::{
-    OpenContractFactory as TokenOpenContractFactory, OpenTxFactory as TokenOpenTxFactory,
-    TokenDetailScreen, TokenFeed, TokenFeedSender, TokenTab, token_feed,
-};
 pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};

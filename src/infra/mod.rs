@@ -10,7 +10,6 @@
 pub mod address_feed;
 mod block_feed;
 pub mod config;
-mod contract_feed;
 pub mod cost_meter;
 mod gas_feed;
 pub mod health;
@@ -19,7 +18,6 @@ pub mod logging;
 pub mod mempool_feed;
 pub mod runtime;
 pub mod search_feed;
-mod token_feed;
 mod tx_feed;
 
 use anyhow::{Context, Result};
@@ -53,11 +51,10 @@ use crate::{
             CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
         },
         ui::{
-            AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, ContractDetailScreen,
+            AddressDetailScreen, AddressTab, AppConfigSnapshot, BlockDetailScreen,
             DetailPlaceholderScreen, GasTrackerScreen, GlobalKeyMap, HelpModal, HomeScreen,
-            MempoolScreen, Screen, ScreenStack, SearchScreen, SettingsScreen, TokenDetailScreen,
-            TxDetailScreen, address_feed, block_feed, contract_feed, gas_feed, gas_refresh_channel,
-            search_feed, token_feed, tx_feed,
+            MempoolScreen, Screen, ScreenStack, SearchScreen, SettingsScreen, TxDetailScreen,
+            address_feed, block_feed, gas_feed, gas_refresh_channel, search_feed, tx_feed,
         },
     },
     application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
@@ -114,12 +111,17 @@ fn live_tx_detail_screen(
     Box::new(TxDetailScreen::loading(chain, hash, feed))
 }
 
-/// Build a live `AddressDetailScreen` backed by address-reader,
-/// transfers and portfolio tasks, and wire the Transactions / Tokens
-/// tabs to open TxDetail / TokenDetail on Enter.
+/// Build a live unified `AddressDetailScreen`.
+///
+/// The screen absorbs what used to live in the separate Contract
+/// and Token detail screens. Callers pass an `initial_tab` hint so
+/// search results for `ResolvedEntity::Contract` / `Token` open the
+/// screen already focused on the right main tab (see
+/// `plan/16-unified-address-detail.md` §7).
 fn live_address_detail_screen(
     chain: Chain,
     address: crate::domain::Address,
+    initial_tab: AddressTab,
     rpc: RpcClient,
     alchemy_key: String,
     etherscan_key: Option<String>,
@@ -128,16 +130,24 @@ fn live_address_detail_screen(
     let transfers = AlchemyTransfers::new(rpc.clone());
     let portfolio = AlchemyPortfolio::new(rpc.clone());
     let token_reader = AlchemyTokenReader::new(rpc.clone());
-    // Prices client can fail to build on a malformed key; degrade
-    // gracefully via the same TokenPrices enum used in
-    // `live_token_detail_screen`.
     let prices = match PricesClient::with_api_key(&alchemy_key) {
         Ok(client) => TokenPrices::Alchemy(AlchemyPrices::new(client)),
         Err(_) => TokenPrices::Noop,
     };
-    // plan/6-address-detail.md §11 "Shipped": wrap the base resolver
-    // in the 5-minute TTL decorator (`.cursor/rules/external-apis.mdc`).
     let ens = crate::adapters::ens::CachedEnsResolver::new(AlchemyEnsResolver::new(rpc.clone()));
+    let proxy_detector = build_proxy_detector(rpc.clone(), etherscan_key.as_deref());
+    let contract_source = etherscan_key
+        .clone()
+        .and_then(|key| EtherscanClient::with_default_http(key).ok())
+        .map(EtherscanContractSource::new)
+        .map(TxContractSource::Etherscan)
+        .unwrap_or(TxContractSource::Noop);
+    let contract_reader = AlchemyContractReader::new(rpc.clone());
+    let event_log = AlchemyEventLog::new(rpc.clone());
+    let storage = AlchemyStorage::new(rpc.clone());
+    let network_status = AlchemyNetworkStatusAdapter::new(rpc.clone());
+    let price_stream = PollingTokenPriceStream::with_default_interval(prices.clone());
+
     let (feed, sender) = address_feed();
     std::mem::drop(address_feed::spawn(
         chain,
@@ -147,6 +157,13 @@ fn live_address_detail_screen(
         token_reader,
         prices,
         ens,
+        proxy_detector,
+        contract_source,
+        contract_reader,
+        event_log,
+        storage,
+        network_status,
+        price_stream,
         sender,
     ));
 
@@ -156,138 +173,28 @@ fn live_address_detail_screen(
         live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
     });
 
-    let rpc_for_token = rpc.clone();
-    let alchemy_for_token = alchemy_key.clone();
-    let etherscan_for_token = etherscan_key.clone();
+    let rpc_for_token = rpc;
+    let alchemy_for_token = alchemy_key;
+    let etherscan_for_token = etherscan_key;
     let open_token: crate::adapters::ui::address_detail::OpenTokenFactory =
         Box::new(move |contract| {
-            live_token_detail_screen(
+            live_address_detail_screen(
                 chain,
                 contract,
+                AddressTab::Token,
                 rpc_for_token.clone(),
-                &alchemy_for_token,
+                alchemy_for_token.clone(),
                 etherscan_for_token.clone(),
             )
         });
 
-    let rpc_for_contract = rpc;
-    let etherscan_for_contract = etherscan_key;
-    let open_contract: crate::adapters::ui::address_detail::OpenContractFactory =
-        Box::new(move |addr| {
-            live_contract_detail_screen(
-                chain,
-                addr,
-                rpc_for_contract.clone(),
-                etherscan_for_contract.clone(),
-            )
-        });
-
-    Box::new(AddressDetailScreen::with_factories(
+    Box::new(AddressDetailScreen::with_factories_and_tab(
         chain,
         address,
         feed,
         Some(open_tx),
         Some(open_token),
-        Some(open_contract),
-    ))
-}
-
-/// Build a live `ContractDetailScreen` backed by address-reader,
-/// proxy-detection and Etherscan source tasks.
-fn live_contract_detail_screen(
-    chain: Chain,
-    address: crate::domain::Address,
-    rpc: RpcClient,
-    etherscan_key: Option<String>,
-) -> Box<dyn Screen> {
-    let reader = AlchemyAddressReader::new(rpc.clone());
-    let detector = build_proxy_detector(rpc.clone(), etherscan_key.as_deref());
-    let contract_reader = AlchemyContractReader::new(rpc.clone());
-    let event_log = AlchemyEventLog::new(rpc.clone());
-    let storage = AlchemyStorage::new(rpc.clone());
-    let network_status = AlchemyNetworkStatusAdapter::new(rpc);
-
-    let source = etherscan_key
-        .and_then(|key| EtherscanClient::with_default_http(key).ok())
-        .map(EtherscanContractSource::new)
-        .map(TxContractSource::Etherscan)
-        .unwrap_or(TxContractSource::Noop);
-
-    let (feed, sender) = contract_feed();
-    std::mem::drop(contract_feed::spawn(
-        chain,
-        reader,
-        detector,
-        source,
-        contract_reader,
-        event_log,
-        storage,
-        network_status,
-        sender,
-    ));
-    Box::new(ContractDetailScreen::loading(chain, address, feed))
-}
-
-/// Build a live `TokenDetailScreen` backed by:
-///
-/// - `AlchemyTokenReader` (metadata + totalSupply),
-/// - `AlchemyPrices` (spot + historical prices, when the key could
-///   build a `PricesClient`),
-/// - `AlchemyTransfers::get_for_contract` (Transfers tab).
-///
-/// When the Prices client cannot be constructed (should not happen
-/// with a valid key) we fall back to a null implementation so the
-/// Overview + Transfers tabs still populate. The Chart tab then
-/// renders its "no data" empty state.
-fn live_token_detail_screen(
-    chain: Chain,
-    address: crate::domain::Address,
-    rpc: RpcClient,
-    alchemy_key: &str,
-    etherscan_key: Option<String>,
-) -> Box<dyn Screen> {
-    let reader = AlchemyTokenReader::new(rpc.clone());
-    let transfers = AlchemyTransfers::new(rpc.clone());
-    let prices = match PricesClient::with_api_key(alchemy_key) {
-        Ok(client) => TokenPrices::Alchemy(AlchemyPrices::new(client)),
-        Err(_) => TokenPrices::Noop,
-    };
-
-    let (feed, sender) = token_feed();
-    // Live price streaming: wrap the Prices port in a polling adapter
-    // that emits one sample every `DEFAULT_POLL_INTERVAL`. See
-    // `plan/8-token-detail.md` §13.1.
-    let stream = PollingTokenPriceStream::with_default_interval(prices.clone());
-    std::mem::drop(token_feed::spawn_with_stream(
-        chain, reader, prices, transfers, stream, sender,
-    ));
-
-    let rpc_for_tx = rpc.clone();
-    let etherscan_for_tx = etherscan_key.clone();
-    let open_tx: crate::adapters::ui::TokenOpenTxFactory = Box::new(move |hash| {
-        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
-    });
-
-    // `View as Contract` shortcut surfaced when the metadata comes
-    // back too incomplete to treat the address as an ERC-20. See
-    // `plan/8-token-detail.md` §13.2.
-    let rpc_for_contract = rpc;
-    let etherscan_for_contract = etherscan_key;
-    let open_contract: crate::adapters::ui::TokenOpenContractFactory = Box::new(move |addr| {
-        live_contract_detail_screen(
-            chain,
-            addr,
-            rpc_for_contract.clone(),
-            etherscan_for_contract.clone(),
-        )
-    });
-
-    Box::new(TokenDetailScreen::with_factories(
-        chain,
-        address,
-        feed,
-        Some(open_tx),
-        Some(open_contract),
+        initial_tab,
     ))
 }
 
@@ -752,21 +659,29 @@ fn build_live_search_screen(
                 ResolvedEntity::Tx { hash, .. } => {
                     live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
                 }
-                ResolvedEntity::Address { address, .. } => live_address_detail_screen(
+                ResolvedEntity::Address { address, .. }
+                | ResolvedEntity::DelegatedEoa { address, .. } => live_address_detail_screen(
                     chain,
                     address,
+                    AddressTab::Overview,
                     rpc.clone(),
                     alchemy_key.clone(),
                     etherscan_key.clone(),
                 ),
-                ResolvedEntity::Contract { address } => {
-                    live_contract_detail_screen(chain, address, rpc.clone(), etherscan_key.clone())
-                }
-                ResolvedEntity::Token(meta) => live_token_detail_screen(
+                ResolvedEntity::Contract { address } => live_address_detail_screen(
+                    chain,
+                    address,
+                    AddressTab::Contract,
+                    rpc.clone(),
+                    alchemy_key.clone(),
+                    etherscan_key.clone(),
+                ),
+                ResolvedEntity::Token(meta) => live_address_detail_screen(
                     chain,
                     meta.address,
+                    AddressTab::Token,
                     rpc.clone(),
-                    &alchemy_key,
+                    alchemy_key.clone(),
                     etherscan_key.clone(),
                 ),
                 other => Box::new(DetailPlaceholderScreen::new(other)),
@@ -859,39 +774,31 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                         ResolvedEntity::Tx { hash, .. } => {
                             live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
                         }
-                        ResolvedEntity::Address { address, .. } => {
-                            // Always route to AddressDetail: the screen
-                            // itself detects bytecode and surfaces a
-                            // Contract tab that drills into the
-                            // ContractDetailScreen when the user asks
-                            // for it. This way wallets and contracts
-                            // share the same entry point and neither
-                            // flavour loses balance / transfers /
-                            // tokens.
+                        ResolvedEntity::Address { address, .. }
+                        | ResolvedEntity::DelegatedEoa { address, .. } => {
                             live_address_detail_screen(
                                 chain,
                                 address,
+                                AddressTab::Overview,
                                 rpc.clone(),
                                 alchemy_key.clone(),
                                 etherscan_key.clone(),
                             )
                         }
-                        ResolvedEntity::Contract { address } => {
-                            // Search-list shortcut: jump straight to
-                            // the ContractDetailScreen when the user
-                            // picked the "open as contract" row.
-                            live_contract_detail_screen(
-                                chain,
-                                address,
-                                rpc.clone(),
-                                etherscan_key.clone(),
-                            )
-                        }
-                        ResolvedEntity::Token(meta) => live_token_detail_screen(
+                        ResolvedEntity::Contract { address } => live_address_detail_screen(
+                            chain,
+                            address,
+                            AddressTab::Contract,
+                            rpc.clone(),
+                            alchemy_key.clone(),
+                            etherscan_key.clone(),
+                        ),
+                        ResolvedEntity::Token(meta) => live_address_detail_screen(
                             chain,
                             meta.address,
+                            AddressTab::Token,
                             rpc.clone(),
-                            &alchemy_key,
+                            alchemy_key.clone(),
                             etherscan_key.clone(),
                         ),
                         other => Box::new(DetailPlaceholderScreen::new(other)),
