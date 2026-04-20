@@ -74,11 +74,11 @@ fn enter_on_block_number_asks_the_factory_for_a_push() {
 }
 
 #[test]
-fn esc_deactivates_the_cursor_without_popping() {
+fn backspace_deactivates_the_cursor_without_popping() {
     let (mut screen, _, _) = wire_services();
     screen.handle_key(key(KeyCode::Right));
     assert!(screen.cursor().is_active());
-    let cmd = screen.handle_key(key(KeyCode::Esc));
+    let cmd = screen.handle_key(key(KeyCode::Backspace));
     assert_eq!(cmd, Command::None);
     assert!(!screen.cursor().is_active());
 }
@@ -86,6 +86,15 @@ fn esc_deactivates_the_cursor_without_popping() {
 #[test]
 fn esc_while_cursor_inactive_still_pops_the_screen() {
     let (mut screen, _, _) = wire_services();
+    let cmd = screen.handle_key(key(KeyCode::Esc));
+    assert_eq!(cmd, Command::Pop);
+}
+
+#[test]
+fn esc_pops_screen_even_when_cursor_is_active() {
+    let (mut screen, _, _) = wire_services();
+    screen.handle_key(key(KeyCode::Right));
+    assert!(screen.cursor().is_active());
     let cmd = screen.handle_key(key(KeyCode::Esc));
     assert_eq!(cmd, Command::Pop);
 }

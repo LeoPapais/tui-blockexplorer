@@ -330,3 +330,6 @@ mod arboard_clipboard;
 
 #[path = "functional/live_stack_cursor_services.rs"]
 mod live_stack_cursor_services;
+
+#[path = "functional/footer_hints_render.rs"]
+mod footer_hints_render;

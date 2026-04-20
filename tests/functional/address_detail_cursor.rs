@@ -94,11 +94,20 @@ fn cursor_enter_on_address_opens_address_detail_via_factory() {
 }
 
 #[test]
-fn cursor_esc_deactivates_without_popping() {
+fn cursor_backspace_deactivates_without_popping() {
     let ov = overview_with_ens(None);
     let (mut screen, _, _) = wire_services(ov);
     screen.handle_key(key(KeyCode::Right));
     assert!(screen.cursor().is_active());
-    assert_eq!(screen.handle_key(key(KeyCode::Esc)), Command::None);
+    assert_eq!(screen.handle_key(key(KeyCode::Backspace)), Command::None);
     assert!(!screen.cursor().is_active());
+}
+
+#[test]
+fn esc_pops_screen_even_when_cursor_is_active() {
+    let ov = overview_with_ens(None);
+    let (mut screen, _, _) = wire_services(ov);
+    screen.handle_key(key(KeyCode::Right));
+    assert!(screen.cursor().is_active());
+    assert_eq!(screen.handle_key(key(KeyCode::Esc)), Command::Pop);
 }

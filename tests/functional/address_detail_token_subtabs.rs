@@ -243,15 +243,11 @@ fn live_tail_is_capped_at_rolling_cap() {
 }
 
 #[test]
-fn digit_key_selects_token_subtab() {
-    // `1`..`3` MUST land on the three Token sub-tabs in order, even
-    // though `1`..`3` used to double as Chart-window shortcuts.
-    let cases = [
-        ('1', TokenSubTab::Overview),
-        ('2', TokenSubTab::Transfers),
-        ('3', TokenSubTab::Chart),
-    ];
-    for (digit, expected) in cases {
+fn digit_keys_no_longer_select_token_subtabs() {
+    // Plan/15-backlog §8.16 released the digit keys from sub-tab
+    // selection; `[` / `]` is the only way to cycle sub-tabs now.
+    // When the Token/Chart sub-tab is NOT active, digits are inert.
+    for digit in '1'..='3' {
         let (feed, sender) = address_feed();
         let mut screen = AddressDetailScreen::with_factories_and_tab(
             Chain::Ethereum,
@@ -267,11 +263,50 @@ fn digit_key_selects_token_subtab() {
             .send(Some(standard_overview()))
             .unwrap();
         let _ = screen.tick();
+        assert_eq!(screen.active_token_sub(), TokenSubTab::Overview);
         screen.handle_key(key(KeyCode::Char(digit)));
         assert_eq!(
             screen.active_token_sub(),
-            expected,
-            "digit `{digit}` must land on {expected:?}",
+            TokenSubTab::Overview,
+            "digit `{digit}` must not change the active Token sub-tab",
         );
     }
+}
+
+#[test]
+fn digits_switch_price_window_on_chart() {
+    // On the Token/Chart sub-tab the digits `1`/`2`/`3` map to the
+    // `PriceWindow` selector (D1/M1/Y1). See `plan/8 §12.4` and
+    // `plan/15-backlog.md §8.16` for the rationale behind moving
+    // this shortcut back to the digits.
+    let (feed, sender) = address_feed();
+    let mut screen = AddressDetailScreen::with_factories_and_tab(
+        Chain::Ethereum,
+        addr(),
+        feed,
+        None,
+        None,
+        AddressTab::Token,
+    );
+    screen.set_overview_for_test(contract_overview());
+    sender
+        .token_overview_tx
+        .send(Some(standard_overview()))
+        .unwrap();
+    let _ = screen.tick();
+
+    // Hop to the Chart sub-tab with `]` twice (Overview → Transfers
+    // → Chart).
+    screen.handle_key(key(KeyCode::Char(']')));
+    screen.handle_key(key(KeyCode::Char(']')));
+    assert_eq!(screen.active_token_sub(), TokenSubTab::Chart);
+
+    screen.handle_key(key(KeyCode::Char('2')));
+    assert_eq!(screen.active_window(), PriceWindow::M1);
+
+    screen.handle_key(key(KeyCode::Char('3')));
+    assert_eq!(screen.active_window(), PriceWindow::Y1);
+
+    screen.handle_key(key(KeyCode::Char('1')));
+    assert_eq!(screen.active_window(), PriceWindow::D1);
 }

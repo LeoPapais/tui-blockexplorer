@@ -213,6 +213,7 @@ Feature: Address detail
     And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
     And the prices stub returns 30 points for window "1m" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
     When the user opens AddressDetail with ERC-20 probe for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Token Chart sub-tab
     And the user presses "2" to select window "1m"
     Then the active window is "1m"
     And once the feeds complete, the chart holds 30 points for window "1m"
