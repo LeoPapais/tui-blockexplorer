@@ -9,6 +9,7 @@ pub mod address_detail;
 pub mod block_detail;
 pub mod breadcrumb;
 pub mod detail_placeholder;
+pub mod field_cursor;
 pub mod format;
 pub mod gas_tracker;
 pub mod global_keymap;
@@ -34,6 +35,7 @@ pub use block_detail::{
 };
 pub use breadcrumb::{BREADCRUMB_SEPARATOR, breadcrumb_segments, render_breadcrumb};
 pub use detail_placeholder::DetailPlaceholderScreen;
+pub use field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry, NavigationFactory};
 pub use gas_tracker::{
     GasFeed, GasFeedSender, GasRefreshHandle, GasRefreshListener, GasTrackerScreen, gas_feed,
     gas_refresh_channel,

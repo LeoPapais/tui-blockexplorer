@@ -11,11 +11,12 @@ use ratatui::{
 
 use crate::{
     adapters::ui::{
+        field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
         screen::{Command, Screen},
         theme::PalettePreset,
     },
     application::ports::{HealthLevel, HealthStatus},
-    domain::Chain,
+    domain::{Chain, NavigableValue},
 };
 
 /// Lean view-model passed in at construction. Avoids pulling the
@@ -40,6 +41,8 @@ pub struct SettingsScreen {
     snapshot: AppConfigSnapshot,
     health: ProviderHealthSnapshot,
     palette: PalettePreset,
+    cursor: FieldCursor,
+    cursor_services: Option<CursorServices>,
 }
 
 impl SettingsScreen {
@@ -49,7 +52,41 @@ impl SettingsScreen {
             snapshot,
             health: ProviderHealthSnapshot::default(),
             palette: PalettePreset::DarkDefault,
+            cursor: FieldCursor::new(),
+            cursor_services: None,
         }
+    }
+
+    /// Wire cursor-owned clipboard + navigation. See
+    /// `plan/17-navigable-values.md` §4.
+    #[must_use]
+    pub fn with_cursor_services(mut self, services: CursorServices) -> Self {
+        self.cursor_services = Some(services);
+        self
+    }
+
+    /// Reading-order list of navigable fields for the cursor.
+    /// Everything on Settings is `Plain` (copy-only).
+    #[must_use]
+    pub fn navigable_fields(&self) -> Vec<FieldEntry> {
+        let mut fields = Vec::new();
+        fields.push(FieldEntry::new(
+            "active_chain",
+            NavigableValue::Plain(self.snapshot.chain.display_name().to_string()),
+        ));
+        if let Some(path) = self.snapshot.config_path_hint.as_ref() {
+            fields.push(FieldEntry::new(
+                "config_path",
+                NavigableValue::Plain(path.clone()),
+            ));
+        }
+        fields
+    }
+
+    /// Current cursor state. Exposed for tests.
+    #[must_use]
+    pub const fn cursor(&self) -> &FieldCursor {
+        &self.cursor
     }
 
     /// Attach a health snapshot to the screen. See
@@ -197,8 +234,54 @@ Esc to return to the previous screen, q to quit.",
 
     fn handle_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
-            KeyCode::Char('q') => Command::Quit,
-            KeyCode::Esc => Command::Pop,
+            KeyCode::Char('q') => return Command::Quit,
+            KeyCode::Esc if self.cursor.is_active() => {
+                self.cursor.deactivate();
+                return Command::None;
+            }
+            KeyCode::Esc => return Command::Pop,
+            _ => {}
+        }
+
+        let fields = self.navigable_fields();
+        match key.code {
+            KeyCode::Left => {
+                self.cursor.move_in(fields.len(), CursorDir::Left);
+                return Command::None;
+            }
+            KeyCode::Right => {
+                self.cursor.move_in(fields.len(), CursorDir::Right);
+                return Command::None;
+            }
+            KeyCode::Up => {
+                self.cursor.move_in(fields.len(), CursorDir::Up);
+                return Command::None;
+            }
+            KeyCode::Down => {
+                self.cursor.move_in(fields.len(), CursorDir::Down);
+                return Command::None;
+            }
+            KeyCode::Char('y') if self.cursor.is_active() => {
+                if let (Some(entry), Some(services)) =
+                    (self.cursor.current(&fields), self.cursor_services.as_ref())
+                {
+                    services.copy(&entry.value);
+                }
+                return Command::None;
+            }
+            KeyCode::Enter if self.cursor.is_active() => {
+                if let (Some(entry), Some(services)) =
+                    (self.cursor.current(&fields), self.cursor_services.as_ref())
+                    && let Some(screen) = services.open(&entry.value)
+                {
+                    return Command::Push(screen);
+                }
+                return Command::None;
+            }
+            _ => {}
+        }
+
+        match key.code {
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 let presets = PalettePreset::all();
                 let idx = (c as usize).saturating_sub('1' as usize);

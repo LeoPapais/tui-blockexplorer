@@ -36,6 +36,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        field_cursor::CursorServices,
         format::{humanize_eth, humanize_gas_units, humanize_gwei},
         screen::{Command, Screen},
         scroll::ScrollState,
@@ -43,7 +44,7 @@ use crate::{
     application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
         AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, CallNode, Chain, DiffChange,
-        LogEntry, StateDiff, TxHash, TxStatus, Wei,
+        LogEntry, NavigableValue, StateDiff, TxHash, TxStatus, Wei,
     },
 };
 
@@ -185,6 +186,11 @@ pub struct TxDetailScreen {
     /// inspect it; the UI itself never surfaces the value. See
     /// `plan/4-tx-detail.md` section 12.6.3.
     resimulate_count: u32,
+    /// Cursor collaborators (real clipboard + navigation factory).
+    /// When present, `y` copies via `ClipboardPort::set` and `Enter`
+    /// pushes the next screen through `NavigationFactory::open`. See
+    /// `plan/17-navigable-values.md` §4.
+    cursor_services: Option<CursorServices>,
 }
 
 impl TxDetailScreen {
@@ -204,6 +210,33 @@ impl TxDetailScreen {
             scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
             resimulate_count: 0,
+            cursor_services: None,
+        }
+    }
+
+    /// Wire cursor-owned clipboard + navigation. See
+    /// `plan/17-navigable-values.md` §4.
+    #[must_use]
+    pub fn with_cursor_services(mut self, services: CursorServices) -> Self {
+        self.cursor_services = Some(services);
+        self
+    }
+
+    /// Navigable value backing the currently-selected Overview row,
+    /// when the label maps to an address, block number or tx hash.
+    /// Returns `None` for copy-only fields such as gas price or
+    /// nonce. See `plan/17-navigable-values.md` §6.
+    #[must_use]
+    pub fn overview_navigable_value(&self) -> Option<NavigableValue> {
+        let view = self.current.as_ref()?;
+        let rows = overview_rows(view);
+        let row = rows.get(self.overview_row)?;
+        match row.label {
+            "Hash" => Some(NavigableValue::TxHash(view.tx.hash)),
+            "Block" => view.tx.block_number.map(NavigableValue::BlockNumber),
+            "From" => Some(NavigableValue::Address(view.tx.from)),
+            "To" => view.tx.to.map(NavigableValue::Address),
+            _ => None,
         }
     }
 
@@ -375,6 +408,21 @@ impl Screen for TxDetailScreen {
         // key is a no-op for them.
         if key.code == KeyCode::Char('s') {
             self.resimulate();
+            return Command::None;
+        }
+
+        // Enter on the Overview tab opens the matching detail screen
+        // (Address / Block / Tx) for the selected row, when the
+        // navigation factory is wired. See
+        // `plan/17-navigable-values.md` §6.
+        if key.code == KeyCode::Enter && self.active_tab == TxTab::Overview {
+            if let (Some(value), Some(services)) = (
+                self.overview_navigable_value(),
+                self.cursor_services.as_ref(),
+            ) && let Some(screen) = services.open(&value)
+            {
+                return Command::Push(screen);
+            }
             return Command::None;
         }
 
@@ -562,6 +610,13 @@ impl TxDetailScreen {
             }
         };
         if let Some(v) = value {
+            if let Some(services) = self.cursor_services.as_ref() {
+                // When services are wired, ship the same string the
+                // legacy `last_copied_value` sink stores to the real
+                // clipboard too. Failing copies are swallowed by the
+                // adapter (headless fallback).
+                services.copy(&NavigableValue::Plain(v.clone()));
+            }
             self.last_copied_value = Some(v);
         }
     }

@@ -38,15 +38,17 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
     adapters::ui::{
+        field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
         highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
     },
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, AddressKind, AddressOverview, BlockNumber,
-        Chain, ContractOverview, ContractSource, DecodedValue, DomainError, EventsPage, NftKind,
-        PriceLookup, PricePoint, PriceSeries, PriceWindow, SourceFile, TokenHolding, TokenOverview,
-        TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash, parse_abi_functions,
+        Chain, ContractOverview, ContractSource, DecodedValue, DomainError, EventsPage,
+        NavigableValue, NftKind, PriceLookup, PricePoint, PriceSeries, PriceWindow, SourceFile,
+        TokenHolding, TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage,
+        TxHash, parse_abi_functions,
     },
 };
 
@@ -395,6 +397,11 @@ pub struct AddressDetailScreen {
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
     last_copied_value: Option<String>,
+    /// Field cursor for the Overview tab. Inactive by default; the
+    /// user activates it by pressing an arrow key. See
+    /// `plan/17-navigable-values.md` §4.
+    cursor: FieldCursor,
+    cursor_services: Option<CursorServices>,
 }
 
 impl AddressDetailScreen {
@@ -502,6 +509,68 @@ impl AddressDetailScreen {
             open_tx,
             open_token,
             last_copied_value: None,
+            cursor: FieldCursor::new(),
+            cursor_services: None,
+        }
+    }
+
+    /// Wire cursor-owned clipboard + navigation. See
+    /// `plan/17-navigable-values.md` §4.
+    #[must_use]
+    pub fn with_cursor_services(mut self, services: CursorServices) -> Self {
+        self.cursor_services = Some(services);
+        self
+    }
+
+    /// Current cursor state. Exposed for tests.
+    #[must_use]
+    pub const fn cursor(&self) -> &FieldCursor {
+        &self.cursor
+    }
+
+    /// Navigable values on the current tab. Populated for Overview
+    /// (address, ENS, delegated_to) and Tokens (each holding's
+    /// contract address). Other tabs return an empty list until the
+    /// per-sub-tab follow-ups covered by `plan/15-backlog.md` §8.16
+    /// are delivered.
+    #[must_use]
+    pub fn navigable_fields(&self) -> Vec<FieldEntry> {
+        match self.active_tab_or_fallback() {
+            AddressTab::Overview => {
+                let Some(ov) = self.current.as_ref() else {
+                    return Vec::new();
+                };
+                let mut fields = vec![FieldEntry::new(
+                    "address",
+                    NavigableValue::Address(ov.address),
+                )];
+                if let Some(ens) = ov.ens_name.as_ref() {
+                    fields.push(FieldEntry::new("ens", NavigableValue::EnsName(ens.clone())));
+                }
+                if let Some(delegate) = ov.delegated_to {
+                    fields.push(FieldEntry::new(
+                        "delegated_to",
+                        NavigableValue::Address(delegate),
+                    ));
+                }
+                fields
+            }
+            AddressTab::Tokens => self
+                .holdings
+                .as_ref()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|h| {
+                            FieldEntry::new(
+                                "token_address",
+                                NavigableValue::TokenAddress(h.metadata.address),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
         }
     }
 
@@ -1243,13 +1312,33 @@ impl AddressDetailScreen {
             return Command::Quit;
         }
         if matches!(key.code, KeyCode::Esc) {
+            if self.cursor.is_active() {
+                self.cursor.deactivate();
+                return Command::None;
+            }
             return Command::Pop;
         }
 
-        // Clipboard bindings (available from any tab).
+        // Clipboard bindings (available from any tab). When the
+        // cursor is live on Overview, `y` copies the current field's
+        // canonical form and also pushes through the real clipboard
+        // adapter. Falls back to the legacy "copy the address" flow
+        // before the user activates the cursor.
         match key.code {
             KeyCode::Char('y') => {
-                self.copy_address_hex();
+                if matches!(self.active_tab_or_fallback(), AddressTab::Overview)
+                    && self.cursor.is_active()
+                {
+                    let fields = self.navigable_fields();
+                    if let Some(entry) = self.cursor.current(&fields) {
+                        self.last_copied_value = Some(entry.value.copy_text());
+                        if let Some(services) = self.cursor_services.as_ref() {
+                            services.copy(&entry.value);
+                        }
+                    }
+                } else {
+                    self.copy_address_hex();
+                }
                 return Command::None;
             }
             KeyCode::Char('Y') => {
@@ -1339,19 +1428,40 @@ impl AddressDetailScreen {
     }
 
     fn handle_overview_key(&mut self, key: KeyEvent) -> Command {
+        // Arrow keys drive the field cursor. `k`/`j` keep the
+        // historical "scroll by one line" behaviour so the Overview
+        // text remains scrollable on narrow terminals.
+        let fields = self.navigable_fields();
         match key.code {
             KeyCode::Left => {
-                self.active_tab = self.prev_tab();
-                self.scroll = 0;
+                self.cursor.move_in(fields.len(), CursorDir::Left);
+                return Command::None;
             }
             KeyCode::Right => {
-                self.active_tab = self.next_tab();
-                self.scroll = 0;
+                self.cursor.move_in(fields.len(), CursorDir::Right);
+                return Command::None;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
+                self.cursor.move_in(fields.len(), CursorDir::Up);
+                return Command::None;
+            }
+            KeyCode::Down => {
+                self.cursor.move_in(fields.len(), CursorDir::Down);
+                return Command::None;
+            }
+            KeyCode::Enter if self.cursor.is_active() => {
+                if let (Some(entry), Some(services)) =
+                    (self.cursor.current(&fields), self.cursor_services.as_ref())
+                    && let Some(screen) = services.open(&entry.value)
+                {
+                    return Command::Push(screen);
+                }
+                return Command::None;
+            }
+            KeyCode::Char('k') => {
                 self.scroll = self.scroll.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Char('j') => {
                 self.scroll = self.scroll.saturating_add(1);
             }
             KeyCode::PageUp => {
