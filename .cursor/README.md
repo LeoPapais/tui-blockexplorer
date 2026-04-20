@@ -75,6 +75,10 @@ subagent’s session:
 2. **Subagent work** — only inside `WORKTREE_PATH`.
 3. **`/apply-worktree`** — copy merged changes from the worktree into
    the primary checkout (main). Resolve conflicts on main if needed.
+   Use the **Unix script below** (not a bare `cd` into `git-common-dir`
+   from an arbitrary cwd: on the primary checkout Git often reports
+   `.git` as a **relative** path, which breaks the naive `cd "$(git …
+   rev-parse --git-common-dir)"` check).
 4. **`/delete-worktree`** — remove the temporary worktree and prune.
 5. **Primary checkout** — run `cargo test` and `cargo clippy --all-targets -- -D warnings`
    (same gates as [AGENTS.md](../AGENTS.md)). If green, **commit** on
@@ -82,6 +86,68 @@ subagent’s session:
 
 Do **not** use this pipeline for readonly subagents (for example
 `plan-guard`) or when the task explicitly does not touch tracked files.
+
+### Robust `/apply-worktree` (Unix)
+
+Substitute `SOURCE_WORKTREE_PATH` and `MAIN_WORKTREE_PATH`, then run:
+
+```bash
+set -euo pipefail
+SOURCE_WORKTREE_PATH="<source>"
+MAIN_WORKTREE_PATH="<main>"
+SOURCE_ABS="$(cd "$SOURCE_WORKTREE_PATH" && pwd -P)"
+MAIN_ABS="$(cd "$MAIN_WORKTREE_PATH" && pwd -P)"
+# Resolve the shared object database from *inside* each tree so relative
+# `.git` from `rev-parse --git-common-dir` is unambiguous.
+_git_common_abs() {
+  (
+    cd "$1"
+    if git rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1; then
+      git rev-parse --path-format=absolute --git-common-dir
+    else
+      realpath "$(git rev-parse --git-common-dir)"
+    fi
+  )
+}
+SOURCE_COMMON="$(_git_common_abs "$SOURCE_ABS")"
+MAIN_COMMON="$(_git_common_abs "$MAIN_ABS")"
+if [ "$SOURCE_COMMON" != "$MAIN_COMMON" ]; then
+  echo "ERROR: source and main do not share the same repository." >&2
+  exit 1
+fi
+UNTRACKED_FILES="$(git -C "$SOURCE_ABS" ls-files --others --exclude-standard)"
+HAS_TRACKED=false
+if [ -n "$(git -C "$SOURCE_ABS" diff --name-only HEAD)" ] ||
+   [ -n "$(git -C "$SOURCE_ABS" diff --cached --name-only)" ]; then
+  HAS_TRACKED=true
+fi
+if [ "$HAS_TRACKED" = false ] && [ -z "$UNTRACKED_FILES" ]; then
+  echo "Nothing to apply."
+  exit 0
+fi
+if [ "$HAS_TRACKED" = true ]; then
+  git -C "$SOURCE_ABS" add -u -- .
+  git -C "$SOURCE_ABS" commit -m "tmp: worktree apply snapshot" --no-verify --allow-empty
+  TEMP_COMMIT="$(git -C "$SOURCE_ABS" rev-parse HEAD)"
+  git -C "$MAIN_ABS" cherry-pick --no-commit "$TEMP_COMMIT" || true
+  git -C "$MAIN_ABS" reset HEAD -- . >/dev/null 2>&1 || true
+  git -C "$SOURCE_ABS" reset --mixed HEAD~1 >/dev/null 2>&1
+fi
+if [ -n "$UNTRACKED_FILES" ]; then
+  echo "$UNTRACKED_FILES" | while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    mkdir -p "$(dirname "$MAIN_ABS/$f")"
+    cp "$SOURCE_ABS/$f" "$MAIN_ABS/$f"
+  done
+fi
+git -C "$MAIN_ABS" status --short
+echo "MAIN_WORKTREE=$MAIN_ABS"
+echo "SOURCE_WORKTREE=$SOURCE_ABS"
+```
+
+If `git cherry-pick` aborts because the primary checkout has local
+changes, run `git stash push -u` on **main** first, repeat the
+`HAS_TRACKED` block, then `git stash pop` and resolve overlaps.
 
 ## Daily usage
 

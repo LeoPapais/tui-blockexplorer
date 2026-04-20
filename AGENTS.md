@@ -62,8 +62,10 @@ tree, the orchestrator must:
 1. Create an isolated checkout with **`/worktree`** (see
    [`.cursor/README.md`](.cursor/README.md#subagents-and-worktrees)).
 2. Have the subagent do its work **only** in that worktree path.
-3. Merge results back with **`/apply-worktree`**, then remove the
-   checkout with **`/delete-worktree`** (in that order).
+3. Merge results back with **`/apply-worktree`** (use the robust Unix
+   script in [`.cursor/README.md`](.cursor/README.md#robust-apply-worktree-unix)
+   so `git-common-dir` resolution works on the primary checkout), then
+   remove the checkout with **`/delete-worktree`** (in that order).
 4. On the **primary** worktree (main branch checkout), run
    `cargo test` (and the usual quality gates). If everything passes,
    **commit** the merged result on main.
