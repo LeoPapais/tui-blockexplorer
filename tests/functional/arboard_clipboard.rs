@@ -7,9 +7,7 @@
 //! intended to be exercised locally. See
 //! `plan/17-navigable-values.md` §5.1 + §8.1.
 
-use blockexplorer_tui::{
-    adapters::clipboard::ArboardClipboard, application::ports::ClipboardPort,
-};
+use blockexplorer_tui::{adapters::clipboard::ArboardClipboard, application::ports::ClipboardPort};
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -17,9 +15,8 @@ fn graceful_fallback_returns_ok_when_arboard_init_fails() {
     // Factory that simulates a headless environment — `arboard`
     // raises `Error::ClipboardNotSupported` on such boxes; any
     // variant works for the adapter since it only checks `Err`.
-    let adapter = ArboardClipboard::with_factory(Box::new(|| {
-        Err(arboard::Error::ClipboardNotSupported)
-    }));
+    let adapter =
+        ArboardClipboard::with_factory(Box::new(|| Err(arboard::Error::ClipboardNotSupported)));
     assert!(
         !adapter.is_live(),
         "a failing factory should produce a degraded (no-op) adapter",
