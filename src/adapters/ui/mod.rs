@@ -25,8 +25,8 @@ pub mod theme;
 pub mod tx_detail;
 
 pub use address_detail::{
-    AddressDetailScreen, AddressFeed, AddressFeedSender, AddressTab, ContractSubTab, OpenTokenFactory,
-    OpenTxFactory, TokenSubTab, address_feed,
+    AddressDetailScreen, AddressFeed, AddressFeedSender, AddressTab, ContractSubTab,
+    OpenTokenFactory, OpenTxFactory, TokenSubTab, address_feed,
 };
 pub use block_detail::{
     BlockDetailScreen, BlockFeed, BlockFeedSender, BlockTab, OpenTxFactory as BlockOpenTxFactory,

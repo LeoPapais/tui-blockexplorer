@@ -44,10 +44,9 @@ use crate::{
     },
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, AddressKind, AddressOverview, BlockNumber,
-        Chain, ContractOverview, ContractSource, DecodedValue, DomainError, EventsPage,
-        NftKind, PriceLookup, PricePoint, PriceSeries, PriceWindow, SourceFile, TokenHolding,
-        TokenOverview, TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash,
-        parse_abi_functions,
+        Chain, ContractOverview, ContractSource, DecodedValue, DomainError, EventsPage, NftKind,
+        PriceLookup, PricePoint, PriceSeries, PriceWindow, SourceFile, TokenHolding, TokenOverview,
+        TokenPrice, TransferAsset, TransferEvent, TransferPage, TxHash, parse_abi_functions,
     },
 };
 
@@ -426,7 +425,14 @@ impl AddressDetailScreen {
         open_tx: Option<OpenTxFactory>,
         open_token: Option<OpenTokenFactory>,
     ) -> Self {
-        Self::with_factories_and_tab(chain, address, feed, open_tx, open_token, AddressTab::Overview)
+        Self::with_factories_and_tab(
+            chain,
+            address,
+            feed,
+            open_tx,
+            open_token,
+            AddressTab::Overview,
+        )
     }
 
     /// Fully-wired constructor with an initial main tab. The tab is
@@ -527,19 +533,13 @@ impl AddressDetailScreen {
 
     fn next_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(idx + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> AddressTab {
         let tabs = self.visible_tabs();
-        let idx = tabs
-            .iter()
-            .position(|&t| t == self.active_tab)
-            .unwrap_or(0);
+        let idx = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
         tabs[(idx + tabs.len() - 1) % tabs.len()]
     }
 
@@ -715,12 +715,11 @@ impl AddressDetailScreen {
                 self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0)
             }
             AddressTab::Tokens => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
-            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
-                self.token_transfers
-                    .as_ref()
-                    .map(|p| p.events.len())
-                    .unwrap_or(0)
-            }
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => self
+                .token_transfers
+                .as_ref()
+                .map(|p| p.events.len())
+                .unwrap_or(0),
             _ => 0,
         }
     }
@@ -1109,10 +1108,7 @@ impl Screen for AddressDetailScreen {
             .iter()
             .map(|t| Line::from(format!(" {} ", t.label())))
             .collect();
-        let active_idx = tabs_visible
-            .iter()
-            .position(|&t| t == active)
-            .unwrap_or(0);
+        let active_idx = tabs_visible.iter().position(|&t| t == active).unwrap_or(0);
         frame.render_widget(
             Tabs::new(titles)
                 .select(active_idx)
@@ -1264,7 +1260,32 @@ impl AddressDetailScreen {
                 self.copy_active_as_csv();
                 return Command::None;
             }
+            // Token chart window switches are available from any
+            // tab so `2` / `3` work while the user is still on
+            // Overview. Matches the prior TokenDetailScreen
+            // contract (plan/8 §12.4).
+            KeyCode::Char('1') => {
+                self.set_token_window(PriceWindow::D1);
+                return Command::None;
+            }
+            KeyCode::Char('2') => {
+                self.set_token_window(PriceWindow::M1);
+                return Command::None;
+            }
+            KeyCode::Char('3') => {
+                self.set_token_window(PriceWindow::Y1);
+                return Command::None;
+            }
             _ => {}
+        }
+
+        // Incomplete-token shortcut from any tab: `c` jumps to the
+        // Contract sub-tab. See plan/8 §13.2.
+        if matches!(key.code, KeyCode::Char('c')) && self.is_incomplete_badge_active() {
+            self.active_tab = AddressTab::Contract;
+            self.active_contract_sub = ContractSubTab::Overview;
+            self.with_contract_scroll(|s| s.reset());
+            return Command::None;
         }
 
         // Main tab cycling.
@@ -1407,32 +1428,6 @@ impl AddressDetailScreen {
     }
 
     fn handle_token_key(&mut self, key: KeyEvent) -> Command {
-        // Chart window shortcuts are active from any token sub-tab.
-        match key.code {
-            KeyCode::Char('1') => {
-                self.set_token_window(PriceWindow::D1);
-                return Command::None;
-            }
-            KeyCode::Char('2') => {
-                self.set_token_window(PriceWindow::M1);
-                return Command::None;
-            }
-            KeyCode::Char('3') => {
-                self.set_token_window(PriceWindow::Y1);
-                return Command::None;
-            }
-            _ => {}
-        }
-
-        // Incomplete-token shortcut: `c` jumps to the Contract
-        // sub-tab on the same screen. See plan/8 §13.2.
-        if matches!(key.code, KeyCode::Char('c')) && self.is_incomplete_badge_active() {
-            self.active_tab = AddressTab::Contract;
-            self.active_contract_sub = ContractSubTab::Overview;
-            self.with_contract_scroll(|s| s.reset());
-            return Command::None;
-        }
-
         match self.active_token_sub {
             TokenSubTab::Transfers => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -1712,10 +1707,9 @@ impl AddressDetailScreen {
     fn render_transactions(&self, frame: &mut Frame<'_>, area: Rect) {
         let block = Block::default().borders(Borders::ALL).title("Transactions");
         match self.transfers.as_ref() {
-            None => frame.render_widget(
-                Paragraph::new("Loading transactions...").block(block),
-                area,
-            ),
+            None => {
+                frame.render_widget(Paragraph::new("Loading transactions...").block(block), area)
+            }
             Some(page) if page.events.is_empty() => frame.render_widget(
                 Paragraph::new("No transfers found for this address.").block(block),
                 area,
@@ -1778,12 +1772,10 @@ impl AddressDetailScreen {
                 );
 
                 if chart_block_height > 0 {
-                    let bar_width =
-                        (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
+                    let bar_width = (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
                     frame.render_widget(
-                        Paragraph::new(render_top_distribution(&summary, bar_width)).block(
-                            Block::default().borders(Borders::ALL).title("Top 5 by USD"),
-                        ),
+                        Paragraph::new(render_top_distribution(&summary, bar_width))
+                            .block(Block::default().borders(Borders::ALL).title("Top 5 by USD")),
                         tokens_chunks[1],
                     );
                 }
