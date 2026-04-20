@@ -25,8 +25,6 @@ pub enum ScreenId {
     AddressDetail,
     ContractDetail,
     TokenDetail,
-    GasTracker,
-    Mempool,
     Settings,
 }
 
@@ -43,8 +41,6 @@ impl ScreenId {
             ScreenId::AddressDetail => "Address Detail",
             ScreenId::ContractDetail => "Contract Detail",
             ScreenId::TokenDetail => "Token Detail",
-            ScreenId::GasTracker => "Gas Tracker",
-            ScreenId::Mempool => "Mempool",
             ScreenId::Settings => "Settings",
         }
     }
@@ -58,8 +54,6 @@ pub enum Action {
     Quit,
     Back,
     OpenSearch,
-    OpenMempool,
-    OpenGasTracker,
     OpenSettings,
     RefreshNow,
     CopyAddress,
@@ -74,8 +68,6 @@ impl Action {
             Action::Quit => "Quit",
             Action::Back => "Back",
             Action::OpenSearch => "Open Search",
-            Action::OpenMempool => "Open Mempool",
-            Action::OpenGasTracker => "Open Gas Tracker",
             Action::OpenSettings => "Open Settings",
             Action::RefreshNow => "Refresh Now",
             Action::CopyAddress => "Copy Address",
@@ -274,16 +266,6 @@ fn builtin_bindings() -> Vec<KeyBinding> {
             screen: ScreenId::Home,
             key: KeyEvent::new(KeyCode::Char('/'), none),
             action: Action::OpenSearch,
-        },
-        KeyBinding {
-            screen: ScreenId::Home,
-            key: KeyEvent::new(KeyCode::Char('m'), none),
-            action: Action::OpenMempool,
-        },
-        KeyBinding {
-            screen: ScreenId::Home,
-            key: KeyEvent::new(KeyCode::Char('g'), none),
-            action: Action::OpenGasTracker,
         },
         KeyBinding {
             screen: ScreenId::Home,

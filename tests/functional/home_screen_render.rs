@@ -89,7 +89,7 @@ fn renders_disconnected_badge_when_connection_dropped() {
 /// test pins the stacked layout by rendering into a 60×30 TestBackend
 /// and asserting that every content line from both cards is still
 /// visible on its own row. It also asserts that the "Network" card title
-/// appears above the "Gas Tracker" one, which is only true in the
+/// appears above the "Gas" one, which is only true in the
 /// vertical layout.
 #[test]
 fn renders_narrow_terminal_fallback_with_stacked_cards() {
@@ -116,18 +116,18 @@ fn renders_narrow_terminal_fallback_with_stacked_cards() {
     );
     assert!(
         buffer_contains(&buffer, "Slow"),
-        "Gas Tracker card must still show the Slow tier"
+        "Gas card must still show the Slow tier"
     );
     assert!(
         buffer_contains(&buffer, "Fast"),
-        "Gas Tracker card must still show the Fast tier"
+        "Gas card must still show the Fast tier"
     );
 
     let network_row = row_of(&buffer, "Network").expect("Network card borders");
-    let gas_row = row_of(&buffer, "Gas Tracker").expect("Gas Tracker card borders");
+    let gas_row = row_of(&buffer, "Gas").expect("Gas card borders");
     assert!(
         network_row < gas_row,
-        "narrow layout must stack vertically: Network ({network_row}) must appear above Gas Tracker ({gas_row})"
+        "narrow layout must stack vertically: Network ({network_row}) must appear above Gas ({gas_row})"
     );
 }
 
@@ -162,7 +162,7 @@ fn renders_cached_snapshots_while_reconnecting() {
     );
     assert!(
         buffer_contains(&buffer, "Slow"),
-        "the Gas Tracker card must still show the Slow tier"
+        "the Gas card must still show the Slow tier"
     );
     assert!(
         !buffer_contains(&buffer, "Loading network"),

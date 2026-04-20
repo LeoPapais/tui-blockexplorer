@@ -8,18 +8,16 @@
 
 use blockexplorer_tui::{
     adapters::ui::{
-        AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, GasTrackerScreen, HomeScreen,
-        MempoolScreen, Screen, SettingsScreen, TxDetailScreen, address_feed, block_feed, gas_feed,
-        tx_feed,
+        AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, HomeScreen, Screen,
+        SettingsScreen, TxDetailScreen, address_feed, block_feed, tx_feed,
     },
     domain::{
-        Address, AddressKind, AddressOverview, Block, BlockHash, BlockNumber, Chain, GasSnapshot,
-        Gwei, PendingTxFilter, Transaction, TxHash, TxStatus, TxType, UnixTimestamp, Wei,
+        Address, AddressKind, AddressOverview, Block, BlockHash, BlockNumber, Chain, Transaction,
+        TxHash, TxStatus, TxType, UnixTimestamp, Wei,
     },
     infra::runtime::draw_screen_with_footer,
 };
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
-use tokio::sync::mpsc::unbounded_channel;
 
 fn render(screen: &dyn Screen, width: u16, height: u16) -> Buffer {
     let backend = TestBackend::new(width, height);
@@ -197,51 +195,6 @@ fn tx_detail_footer_lists_tab_copy_simulate_back() {
         assert!(
             footer.contains(needle),
             "tx detail footer must contain `{needle}`; got `{footer}`",
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Mempool
-// ---------------------------------------------------------------------------
-
-#[test]
-fn mempool_footer_advertises_select_enter_pause_clear() {
-    let (_events_tx, events_rx) = unbounded_channel();
-    let open_tx = Box::new(|_h| -> Box<dyn Screen> { panic!("open_tx in footer test") });
-    let screen = MempoolScreen::new(events_rx, PendingTxFilter::default(), open_tx);
-    let buffer = render(&screen, 120, 30);
-    let footer = footer_row(&buffer);
-    for needle in ["[Arrows]", "[Enter]", "[p]", "[c]", "[y]", "[Esc]"] {
-        assert!(
-            footer.contains(needle),
-            "mempool footer must contain `{needle}`; got `{footer}`",
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GasTracker
-// ---------------------------------------------------------------------------
-
-#[test]
-fn gas_tracker_footer_advertises_pause_refresh_converter() {
-    let snap = GasSnapshot {
-        chain: Chain::Ethereum,
-        slow: Gwei::new(10),
-        average: Gwei::new(12),
-        fast: Gwei::new(14),
-        base_fee: Gwei::new(9),
-        trend: Vec::new(),
-    };
-    let (feed, _sender) = gas_feed();
-    let screen = GasTrackerScreen::new(Chain::Ethereum, Some(snap), feed);
-    let buffer = render(&screen, 120, 30);
-    let footer = footer_row(&buffer);
-    for needle in ["[p]", "[Ctrl+R]", "[u]", "[Esc]"] {
-        assert!(
-            footer.contains(needle),
-            "gas tracker footer must contain `{needle}`; got `{footer}`",
         );
     }
 }

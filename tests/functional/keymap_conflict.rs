@@ -65,7 +65,7 @@ fn conflict_report_display_lists_every_offender() {
         binding(ScreenId::Home, 'q', Action::Quit),
         binding(ScreenId::Home, 'q', Action::Back),
         binding(ScreenId::Search, 'x', Action::OpenSearch),
-        binding(ScreenId::Search, 'x', Action::OpenMempool),
+        binding(ScreenId::Search, 'x', Action::OpenSettings),
     ];
 
     let err = KeyMap::from_entries(&entries).expect_err("must conflict");

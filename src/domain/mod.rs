@@ -34,7 +34,6 @@ pub mod events;
 pub mod gas;
 pub mod key_binding;
 pub mod label;
-pub mod mempool;
 pub mod navigable;
 pub mod network_status;
 pub mod portfolio;
@@ -60,12 +59,11 @@ pub use contract_read::{
 pub use contract_source::{AbiSource, ContractAbi, ContractSource, ResolvedAbi, SourceFile};
 pub use errors::DomainError;
 pub use events::EventsPage;
-pub use gas::{Gwei, Percentiles, Unit, Wei};
+pub use gas::{Gwei, Wei};
 pub use key_binding::{
     Action, KeyBindConflict, KeyBindConflictReport, KeyBinding, KeyMap, ScreenId,
 };
 pub use label::{Label, LabelSource};
-pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
 pub use navigable::NavigableValue;
 pub use network_status::{GasSnapshot, NetworkStatus, NewHead};
 pub use portfolio::TokenHolding;

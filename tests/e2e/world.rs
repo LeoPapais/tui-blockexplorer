@@ -7,10 +7,7 @@
 use std::fmt;
 
 use blockexplorer_tui::{
-    adapters::ui::{
-        HomeScreen, ScreenStack,
-        gas_tracker::{GasFeedSender, GasRefreshListener},
-    },
+    adapters::ui::{HomeScreen, ScreenStack},
     application::HomeSession,
     domain::{Address, Chain, TxHash},
     infra::search_feed::SearchCache,
@@ -23,7 +20,7 @@ use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
-    StubPendingTxStreamPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
+    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
     StubSignatureDirectoryPort, StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort,
     StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
     StubTxSimulationPort, StubTxTracePort,
@@ -83,9 +80,6 @@ pub struct AppWorld {
     /// step. Used by follow-up `Given`s to attach simulator /
     /// tracer data without repeating the hash in natural language.
     pub last_tx_hash: Option<TxHash>,
-
-    /// Mempool stub.
-    pub pending_stub: StubPendingTxStreamPort,
 
     /// Address-detail stub.
     pub address_reader_stub: StubAddressReaderPort,
@@ -161,17 +155,6 @@ pub struct AppWorld {
     /// scenarios keep passing. See `plan/3-block-detail.md` §12.5.
     pub pending_block_detail: Option<blockexplorer_tui::domain::Block>,
 
-    /// Sender for the Gas Tracker's feed channel, kept around so
-    /// pause / refresh scenarios can push additional snapshots
-    /// after the screen is on the stack. See `plan/9-gas-tracker.md`
-    /// §11.2.
-    pub gas_feed_sender: Option<GasFeedSender>,
-
-    /// Receiver end of the Gas Tracker's refresh-kick channel. Set
-    /// when the scenario opens the Gas Tracker with a refresh
-    /// handle; the `Ctrl+R` step pulls from it to assert the kick
-    /// was queued. See `plan/9-gas-tracker.md` §11.2.
-    pub gas_refresh_listener: Option<GasRefreshListener>,
 }
 
 impl fmt::Debug for AppWorld {

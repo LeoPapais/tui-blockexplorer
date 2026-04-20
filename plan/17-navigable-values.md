@@ -15,7 +15,7 @@ bindings copied fixed values chosen per tab, never the "thing the user is
 looking at". `arboard` was already a declared dependency but no production
 code reached into it, so the explorer ran with a no-op clipboard.
 
-Cross-screen navigation was equally uneven: list rows (Mempool, Address
+Cross-screen navigation was equally uneven: list rows (Address
 Transactions, Block Tx list) responded to Enter, but Overview fields such
 as `from`, `to`, `block_number` were inert — the user could not jump from
 a tx's `to` address to its Address Detail screen.
@@ -170,8 +170,6 @@ inside list tabs) so the slice is strictly additive.
 | AddressDetail     | Overview tab                   | address, ENS (when present)                              |
 | BlockDetail       | Overview tab                   | block number, block hash, parent hash, miner             |
 | TxDetail          | Overview tab                   | tx hash, from address, to address, block number         |
-| Mempool           | On any row                     | selected row's hash + from + to                          |
-| GasTracker        | Always                         | slow / avg / fast gwei as `Plain`                        |
 | Settings          | Always                         | config path + active chain as `Plain`                    |
 | SearchScreen      | Inherits result navigation      | no change (Enter already navigates)                     |
 
@@ -212,8 +210,7 @@ On every screen that opts in:
   arboard path and one graceful-degradation test that injects a failing
   factory.
 * Per-screen cursor tests: `home_cursor.rs`, `address_detail_cursor.rs`,
-  `tx_detail_cursor.rs`, `block_detail_cursor.rs`, `mempool_cursor.rs`,
-  `gas_tracker_cursor.rs`, `settings_cursor.rs`. Each wires a
+  `tx_detail_cursor.rs`, `block_detail_cursor.rs`, `settings_cursor.rs`. Each wires a
   `StubClipboard` + `StubNavigationFactory`, drives the expected arrow
   sequence, and asserts on the recorded `last_copied()` /
   `recorded()` calls via `pretty_assertions::assert_eq!`.

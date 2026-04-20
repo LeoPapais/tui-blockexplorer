@@ -7,7 +7,7 @@
 //! is driven by a list of `Step`s that either wait for the adapter
 //! to send a specific JSON-RPC method or push a canned frame.
 //!
-//! See `plan/5-mempool.md` §11.3.4 (testing).
+//! See `plan/13-alchemy-adapter.md` (WebSocket testing).
 
 use std::net::SocketAddr;
 

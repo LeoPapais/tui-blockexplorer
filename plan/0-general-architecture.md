@@ -58,8 +58,6 @@ stateDiagram-v2
   Search --> TxDetail: tx match
   Search --> AddressDetail: address match
   Search --> TokenDetail: token match
-  Home --> GasTracker: enter on gas card
-  Home --> Mempool: "gm"
   Home --> Settings: "gs"
   AddressDetail --> ContractDetail: contract code detected
   AddressDetail --> TxDetail: open tx
@@ -68,7 +66,6 @@ stateDiagram-v2
   TxDetail --> ContractDetail: open target
   ContractDetail --> TxDetail: open event source tx
   TokenDetail --> AddressDetail: open holder/contract
-  Mempool --> TxDetail: open pending tx
 ```
 
 ## 3. Global screen layout
@@ -153,7 +150,6 @@ These bindings are valid on every screen unless explicitly overridden.
 | `Ctrl+N`      | Open chain picker                                 |
 | `Ctrl+R`      | Refresh the current screen's data                 |
 | `gs`          | Go to Settings                                    |
-| `gm`          | Go to Mempool                                     |
 | `gh`          | Go to Home                                        |
 | `gg` / `G`    | Jump to top / bottom of a list                    |
 | `j` / `k`     | Move down / up in a list                          |
@@ -284,8 +280,6 @@ blockexplorer-tui/
         load_internal_calls.rs
         load_state_diff.rs
         load_asset_changes.rs
-        observe_pending_txs.rs
-        filter_pending_txs.rs
         load_address_overview.rs
         load_address_transfers.rs
         load_address_portfolio.rs

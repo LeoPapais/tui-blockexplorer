@@ -140,7 +140,7 @@ fn render_gas_card(frame: &mut Frame<'_>, area: Rect, view: &HomeViewModel) {
     };
     let para = Paragraph::new(body)
         .alignment(Alignment::Left)
-        .block(Block::default().borders(Borders::ALL).title("Gas Tracker"));
+        .block(Block::default().borders(Borders::ALL).title("Gas"));
     frame.render_widget(para, area);
 }
 
@@ -216,13 +216,6 @@ pub fn home_feed() -> (HomeFeed, HomeFeedSender) {
 /// is no resolver task to back the search screen).
 pub type SearchFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
-/// Factory for the Mempool screen. Same rationale as
-/// [`SearchFactory`]: keeps the home screen free of adapter details.
-pub type MempoolFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
-
-/// Factory for the Gas Tracker screen.
-pub type GasTrackerFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
-
 /// Factory for the Settings screen.
 pub type SettingsFactory = Box<dyn Fn() -> Box<dyn crate::adapters::ui::Screen> + Send + 'static>;
 
@@ -235,8 +228,6 @@ pub struct HomeScreen {
     view: HomeViewModel,
     feed: Option<HomeFeed>,
     search_factory: Option<SearchFactory>,
-    mempool_factory: Option<MempoolFactory>,
-    gas_factory: Option<GasTrackerFactory>,
     settings_factory: Option<SettingsFactory>,
     /// When `true`, render the first-run banner above the header.
     /// See `plan/10-settings.md` section 12.2.
@@ -257,8 +248,6 @@ impl HomeScreen {
             view,
             feed: None,
             search_factory: None,
-            mempool_factory: None,
-            gas_factory: None,
             settings_factory: None,
             first_run_hint: false,
             cursor: FieldCursor::new(),
@@ -274,8 +263,6 @@ impl HomeScreen {
             view: initial,
             feed: Some(feed),
             search_factory: None,
-            mempool_factory: None,
-            gas_factory: None,
             settings_factory: None,
             first_run_hint: false,
             cursor: FieldCursor::new(),
@@ -288,22 +275,6 @@ impl HomeScreen {
     #[must_use]
     pub fn with_search_factory(mut self, factory: SearchFactory) -> Self {
         self.search_factory = Some(factory);
-        self
-    }
-
-    /// Equip the home screen with a factory that produces a Mempool
-    /// screen when the user presses `m`.
-    #[must_use]
-    pub fn with_mempool_factory(mut self, factory: MempoolFactory) -> Self {
-        self.mempool_factory = Some(factory);
-        self
-    }
-
-    /// Equip the home screen with a factory that produces a Gas
-    /// Tracker screen when the user presses `g`.
-    #[must_use]
-    pub fn with_gas_factory(mut self, factory: GasTrackerFactory) -> Self {
-        self.gas_factory = Some(factory);
         self
     }
 
@@ -488,14 +459,6 @@ impl Screen for HomeScreen {
                 Some(factory) => Command::Push(factory()),
                 None => Command::None,
             },
-            KeyCode::Char('m') => match self.mempool_factory.as_ref() {
-                Some(factory) => Command::Push(factory()),
-                None => Command::None,
-            },
-            KeyCode::Char('g') => match self.gas_factory.as_ref() {
-                Some(factory) => Command::Push(factory()),
-                None => Command::None,
-            },
             KeyCode::Char('s') => match self.settings_factory.as_ref() {
                 Some(factory) => Command::Push(factory()),
                 None => Command::None,
@@ -525,8 +488,6 @@ impl Screen for HomeScreen {
         vec![
             ("/", "Search"),
             ("?", "Help"),
-            ("g", "Gas"),
-            ("m", "Mempool"),
             ("s", "Settings"),
             ("q", "Quit"),
         ]

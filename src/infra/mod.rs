@@ -11,11 +11,9 @@ pub mod address_feed;
 mod block_feed;
 pub mod config;
 pub mod cost_meter;
-mod gas_feed;
 pub mod health;
 pub mod home_feed;
 pub mod logging;
-pub mod mempool_feed;
 pub mod navigate;
 pub mod runtime;
 pub mod search_feed;
@@ -53,16 +51,15 @@ use crate::{
         },
         ui::{
             AddressDetailScreen, AddressTab, AppConfigSnapshot, BlockDetailScreen, CursorServices,
-            DetailPlaceholderScreen, GasTrackerScreen, GlobalKeyMap, HelpModal, HomeScreen,
-            MempoolScreen, Screen, ScreenStack, SearchScreen, SettingsScreen, TxDetailScreen,
-            address_feed, block_feed, gas_feed, gas_refresh_channel, search_feed, tx_feed,
+            DetailPlaceholderScreen, GlobalKeyMap, HelpModal, HomeScreen, Screen, ScreenStack,
+            SearchScreen, SettingsScreen, TxDetailScreen, address_feed, block_feed, search_feed,
+            tx_feed,
         },
     },
-    application::{ConnectionStatus, HomeSession, HomeViewModel, ports::PendingTxStreamPort},
-    domain::{BlockId, Chain, PendingTxFilter, ResolvedEntity},
+    application::{ConnectionStatus, HomeSession, HomeViewModel},
+    domain::{BlockId, Chain, ResolvedEntity},
     infra::search_feed::SearchCache,
 };
-use mempool_feed::{EmptyPendingTxStream, spawn_filter_drain};
 
 /// Per-(chain, input) TTL for the search resolution cache. Pulled
 /// from `adapters::cache::SEARCH_TTL` so the composition root and the
@@ -789,9 +786,9 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let (feed, _home_handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
 
     // Build the `CursorServices` bundle ONCE per live stack so every
-    // screen factory (Home, Mempool, Gas, Settings, and the detail
-    // screens opened via search) shares the same clipboard handle.
-    // See `plan/17-navigable-values.md` §5.
+    // screen factory (Home, Settings, and the detail screens opened
+    // via search) shares the same clipboard handle. See
+    // `plan/17-navigable-values.md` §5.
     let cursor_services =
         navigate::live_cursor_services(rpc.clone(), key.to_string(), etherscan_key.clone(), chain);
 
@@ -814,76 +811,6 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         })
     };
 
-    // Mempool stays connected to an empty stream until the WS adapter
-    // is wired end-to-end (plan/5 §11.3.4). Opening the screen works
-    // and the "waiting..." empty state is rendered. The control
-    // channel + status feed are wired unconditionally so the screen
-    // exercises the same surface the live adapter will consume.
-    let mempool_factory = {
-        let rpc_for_tx = rpc.clone();
-        let etherscan_for_tx = etherscan_key.clone();
-        let cursor_services = cursor_services.clone();
-        Box::new(move || -> Box<dyn Screen> {
-            let stream = EmptyPendingTxStream;
-            let rx = futures_block_on(async {
-                stream
-                    .subscribe(chain, PendingTxFilter::default())
-                    .await
-                    .expect("EmptyPendingTxStream cannot fail")
-            });
-            // Filter drain: forwards set_filter broadcasts to
-            // EmptyPendingTxStream::update_filter (today a no-op;
-            // tomorrow the live WS adapter will consume these).
-            let (filter_control, _drain_handle) = spawn_filter_drain(stream, chain);
-
-            let rpc = rpc_for_tx.clone();
-            let etherscan_key = etherscan_for_tx.clone();
-            let services_for_tx = cursor_services.clone();
-            let open_tx = Box::new(move |hash| {
-                live_tx_detail_screen(
-                    chain,
-                    hash,
-                    rpc.clone(),
-                    etherscan_key.clone(),
-                    Some(services_for_tx.clone()),
-                )
-            });
-            // TODO(plan/5 §11.3.4): when the live WS adapter lands,
-            // plumb mempool_status_feed() in here and publish
-            // Connected / Disconnected on the reconnect loop.
-            Box::new(
-                MempoolScreen::new(rx, PendingTxFilter::default(), open_tx)
-                    .with_filter_control(filter_control)
-                    .with_cursor_services(cursor_services.clone()),
-            )
-        })
-    };
-
-    let gas_factory = {
-        let rpc = rpc.clone();
-        let cursor_services = cursor_services.clone();
-        Box::new(move || -> Box<dyn Screen> {
-            let oracle = AlchemyGasOracleAdapter::new(rpc.clone());
-            let (feed, sender) = gas_feed();
-            // plan/9 §11.2: Ctrl+R in the Gas Tracker screen kicks
-            // the listener end so the polling task skips the 6s
-            // sleep and refetches immediately.
-            let (refresh_handle, refresh_listener) = gas_refresh_channel();
-            std::mem::drop(gas_feed::spawn_with_refresh(
-                chain,
-                oracle,
-                sender,
-                gas_feed::DEFAULT_REFRESH_PERIOD,
-                Some(refresh_listener),
-            ));
-            Box::new(
-                GasTrackerScreen::new(chain, None, feed)
-                    .with_refresh_handle(refresh_handle)
-                    .with_cursor_services(cursor_services.clone()),
-            )
-        })
-    };
-
     let settings_factory = {
         let snapshot = AppConfigSnapshot {
             chain,
@@ -902,8 +829,6 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     stack.push(Box::new(
         HomeScreen::with_feed(loading_view(chain), feed)
             .with_search_factory(search_factory)
-            .with_mempool_factory(mempool_factory)
-            .with_gas_factory(gas_factory)
             .with_settings_factory(settings_factory)
             .with_cursor_services(cursor_services),
     ));

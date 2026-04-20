@@ -1,15 +1,18 @@
 # 9 — Gas Tracker
 
-Status: **done** (MVP + follow-ups) — `g` on Home opens a Gas Tracker
-screen that renders `slow / average / fast / base fee / trend` from
-the shared `GasOraclePort`. Live mode polls Alchemy every 6s via a
-dedicated feed task. Follow-ups §11.2 (pause / Ctrl+R), §11.3
-(percentile histogram) and §11.4 (unit converter modal) shipped in
-the §8.10 backlog slice. Pending base-fee prediction stays WONT-DO
-(§11.5).
+**Decision (April 2026): abandoned.** The full-screen Gas Tracker (`GasTrackerScreen`,
+dedicated polling feed, converter modal, histogram, etc.) is **removed** from the
+codebase. Slow / average / fast tiers from `GasOraclePort` remain available **only**
+on the Home screen gas card via `HomeSession` + `observe_gas_oracle`. The text
+below is archival.
 
-Full-screen gas dashboard. Reached from Home (`Enter` on the Gas card) or via the
-command palette. Shares the `GasOraclePort` with Home.
+---
+
+_Status before removal was:_ **done** (MVP + follow-ups) — `g` on Home opened the
+Gas Tracker screen; live mode polled via a dedicated feed task.
+
+Full-screen gas dashboard (removed). Historically reached from Home or shortcuts;
+shared `GasOraclePort` with Home.
 
 ## 1. Purpose and user goals
 

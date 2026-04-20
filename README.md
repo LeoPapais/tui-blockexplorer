@@ -57,19 +57,14 @@ Inside the TUI:
 | `q`       | Quit                                                     |
 | `Esc`     | Pop current screen (exits when the stack is empty)       |
 | `/`       | Open universal search (Home)                             |
-| `m`       | Open Mempool (Home)                                      |
-| `g`       | Open Gas Tracker (Home)                                  |
 | `s`       | Open Settings (Home)                                     |
-| `Enter`   | Open selected candidate, transaction or mempool tx       |
+| `Enter`   | Open selected candidate or transaction                     |
 | `Up/Down` | Move selection (lists)                                   |
 | `Tab`     | Next tab (Block / Tx / Address detail)                   |
 | `j`/`k`, Arrows | Scroll / move selection in the current tab         |
 | `PageUp`/`PageDown` | Page scroll / jump 10 rows                     |
 | `Home`/`End` | Jump to top / bottom of current tab or list           |
 | `[` / `]` | Previous / next block (Block detail)                     |
-| `p`       | Pause / resume stream (Mempool)                          |
-| `c`       | Clear list (Mempool)                                     |
-
 Search input accepts tx hashes (0x + 64 hex), block hashes, block numbers,
 EVM addresses (0x + 40 hex), ENS names (`*.eth`) and token tickers. Live
 mode resolves against Alchemy; demo mode only renders the Home screen.
@@ -135,13 +130,10 @@ in a headless session.
 
 ## Status
 
-Every MVP screen defined in `plan/*.md` sections 1-10 is wired:
-Home, Search, Block detail, Tx detail, Address detail, Contract
-detail, Token detail, Mempool, Gas Tracker and Settings — all
-reachable from Home with `/`, Enter or a single-letter key (see the
-table above). Each screen ships the minimum useful view and
-explicitly lists its deferred pieces at the bottom of its plan
-file. Mempool opens an empty "waiting..." state in live mode
-because the Alchemy WebSocket adapter has not landed yet.
+Core screens from `plan/*.md` are wired: Home, Search, Block detail,
+Tx detail, unified Address detail (contract + token), and Settings.
+**Mempool** and the full-screen **Gas Tracker** were removed (see
+`plan/5-mempool.md` and `plan/9-gas-tracker.md` — abandoned); slow /
+average / fast gas tiers still appear on the Home gas card only.
 Watchlist, Simulator, Validators and NFT-specific screens remain
 out of scope and will arrive as new plan files when prioritised.

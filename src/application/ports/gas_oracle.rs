@@ -1,7 +1,7 @@
 //! Outbound port that returns the slow/average/fast gas tiers plus base
 //! fee history for a chain.
 //!
-//! See `plan/1-home.md` section 4.2 and `plan/9-gas-tracker.md`.
+//! See `plan/1-home.md` section 4.2 (gas oracle tiers on the Home screen).
 
 use crate::domain::{Chain, DomainError, GasSnapshot};
 

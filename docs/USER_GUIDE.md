@@ -121,7 +121,7 @@ runtime: ele lista os atalhos mais úteis da tela ativa no formato
 `[tecla] ação`. Os colchetes e a tecla vêm em negrito, a descrição
 fica esmaecida.
 
-- Home → `[/]`, `[?]`, `[g]`, `[m]`, `[s]`, `[q]`.
+- Home → `[/]`, `[?]`, `[s]`, `[q]`.
 - AddressDetail → `[Tab]`, `[Arrows]`, `[Enter]`, `[y]`, `[Y]`, `[e]`,
   `[Esc]`. Com o Contract ou Token como aba ativa o rodapé passa
   a anunciar também `[` e `]` para ciclar as sub-abas; na aba
@@ -129,12 +129,10 @@ fica esmaecida.
 - BlockDetail → `[Tab]`, `[`, `]`, `[Arrows]`, `[Enter]`, `[y]`,
   `[Y]`, `[Esc]`.
 - TxDetail → `[Tab]`, `[Arrows]`, `[Enter]`, `[y]`, `[s]`, `[Esc]`.
-- Mempool → `[Arrows]`, `[Enter]`, `[p]`, `[c]`, `[y]`, `[Esc]`.
-- GasTracker → `[p]`, `[Ctrl+R]`, `[u]`, `[Arrows]`, `[y]`, `[Esc]`.
 - Settings → `[Arrows]`, `[y]`, `[1..4]`, `[Esc]`.
 
-Quando um overlay modal está aberto (busca `/`, ajuda `?`, conversor
-de gas `u`, etc.), ele assume a tela inteira; nesse caso o rodapé
+Quando um overlay modal está aberto (busca `/`, ajuda `?`, etc.), ele
+assume a tela inteira; nesse caso o rodapé
 do runtime não é desenhado — o próprio overlay desenha suas teclas.
 
 ## 6. Tela Home
@@ -142,7 +140,7 @@ do runtime não é desenhado — o próprio overlay desenha suas teclas.
 A Home abre por padrão e mostra:
 
 - Header da chain ativa, status de rede e último bloco.
-- Gas tracker resumido (slow / average / fast / base fee).
+- Cartão **Gas** com o oráculo resumido (slow / average / fast / base fee).
 - Indicador de conexão (Connected / Disconnected / Reconnecting).
 - Primeiro-uso: banner que aponta para o Settings quando
   `ALCHEMY_API_KEY` ainda não está configurado.
@@ -152,8 +150,6 @@ Atalhos específicos da Home:
 | Tecla | Ação                                |
 |-------|-------------------------------------|
 | `/`   | Abre busca universal                |
-| `m`   | Abre Mempool                        |
-| `g`   | Abre Gas Tracker                    |
 | `s`   | Abre Settings                       |
 
 ## 7. Busca
@@ -265,47 +261,15 @@ Alchemy slot-probe primeiro, Etherscan como fallback com cache TTL.
 A aba `Overview` mostra o proxy e a implementação via o selo
 correspondente.
 
-## 11. Mempool
+## 11. Mempool e Gas Tracker (removidos)
 
-`MempoolScreen` consome o stream de txs pendentes do Alchemy via
-WebSocket. O WS adapter ainda não está totalmente wired (veja
-`plan/5-mempool.md` §11.3.4) — no live mode a tela abre em estado
-"waiting..." e o status bar mostra reconexão quando apropriado.
+A tela de **Mempool** (stream de pendentes) e o **Gas Tracker**
+tela cheia foram **abandonados** em abril de 2026; o código e os testes
+foram retirados. Os tiers de gas (slow / average / fast / base fee)
+continuam só no cartão **Gas** da Home. Ver `plan/5-mempool.md` e
+`plan/9-gas-tracker.md` para o registro da decisão.
 
-| Tecla   | Ação                                                    |
-|---------|---------------------------------------------------------|
-| `↑`/`↓` | Move a seleção                                          |
-| `Enter` | Abre a tx selecionada                                   |
-| `p`     | Pausa / despausa o stream                               |
-| `c`     | Limpa a lista                                           |
-| `y`     | Copia o hash da linha selecionada                       |
-
-`update_filter` é exposto para filtrar por `from` via o control
-channel — o stream pode descartar eventos antes de chegarem à UI.
-
-## 12. Gas Tracker
-
-`GasTrackerScreen` mostra as tarifas slow / average / fast,
-base fee, tendência recente e percentis (p50/p75/p90/p95)
-computados sobre uma janela rolante.
-
-| Tecla   | Ação                                                    |
-|---------|---------------------------------------------------------|
-| `p`     | Pausa / despausa o polling                              |
-| `Ctrl+R`| Força refresh imediato (despausa também)                |
-| `u`     | Abre o modal de conversão de unidades                   |
-| `y`     | Copia a primeira tarifa (ou o campo sob o cursor)       |
-| `Backspace` | Desativa o cursor (sem sair da tela)                |
-
-No modal de conversão, dígitos / `.` / `-` são aceitos no input.
-Outros caracteres são ignorados e `p` não pauta enquanto o modal
-está aberto.
-
-A escolha da janela de preço (`1` = D1, `2` = M1, `3` = Y1) vive
-na tela `AddressDetail` → aba `Token` → sub-aba `Chart`. Aqui no
-Gas Tracker os dígitos não têm efeito.
-
-## 13. Settings
+## 12. Settings
 
 `SettingsScreen` mostra:
 
@@ -319,7 +283,7 @@ Gas Tracker os dígitos não têm efeito.
 O banner de primeiro uso aparece quando não há chave Alchemy e o
 binário foi aberto com `--demo`.
 
-## 14. Primeira execução
+## 13. Primeira execução
 
 - Sem chave Alchemy e sem `--demo`: o binário imprime uma dica de
   setup, sugere `--init-config` e sai com código 0 (não é erro).
@@ -330,7 +294,7 @@ binário foi aberto com `--demo`.
   `[defaults]` vazio. O arquivo é idempotente: rodar de novo não
   sobrescreve credenciais que já estejam lá.
 
-## 15. Troubleshooting
+## 14. Troubleshooting
 
 **`y` não copia nada no terminal.** O adaptador `ArboardClipboard`
 tenta abrir uma conexão com o clipboard do sistema no boot. Se
@@ -360,7 +324,7 @@ suportam aquele hardfork / caminho. Isso não é um bug nem uma
 falha de rede — o provider retornou `null`. Ao menos a aba
 `Overview` continua populada.
 
-## 16. Limitações conhecidas
+## 15. Limitações conhecidas
 
 O MVP deliberadamente não inclui:
 

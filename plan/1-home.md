@@ -3,16 +3,15 @@
 Status: **done** — the 4 BDD scenarios in `tests/e2e/features/home.feature`
 and the functional tests under `tests/functional/` are green.
 
-Landing screen. Only two content sections: **Network** and **Gas Tracker**. The chain
-switcher lives in the header of this screen. There are no live feeds of blocks or
-transactions here (explicitly removed from scope).
+Landing screen. Only two content sections: **Network** and **Gas** (oracle tiers from
+`GasOraclePort`). The chain switcher lives in the header of this screen. There are no
+live feeds of blocks or transactions here (explicitly removed from scope).
 
 ## 1. Purpose and user goals
 
 - Give the user a live, at-a-glance pulse of the chain they are on.
 - Let the user change chain in two keystrokes (`c`, pick).
-- Serve as a landing pad: from here users open Settings, Mempool, Gas Tracker, and
-  trigger Universal Search.
+- Serve as a landing pad: from here users open Settings and trigger Universal Search.
 
 ## 2. Layout
 
@@ -21,7 +20,7 @@ transactions here (explicitly removed from scope).
 | [Chain: Ethereum v]       ? help  /  search  :  cmd        |
 +-- Content -------------------------------------------------+
 |                                                            |
-|  +-- Network --------------+  +-- Gas Tracker -----------+ |
+|  +-- Network --------------+  +-- Gas --------------------+ |
 |  | Latest block   21345678 |  | Slow    12 gwei  ~45s    | |
 |  | Block time avg    12.1s |  | Avg     14 gwei  ~20s    | |
 |  | Base fee      11.4 gwei |  | Fast    18 gwei  ~10s    | |
@@ -31,7 +30,7 @@ transactions here (explicitly removed from scope).
 |  +-------------------------+  +--------------------------+ |
 |                                                            |
 +-- Status bar ----------------------------------------------+
-| c chain  Enter gas details  gm mempool  gs settings        |
+| c chain  gs settings                                        |
 +------------------------------------------------------------+
 ```
 
@@ -44,8 +43,6 @@ under `tests/functional/home_screen_render.rs` (see §11.6).
 | Key      | Action                                         |
 |----------|------------------------------------------------|
 | `c`      | Open chain picker modal                        |
-| `Enter`  | Open full `GasTracker` screen                  |
-| `gm`     | Go to Mempool                                  |
 | `gs`     | Go to Settings                                 |
 | `Ctrl+R` | Force refresh (resubscribes `newHeads`)        |
 
@@ -67,7 +64,8 @@ Global bindings from `0-general-architecture.md` also apply.
 - **Input**: current `Chain`.
 - **Output**: a stream of `GasSnapshot { slow, average, fast, base_fee,
   priority_percentiles, sparkline }`.
-- **Ports used**: `GasOraclePort` (shared with `9-gas-tracker.md`).
+- **Ports used**: `GasOraclePort` (Home gas card only; full-screen Gas Tracker in
+  `9-gas-tracker.md` was abandoned).
 - **Behaviour**: on each new head, calls `eth_feeHistory` with
   `rewardPercentiles=[25,50,75]` over the last 20 blocks and emits a new snapshot.
 

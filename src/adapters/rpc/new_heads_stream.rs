@@ -1,7 +1,7 @@
 //! Alchemy WebSocket adapter for [`NewHeadsStreamPort`].
 //!
-//! Mirrors [`super::pending_tx_stream::AlchemyPendingTxStream`] but
-//! subscribes to the standard `eth_subscribe(["newHeads"])` stream.
+//! Subscribes to the standard `eth_subscribe(["newHeads"])` stream over
+//! a WebSocket connection.
 //! Reconnects on transient drops using the jittered backoff schedule
 //! from [`super::retry::RetryPolicy`] so the reconnect cadence
 //! matches the HTTP retry story.

@@ -236,7 +236,7 @@ Landed under `plan/15-backlog.md §8.13`:
 
 ## 8. Still deferred
 
-- Migration of the Gas Tracker unit converter (`src/adapters/ui/gas_tracker.rs`)
+- ~~Migration of the Gas Tracker unit converter~~ — **removed** (plan/9 abandoned).
   from its local `ConverterState` to a `Command::OpenModal` dispatch.
   Shape is understood (return `Command::OpenModal(Box::new(ConverterModal))`
   on `u`, let the dispatcher render/tick it and route
@@ -246,9 +246,7 @@ Landed under `plan/15-backlog.md §8.13`:
   is the only modal the current screens need; the `Confirm`/`Input`
   counterparts are deferred until the first use case wants them (copy-on-
   confirm or runtime edit from Settings, see `plan/10-settings.md §11.2`).
-- Reconnecting-badge reuse via the new modal system for the mempool
-  screen (`plan/5-mempool.md §11.3.4`). The modal system is ready; the
-  badge is still a local overlay inside `MempoolScreen`.
+- ~~Mempool reconnecting badge~~ — **N/A** (`plan/5-mempool.md` abandoned; mempool UI removed).
 
 ## 9. Follow-up (not this phase)
 

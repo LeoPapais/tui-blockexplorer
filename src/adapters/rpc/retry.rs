@@ -1,7 +1,6 @@
 //! Exponential-backoff retry helper with jitter.
 //!
-//! Shared by [`super::RpcClient`] and (eventually) the WebSocket
-//! reconnect loop in [`super::pending_tx_stream`] /
+//! Shared by [`super::RpcClient`] and the WebSocket reconnect loop in
 //! [`super::new_heads_stream`]. See
 //! `plan/13-alchemy-adapter.md` §8.2 and
 //! `.cursor/rules/external-apis.mdc` ("Rate limits and retries").

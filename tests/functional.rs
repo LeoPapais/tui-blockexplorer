@@ -58,18 +58,6 @@ mod load_tx_overview;
 #[path = "functional/alchemy_tx_reader.rs"]
 mod alchemy_tx_reader;
 
-#[path = "functional/observe_pending_txs.rs"]
-mod observe_pending_txs;
-
-#[path = "functional/mempool_screen.rs"]
-mod mempool_screen;
-
-#[path = "functional/mempool_screen_render.rs"]
-mod mempool_screen_render;
-
-#[path = "functional/alchemy_pending_tx_stream.rs"]
-mod alchemy_pending_tx_stream;
-
 #[path = "functional/observe_new_heads.rs"]
 mod observe_new_heads;
 
@@ -229,15 +217,6 @@ mod load_block_withdrawals;
 #[path = "functional/token_price_stream.rs"]
 mod token_price_stream;
 
-#[path = "functional/gas_unit_conversion.rs"]
-mod gas_unit_conversion;
-
-#[path = "functional/gas_percentiles.rs"]
-mod gas_percentiles;
-
-#[path = "functional/gas_tracker_screen.rs"]
-mod gas_tracker_screen;
-
 #[path = "functional/logger_masking.rs"]
 mod logger_masking;
 
@@ -310,14 +289,8 @@ mod home_cursor;
 #[path = "functional/settings_cursor.rs"]
 mod settings_cursor;
 
-#[path = "functional/gas_tracker_cursor.rs"]
-mod gas_tracker_cursor;
-
 #[path = "functional/block_detail_cursor.rs"]
 mod block_detail_cursor;
-
-#[path = "functional/mempool_cursor.rs"]
-mod mempool_cursor;
 
 #[path = "functional/tx_detail_cursor.rs"]
 mod tx_detail_cursor;

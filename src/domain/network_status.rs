@@ -26,8 +26,8 @@ pub struct NewHead {
     pub number: BlockNumber,
 }
 
-/// Slow / average / fast gwei tiers plus extra context used on the Gas
-/// Tracker card.
+/// Slow / average / fast gwei tiers plus extra context used on the Home
+/// gas card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GasSnapshot {
     pub chain: Chain,

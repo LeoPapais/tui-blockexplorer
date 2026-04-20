@@ -1,13 +1,15 @@
 # 5 — Mempool
 
-Status: **done** (MVP + §11.3 follow-ups shipped, except the
-reconnect-capable Alchemy adapter which stays incremental — see
-§11.3.4 and §11.3.5). Domain, port, use case and `MempoolScreen` are
-all in place, the four MVP BDD scenarios plus the three §11.3
-follow-up scenarios in `tests/e2e/features/mempool.feature` are
-green. `cargo run` opens the screen subscribed to an
-`EmptyPendingTxStream` and shows the "waiting..." state until the
-WebSocket adapter is wired end-to-end.
+**Decision (April 2026): abandoned.** The mempool stream screen is not part of
+the product anymore: all production code, ports, adapters, tests, and Cucumber
+features for this slice have been **removed**. The text below is kept only as an
+archival specification if the team ever revisits a live pending-tx view.
+
+---
+
+_Status before removal was:_ **done** (MVP + §11.3 follow-ups shipped, except the
+reconnect-capable Alchemy adapter which stayed incremental — see §11.3.4 and
+§11.3.5).
 
 Live stream of pending transactions as seen by Alchemy's mempool. Important caveat:
 this is the mempool Alchemy observes, not a globally complete mempool; a globally

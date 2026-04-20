@@ -20,7 +20,7 @@ use blockexplorer_tui::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
             BlockReceiptsPort, ChainRegistryPort, ClipboardPort, Clock, ContractReaderPort,
             ContractSourcePort, EnsResolverPort, EventLogPort, GasOraclePort, LabelPort,
-            NetworkStatusPort, NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort,
+            NetworkStatusPort, NewHeadsStreamPort, PortfolioPort, PricesPort,
             ProxyDetectionPort, Rng, SignatureDirectoryPort, SignatureHit, StoragePort,
             TokenPriceStreamPort, TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort,
             TxReaderPort, TxSimulationPort, TxTracePort,
@@ -30,8 +30,8 @@ use blockexplorer_tui::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode, Chain,
         ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
-        NavigableValue, NetworkStatus, NewHead, PendingTx, PendingTxEvent, PendingTxFilter,
-        PriceLookup, PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata,
+        NavigableValue, NetworkStatus, NewHead, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
+        StateDiff, TokenHolding, TokenMetadata,
         TokenOverview, TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary,
         Wei,
     },
@@ -753,85 +753,6 @@ impl TxReaderPort for StubTxReaderPort {
     async fn get(&self, hash: TxHash, _chain: Chain) -> Result<Option<Transaction>, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.by_hash.get(&hash).cloned())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Stub: PendingTxStreamPort
-// ---------------------------------------------------------------------------
-
-/// Single-subscriber stub that exposes helpers to push `Added` /
-/// `Removed` events into the channel the screen drains. Multiple
-/// `subscribe` calls each get their own channel; only the latest one
-/// retains the sender handle the test drives through.
-///
-/// Also records every `update_filter` call in the order it was
-/// received — see `plan/5-mempool.md` §11.3.2.
-#[derive(Default, Clone)]
-pub struct StubPendingTxStreamPort {
-    senders: Arc<Mutex<Vec<UnboundedSender<PendingTxEvent>>>>,
-    filter_history: Arc<Mutex<Vec<(Chain, PendingTxFilter)>>>,
-}
-
-impl StubPendingTxStreamPort {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Deliver an `Added` event to every live subscriber.
-    pub fn push_added(&self, tx: PendingTx) {
-        self.broadcast(PendingTxEvent::Added(tx));
-    }
-
-    /// Deliver a `Removed` event to every live subscriber.
-    pub fn push_removed(&self, hash: TxHash) {
-        self.broadcast(PendingTxEvent::Removed(hash));
-    }
-
-    /// Drop every currently-held sender, simulating the upstream
-    /// connection going away without an explicit error. Used by BDD
-    /// scenarios that exercise the reconnect path.
-    pub fn disconnect_all(&self) {
-        let mut senders = self.senders.lock().expect("stub lock poisoned");
-        senders.clear();
-    }
-
-    /// Snapshot of every `update_filter` call in insertion order.
-    /// Used by functional tests to assert the port saw the expected
-    /// filter changes.
-    pub fn filter_history(&self) -> Vec<(Chain, PendingTxFilter)> {
-        self.filter_history
-            .lock()
-            .expect("stub lock poisoned")
-            .clone()
-    }
-
-    fn broadcast(&self, event: PendingTxEvent) {
-        let mut senders = self.senders.lock().expect("stub lock poisoned");
-        senders.retain(|s| s.send(event.clone()).is_ok());
-    }
-}
-
-impl PendingTxStreamPort for StubPendingTxStreamPort {
-    async fn subscribe(
-        &self,
-        _chain: Chain,
-        _filter: PendingTxFilter,
-    ) -> Result<UnboundedReceiver<PendingTxEvent>, DomainError> {
-        let (tx, rx) = unbounded_channel();
-        let mut senders = self.senders.lock().expect("stub lock poisoned");
-        senders.push(tx);
-        Ok(rx)
-    }
-
-    async fn update_filter(
-        &self,
-        chain: Chain,
-        filter: PendingTxFilter,
-    ) -> Result<(), DomainError> {
-        let mut history = self.filter_history.lock().expect("stub lock poisoned");
-        history.push((chain, filter));
-        Ok(())
     }
 }
 

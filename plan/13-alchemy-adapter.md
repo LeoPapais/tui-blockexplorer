@@ -292,8 +292,8 @@ already covers the immediate fan-out win.
 ### 8.6 newHeads WebSocket adapter
 
 **Shipped.** `src/adapters/rpc/new_heads_stream.rs` hosts
-`AlchemyNewHeadsStream`, mirroring the shape of
-`AlchemyPendingTxStream` (§8.6 of `plan/5-mempool.md`). The task
+`AlchemyNewHeadsStream`, using the same WebSocket/retry scaffolding as other
+Alchemy WS adapters. The task
 connects to `wss://{subdomain}.g.alchemy.com/...`, subscribes with
 `eth_subscribe(["newHeads"])` and emits one `NewHead` per
 notification into an `UnboundedReceiver`. Reconnect is handled by

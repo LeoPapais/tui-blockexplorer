@@ -236,7 +236,7 @@ async fn network_card_shows_block_number(world: &mut AppWorld) {
     assert_eq!(actual.latest_block, expected.latest_block);
 }
 
-#[then("the Gas Tracker card shows slow, average and fast gwei values")]
+#[then("the Gas card shows slow, average and fast gwei values")]
 async fn gas_card_shows_values(world: &mut AppWorld) {
     let gas = world
         .home
@@ -256,7 +256,7 @@ async fn network_card_updates(world: &mut AppWorld) {
     );
 }
 
-#[then("the Gas Tracker card recomputes its values")]
+#[then("the Gas card recomputes its values")]
 async fn gas_card_recomputes(world: &mut AppWorld) {
     let view = world.home.as_ref().expect("session").view();
     let gas = view.gas.as_ref().expect("gas snapshot");
@@ -327,7 +327,7 @@ async fn network_card_renders_last_known_block(world: &mut AppWorld) {
     );
 }
 
-#[then("the Gas Tracker card still renders the last-known slow, average and fast gwei")]
+#[then("the Gas card still renders the last-known slow, average and fast gwei")]
 async fn gas_card_renders_last_known_tiers(world: &mut AppWorld) {
     let view = world.home.as_ref().expect("session").view();
     let gas = view
@@ -337,15 +337,15 @@ async fn gas_card_renders_last_known_tiers(world: &mut AppWorld) {
     let buffer = render_home(world);
     assert!(
         buffer_contains(&buffer, "Slow"),
-        "the Gas Tracker card must still render the Slow tier"
+        "the Gas card must still render the Slow tier"
     );
     assert!(
         buffer_contains(&buffer, "Avg"),
-        "the Gas Tracker card must still render the Avg tier"
+        "the Gas card must still render the Avg tier"
     );
     assert!(
         buffer_contains(&buffer, "Fast"),
-        "the Gas Tracker card must still render the Fast tier"
+        "the Gas card must still render the Fast tier"
     );
 
     let slow = gas.slow.value().to_string();

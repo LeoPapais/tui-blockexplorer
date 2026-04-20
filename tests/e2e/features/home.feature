@@ -9,13 +9,13 @@ Feature: Home screen
   Scenario: User sees current network stats
     When the Home screen is rendered
     Then the Network card shows the latest block number from the stub
-    And the Gas Tracker card shows slow, average and fast gwei values
+    And the Gas card shows slow, average and fast gwei values
 
   Scenario: Gas oracle updates on new block
     Given the Home screen is rendered
     When a new "newHeads" event is pushed from the stub
     Then the Network card updates the latest block number
-    And the Gas Tracker card recomputes its values
+    And the Gas card recomputes its values
 
   Scenario: User switches chain and stats refresh
     Given the Home screen is rendered with "ethereum"
@@ -35,13 +35,13 @@ Feature: Home screen
     When the "newHeads" subscription drops
     Then the header shows a "reconnecting" hint
     And the Network card still renders the last-known latest block
-    And the Gas Tracker card still renders the last-known slow, average and fast gwei
+    And the Gas card still renders the last-known slow, average and fast gwei
 
   Scenario: New head event updates the Home view
     Given the Home screen is rendered
     When a new head is received from the "newHeads" subscription
     Then the Network card updates the latest block number
-    And the Gas Tracker card recomputes its values
+    And the Gas card recomputes its values
 
   Scenario: Esc on Home keeps the app running
     # See plan/12-screen-runtime.md §7.1: Pop on a single-screen stack is a
