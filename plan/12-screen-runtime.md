@@ -80,6 +80,12 @@ impl ScreenStack {
 The dispatcher never mutates the inner `Vec` directly: `Command::Pop`
 triggers a single `pop`, `Command::Quit` clears the stack.
 
+A `Command::Pop` that would leave the stack empty is treated as a no-op
+at the dispatcher level: Home (or whatever screen happens to be the
+root) stays on top and the event loop keeps running. `Command::Quit`
+(bound to `q` and SIGINT / Ctrl+C) is the only path out of the loop.
+See §7.1 for the shipped semantics.
+
 ### 2.4 `HomeScreen`
 
 Holds a `HomeViewModel` (hardcoded for this phase) and a minimal
@@ -162,9 +168,36 @@ loop.
 - `cargo clippy --all-targets -- -D warnings` is clean.
 - `cargo run -- --demo` opens a terminal screen with the Home layout,
   shows Ethereum placeholder numbers, and exits cleanly when `q` is
-  pressed. Pressing `Esc` with only one screen on the stack also exits
-  (stack emptied).
+  pressed. Pressing `Esc` on Home is a no-op (the root screen is never
+  popped off); see §7.1.
 - `cargo run` without the flag prints the hint and exits 0.
+
+## 7.1 Shipped — Root screen protection (slice 1 of "unified detail + global UX", April 2026)
+
+Landed on branch `slice1/home-always-root`:
+
+- **`Command::Pop` on a single-screen stack is a no-op.**
+  `ScreenStack::apply_command(Command::Pop)` used to pop the root screen
+  and return `Transition::Exit`, so `Esc` on Home accidentally closed
+  the app. The dispatcher now returns `Transition::Continue` without
+  mutating the stack when `self.screens.len() <= 1` (and no modal is
+  open — the modal branch still wins over the pop when a modal is
+  visible). Every per-screen `Esc -> Pop` binding keeps working
+  unchanged; the guard lives in the stack, not in the screens.
+- **`Command::Replace` on an empty stack is a no-op.** Defensive edge
+  case symmetric to the above: with an empty stack there is nothing to
+  pop first, and the composition root is the only legitimate source of
+  the initial screen. Dispatching `Replace` on an empty stack now
+  short-circuits to `Transition::Continue` without pushing anything.
+- **`Command::Quit` is the only path out of the event loop.** Bound to
+  `q` at the screen level and to SIGINT (Ctrl+C) through
+  `signal_to_command` in `src/infra/runtime.rs`. Tests:
+  `tests/functional/screen_stack.rs::pop_on_single_screen_stack_is_noop`,
+  `pop_on_empty_stack_is_noop`,
+  `pop_with_two_screens_shrinks_to_one`;
+  `tests/e2e/features/home.feature` scenarios
+  `Esc on Home keeps the app running` and
+  `q on Home still quits the app`.
 
 ## 7. Shipped follow-ups (April 2026, branch `probe/8.13-screen-runtime`)
 
