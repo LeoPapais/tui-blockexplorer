@@ -3,12 +3,20 @@
 //! Covers §11.2 (pause + Ctrl+R), §11.3 (percentile histogram) and §11.4
 //! (unit converter modal) of `plan/9-gas-tracker.md`.
 
+use std::sync::Arc;
+
 use blockexplorer_tui::{
-    adapters::ui::{Command, GasTrackerScreen, Screen, gas_feed, gas_tracker::gas_refresh_channel},
+    adapters::ui::{
+        Command, CursorServices, GasTrackerScreen, Screen, gas_feed,
+        gas_tracker::gas_refresh_channel,
+    },
+    application::ports::ClipboardPort,
     domain::{Chain, GasSnapshot, Gwei, gas},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn snapshot(base: u128) -> GasSnapshot {
     GasSnapshot {
@@ -258,4 +266,30 @@ fn converter_ignores_non_numeric_characters() {
     assert_eq!(screen.converter_input(), "");
     // Pause toggle must NOT trigger while modal is open.
     assert!(!screen.is_paused());
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    // With no active cursor, `y` copies the first navigable field
+    // (gas_slow) to the clipboard so the user always gets something
+    // useful out of the shortcut.
+    let (feed, _sender) = gas_feed();
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = GasTrackerScreen::new(Chain::Ethereum, Some(snapshot(10)), feed)
+        .with_cursor_services(services);
+    assert!(!screen.cursor().is_active());
+
+    screen.handle_key(key(KeyCode::Char('y')));
+
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(format!("{} gwei", 11u128).as_str()),
+        "gas_slow is {base}+1 = 11 for snapshot(10)",
+        base = 10u128,
+    );
 }

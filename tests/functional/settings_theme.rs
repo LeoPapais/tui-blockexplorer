@@ -2,13 +2,20 @@
 //!
 //! See `plan/10-settings.md` section 12.7.
 
+use std::sync::Arc;
+
 use blockexplorer_tui::{
-    adapters::ui::{AppConfigSnapshot, Command, PalettePreset, Screen, SettingsScreen},
+    adapters::ui::{
+        AppConfigSnapshot, Command, CursorServices, PalettePreset, Screen, SettingsScreen,
+    },
+    application::ports::ClipboardPort,
     domain::Chain,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn snapshot() -> AppConfigSnapshot {
     AppConfigSnapshot {
@@ -94,4 +101,26 @@ fn out_of_range_digit_is_ignored() {
     let mut screen = SettingsScreen::new(snapshot());
     screen.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::NONE));
     assert_eq!(screen.palette(), PalettePreset::DarkDefault);
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    // With no active cursor, `y` copies the first navigable field
+    // (active_chain) so the user always gets something useful out of
+    // the shortcut.
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = SettingsScreen::new(snapshot()).with_cursor_services(services);
+    assert!(!screen.cursor().is_active());
+
+    screen.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(Chain::Ethereum.display_name()),
+    );
 }

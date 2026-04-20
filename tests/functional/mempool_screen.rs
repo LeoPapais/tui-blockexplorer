@@ -9,13 +9,18 @@
 //! * §11.3.3 — `ConnectionStatus` updates delivered on the status
 //!   channel flip the badge.
 
+use std::sync::Arc;
+
 use blockexplorer_tui::{
-    adapters::ui::{MempoolScreen, Screen},
-    application::ConnectionStatus,
-    domain::{Address, PendingTx, PendingTxEvent, PendingTxFilter, TxHash, Wei},
+    adapters::ui::{CursorServices, MempoolScreen, Screen},
+    application::{ConnectionStatus, ports::ClipboardPort},
+    domain::{Address, Chain, PendingTx, PendingTxEvent, PendingTxFilter, TxHash, Wei},
 };
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn sample_pending(hash_hex: &str, from_hex: &str) -> PendingTx {
     PendingTx {
@@ -152,6 +157,39 @@ fn status_feed_flips_badge_to_reconnecting() {
     status_tx.send(ConnectionStatus::Connected).unwrap();
     screen.tick();
     assert_eq!(screen.stream_state(), &ConnectionStatus::Connected);
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    let (events_tx, events_rx) = unbounded_channel();
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = MempoolScreen::new(events_rx, PendingTxFilter::default(), open_tx_panic())
+        .with_cursor_services(services);
+
+    let hash =
+        TxHash::from_hex("0xaaaa000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    events_tx
+        .send(PendingTxEvent::Added(PendingTx {
+            hash,
+            from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            to: None,
+            value: Wei::new(0),
+        }))
+        .unwrap();
+    screen.tick();
+
+    screen.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(hash.to_hex().as_str()),
+    );
 }
 
 #[test]

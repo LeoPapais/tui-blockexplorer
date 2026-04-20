@@ -327,3 +327,6 @@ mod address_detail_cursor;
 
 #[path = "functional/arboard_clipboard.rs"]
 mod arboard_clipboard;
+
+#[path = "functional/live_stack_cursor_services.rs"]
+mod live_stack_cursor_services;
