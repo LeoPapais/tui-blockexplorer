@@ -16,6 +16,7 @@ pub mod health;
 pub mod home_feed;
 pub mod logging;
 pub mod mempool_feed;
+pub mod navigate;
 pub mod runtime;
 pub mod search_feed;
 mod tx_feed;
@@ -875,13 +876,17 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
         Box::new(move || -> Box<dyn Screen> { Box::new(SettingsScreen::new(snapshot.clone())) })
     };
 
+    let cursor_services =
+        navigate::live_cursor_services(rpc.clone(), key.to_string(), etherscan_key.clone(), chain);
+
     let mut stack = ScreenStack::new();
     stack.push(Box::new(
         HomeScreen::with_feed(loading_view(chain), feed)
             .with_search_factory(search_factory)
             .with_mempool_factory(mempool_factory)
             .with_gas_factory(gas_factory)
-            .with_settings_factory(settings_factory),
+            .with_settings_factory(settings_factory)
+            .with_cursor_services(cursor_services),
     ));
     stack
 }

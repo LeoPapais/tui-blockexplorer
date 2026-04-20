@@ -35,6 +35,7 @@ pub mod gas;
 pub mod key_binding;
 pub mod label;
 pub mod mempool;
+pub mod navigable;
 pub mod network_status;
 pub mod portfolio;
 pub mod price;
@@ -65,6 +66,7 @@ pub use key_binding::{
 };
 pub use label::{Label, LabelSource};
 pub use mempool::{PendingTx, PendingTxEvent, PendingTxFilter};
+pub use navigable::NavigableValue;
 pub use network_status::{GasSnapshot, NetworkStatus, NewHead};
 pub use portfolio::TokenHolding;
 pub use price::{PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenPrice};

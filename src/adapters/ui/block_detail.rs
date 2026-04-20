@@ -15,8 +15,11 @@ use ratatui::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
-    domain::{Block, BlockId, BlockNumber, Chain, TxHash},
+    adapters::ui::{
+        field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
+        screen::{Command, Screen},
+    },
+    domain::{Block, BlockId, BlockNumber, Chain, NavigableValue, TxHash},
 };
 
 /// Channel half owned by the screen: feeds full blocks in and emits
@@ -96,12 +99,14 @@ pub struct BlockDetailScreen {
     open_tx_factory: OpenTxFactory,
     active_tab: BlockTab,
     tx_selected: usize,
-    /// Last value produced by the `y` / `Y` bindings. A real
-    /// clipboard adapter is deferred — see `plan/3-block-detail.md`
-    /// §12.1 and `plan/15-backlog.md §8.16`. Tests inspect this
-    /// field directly so the binding stays testable without pulling
-    /// the OS clipboard into the UI adapter.
+    /// Last value produced by the `y` / `Y` bindings before the
+    /// cursor takes over. Retained so the existing test sink
+    /// (`last_copied_value()`) keeps working and the migration to
+    /// [`CursorServices`] stays incremental. See
+    /// `plan/17-navigable-values.md` §7.
     last_copied_value: Option<String>,
+    cursor: FieldCursor,
+    cursor_services: Option<CursorServices>,
 }
 
 impl BlockDetailScreen {
@@ -124,6 +129,8 @@ impl BlockDetailScreen {
             active_tab: BlockTab::Overview,
             tx_selected: 0,
             last_copied_value: None,
+            cursor: FieldCursor::new(),
+            cursor_services: None,
         }
     }
 
@@ -144,7 +151,42 @@ impl BlockDetailScreen {
             active_tab: BlockTab::Overview,
             tx_selected: 0,
             last_copied_value: None,
+            cursor: FieldCursor::new(),
+            cursor_services: None,
         }
+    }
+
+    /// Wire cursor-owned clipboard + navigation. See
+    /// `plan/17-navigable-values.md` §4.
+    #[must_use]
+    pub fn with_cursor_services(mut self, services: CursorServices) -> Self {
+        self.cursor_services = Some(services);
+        self
+    }
+
+    /// Navigable fields exposed on the Overview tab. Order matches
+    /// the on-screen reading order: number, hash, parent hash, miner.
+    #[must_use]
+    pub fn navigable_fields(&self) -> Vec<FieldEntry> {
+        let Some(b) = self.current.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = vec![
+            FieldEntry::new("block_number", NavigableValue::BlockNumber(b.number)),
+            FieldEntry::new("block_hash", NavigableValue::BlockHash(b.hash)),
+            FieldEntry::new("parent_hash", NavigableValue::BlockHash(b.parent_hash)),
+            FieldEntry::new("miner", NavigableValue::Address(b.miner)),
+        ];
+        if let Some(signer) = b.extra_signer {
+            out.push(FieldEntry::new("signer", NavigableValue::Address(signer)));
+        }
+        out
+    }
+
+    /// Current cursor state. Exposed for tests.
+    #[must_use]
+    pub const fn cursor(&self) -> &FieldCursor {
+        &self.cursor
     }
 
     /// Latest value produced by the `y` / `Y` clipboard bindings.
@@ -309,6 +351,10 @@ impl Screen for BlockDetailScreen {
         // Navigation keys apply regardless of the active tab.
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
+            KeyCode::Esc if self.cursor.is_active() => {
+                self.cursor.deactivate();
+                return Command::None;
+            }
             KeyCode::Esc => return Command::Pop,
             KeyCode::Char('[') => {
                 if let Some(block) = self.current.as_ref() {
@@ -332,17 +378,25 @@ impl Screen for BlockDetailScreen {
                 self.active_tab = self.active_tab.previous();
                 return Command::None;
             }
-            KeyCode::Right => {
+            // Left/Right are now owned by the field cursor on the
+            // Overview tab (see the §7 dispatch below). The legacy
+            // "Left/Right switches tabs" behaviour only kicks in
+            // when the active tab is not Overview — Transactions and
+            // Blobs/Withdrawals still flip tabs with arrows, matching
+            // the pre-cursor contract.
+            KeyCode::Right if !matches!(self.active_tab, BlockTab::Overview) => {
                 self.active_tab = self.active_tab.next();
                 return Command::None;
             }
-            KeyCode::Left => {
+            KeyCode::Left if !matches!(self.active_tab, BlockTab::Overview) => {
                 self.active_tab = self.active_tab.previous();
                 return Command::None;
             }
             // `y` copies the identifier relevant to the active tab;
             // `Y` always copies the block number. See plan/3 §12.1.
-            KeyCode::Char('y') => {
+            // Once the cursor takes over (see the §7 dispatch below)
+            // `y` copies the field under the cursor instead.
+            KeyCode::Char('y') if !self.cursor.is_active() => {
                 self.copy_active_identifier();
                 return Command::None;
             }
@@ -351,6 +405,55 @@ impl Screen for BlockDetailScreen {
                 return Command::None;
             }
             _ => {}
+        }
+
+        // Cursor is only in scope on the Overview tab so list
+        // navigation in the Transactions tab keeps its existing
+        // meaning.
+        if matches!(self.active_tab, BlockTab::Overview) {
+            let fields = self.navigable_fields();
+            match key.code {
+                KeyCode::Left => {
+                    self.cursor.move_in(fields.len(), CursorDir::Left);
+                    return Command::None;
+                }
+                KeyCode::Right => {
+                    self.cursor.move_in(fields.len(), CursorDir::Right);
+                    return Command::None;
+                }
+                KeyCode::Up => {
+                    self.cursor.move_in(fields.len(), CursorDir::Up);
+                    return Command::None;
+                }
+                KeyCode::Down => {
+                    self.cursor.move_in(fields.len(), CursorDir::Down);
+                    return Command::None;
+                }
+                KeyCode::Char('y') if self.cursor.is_active() => {
+                    if let (Some(entry), Some(services)) =
+                        (self.cursor.current(&fields), self.cursor_services.as_ref())
+                    {
+                        self.last_copied_value = Some(entry.value.copy_text());
+                        services.copy(&entry.value);
+                    } else if let Some(entry) = self.cursor.current(&fields) {
+                        // No services: keep the legacy sink in sync
+                        // so the previous tests still have something
+                        // to assert on.
+                        self.last_copied_value = Some(entry.value.copy_text());
+                    }
+                    return Command::None;
+                }
+                KeyCode::Enter if self.cursor.is_active() => {
+                    if let (Some(entry), Some(services)) =
+                        (self.cursor.current(&fields), self.cursor_services.as_ref())
+                        && let Some(screen) = services.open(&entry.value)
+                    {
+                        return Command::Push(screen);
+                    }
+                    return Command::None;
+                }
+                _ => {}
+            }
         }
 
         // Shift+Tab is reported as `KeyCode::Tab` + SHIFT on a few

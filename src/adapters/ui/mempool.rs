@@ -15,9 +15,12 @@ use ratatui::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 
 use crate::{
-    adapters::ui::screen::{Command, Screen},
+    adapters::ui::{
+        field_cursor::CursorServices,
+        screen::{Command, Screen},
+    },
     application::ConnectionStatus,
-    domain::{PendingTx, PendingTxEvent, PendingTxFilter, TxHash},
+    domain::{NavigableValue, PendingTx, PendingTxEvent, PendingTxFilter, TxHash},
 };
 
 /// Callback used on Enter to open TxDetail for the selected row.
@@ -44,6 +47,8 @@ pub struct MempoolScreen {
     /// at [`ConnectionStatus::Connected`] for its entire lifetime.
     status_rx: Option<UnboundedReceiver<ConnectionStatus>>,
     stream_state: ConnectionStatus,
+    cursor_services: Option<CursorServices>,
+    last_copied_value: Option<String>,
 }
 
 impl MempoolScreen {
@@ -66,7 +71,24 @@ impl MempoolScreen {
             filter_control: None,
             status_rx: None,
             stream_state: ConnectionStatus::Connected,
+            cursor_services: None,
+            last_copied_value: None,
         }
+    }
+
+    /// Wire cursor-owned clipboard + navigation. When present, `y`
+    /// copies the selected row's hash through the real clipboard
+    /// adapter. See `plan/17-navigable-values.md` §6.
+    #[must_use]
+    pub fn with_cursor_services(mut self, services: CursorServices) -> Self {
+        self.cursor_services = Some(services);
+        self
+    }
+
+    /// Last value copied through the `y` binding. Exposed for tests.
+    #[must_use]
+    pub fn last_copied_value(&self) -> Option<&str> {
+        self.last_copied_value.as_deref()
     }
 
     /// Attach the control-channel sender used to forward filter
@@ -297,6 +319,20 @@ impl Screen for MempoolScreen {
             KeyCode::Char('c') => {
                 self.items.clear();
                 self.selected = 0;
+                Command::None
+            }
+            KeyCode::Char('y') => {
+                // `y` copies the selected row's hash (canonical hex).
+                // Cursor services push the same value to the real
+                // clipboard adapter; the legacy sink stays in place
+                // for tests that do not wire services.
+                if let Some(tx) = self.items.get(self.selected) {
+                    let hex = tx.hash.to_hex();
+                    if let Some(services) = self.cursor_services.as_ref() {
+                        services.copy(&NavigableValue::TxHash(tx.hash));
+                    }
+                    self.last_copied_value = Some(hex);
+                }
                 Command::None
             }
             KeyCode::Up => {
