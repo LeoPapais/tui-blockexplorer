@@ -620,11 +620,29 @@ into sub-rectangles only — no change is required in the runtime.
   - Home's `"Chain: Ethereum"` header row is still present.
   - Home's Network / Gas Tracker cards are still visible outside
     the overlay rectangles.
-  - The input strip at the bottom contains the `> _` search
-    prompt.
+  - The input strip at the bottom contains the `> ` search prompt
+    (assertions scan only the bottom three rows so they do not
+    match `> [kind]` in the Candidates list).
   - The results block shows its `Candidates` border title.
+- Functional `tests/functional/search_screen_input.rs`: line editor
+  (insert in the middle, backspace before cursor, delete forward).
 - BDD `tests/e2e/features/search.feature`: new scenario
   `Opening / overlays search on top of Home without erasing it`.
   Exercises the `OpenModal` path (mirroring the runtime) and
   asserts, via a `TestBackend` composite render, that Home's
   content still shows through.
+
+### 13.6 Input line editing
+
+The footer strip is a real line editor, not append-only typing:
+
+- **Cursor** — byte index on UTF-8 character boundaries; shown as a
+  block caret (reversed video on the next character, or a reversed
+  trailing space at end-of-input).
+- **Blink** — `cursor_blink_on` toggles on each `Screen::tick` (same
+  cadence as `AppEvent::Tick`, 250 ms in `runtime.rs`), so the caret
+  blinks without extra `Command` variants.
+- **Keys** — printable characters insert at the cursor; `Backspace`
+  deletes before the cursor; `Delete` deletes at the cursor; `Left` /
+  `Right` move the cursor. `Up` / `Down` continue to move only the
+  candidate list selection.

@@ -65,6 +65,12 @@ fn row_of(buffer: &Buffer, needle: &str) -> Option<u16> {
     (0..buffer.area.height).find(|y| row_text(buffer, *y).contains(needle))
 }
 
+/// Search footer strip only (`footer_rect(..., 3)`): avoids matching `> [tx]` in Candidates.
+fn row_of_in_bottom_footer(buffer: &Buffer, needle: &str) -> Option<u16> {
+    let h = buffer.area.height;
+    (h.saturating_sub(3)..h).find(|y| row_text(buffer, *y).contains(needle))
+}
+
 /// Home's header line ("Chain: Ethereum") must still be visible
 /// after the Search overlay is painted on top. The header sits
 /// inside a 3-row block at the top of the screen, far above the
@@ -84,13 +90,14 @@ fn home_header_stays_visible_behind_search_overlay() {
 }
 
 /// The search input must sit as a 3-row footer pinned to the
-/// bottom of the buffer. The prompt `> _` (with the user's
-/// current input between `>` and `_`) is the canonical marker.
+/// bottom of the buffer. The `> ` prompt prefix (line editor with
+/// blinking caret) is the canonical marker — not the old static `_`.
 #[test]
 fn search_input_renders_in_bottom_footer() {
     let buffer = render_composite(120, 30);
 
-    let prompt_row = row_of(&buffer, "> _").expect("search prompt must be rendered");
+    let prompt_row =
+        row_of_in_bottom_footer(&buffer, "> ").expect("search prompt must be rendered");
     assert!(
         prompt_row >= buffer.area.height - 3,
         "search prompt must sit inside the bottom 3 rows (row {prompt_row} of {})",

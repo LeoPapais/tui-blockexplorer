@@ -1166,6 +1166,12 @@ fn overlay_row_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<u16>
     (0..buffer.area.height).find(|y| overlay_row_text(buffer, *y).contains(needle))
 }
 
+/// Footer strip only — same as `tests/functional/search_overlay_render.rs`.
+fn overlay_row_of_in_bottom_footer(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<u16> {
+    let h = buffer.area.height;
+    (h.saturating_sub(3)..h).find(|y| overlay_row_text(buffer, *y).contains(needle))
+}
+
 #[when(regex = r#"^the user opens the search overlay with "/"$"#)]
 async fn user_opens_search_overlay(world: &mut AppWorld) {
     build_stack(world);
@@ -1221,7 +1227,8 @@ async fn search_input_at_bottom(world: &mut AppWorld) {
     let stack = world.stack.as_ref().expect("stack exists");
     let buffer = render_stack_to_buffer(stack, 120, 30);
 
-    let prompt_row = overlay_row_of(&buffer, "> _").expect("search prompt `> _` must render");
+    let prompt_row = overlay_row_of_in_bottom_footer(&buffer, "> ")
+        .expect("search prompt (`> ` line editor) must render");
     assert!(
         prompt_row >= buffer.area.height - 3,
         "search prompt must sit inside the bottom 3 rows, got row {prompt_row} of {}",

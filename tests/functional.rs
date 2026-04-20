@@ -22,6 +22,9 @@ mod home_screen_render;
 #[path = "functional/search_overlay_render.rs"]
 mod search_overlay_render;
 
+#[path = "functional/search_screen_input.rs"]
+mod search_screen_input;
+
 #[path = "functional/screen_stack.rs"]
 mod screen_stack;
 

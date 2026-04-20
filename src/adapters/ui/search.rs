@@ -1,6 +1,6 @@
 //! Universal search modal.
 //!
-//! See `plan/2-search.md` section 10.3.
+//! See `plan/2-search.md` section 10.3 (integration) and §13.6 (line editor).
 //!
 //! The screen itself is purely synchronous: it owns the input string,
 //! the current candidate list and the selected index. Resolution is
@@ -13,6 +13,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -69,10 +70,49 @@ pub fn search_feed() -> (SearchFeed, SearchFeedSender) {
 
 pub struct SearchScreen {
     input: String,
+    /// Byte index into `input`, always on a UTF-8 character boundary.
+    cursor: usize,
+    /// Toggled on each UI tick so the caret blinks (~500 ms with 250 ms ticks).
+    cursor_blink_on: bool,
     candidates: Vec<ResolvedEntity>,
     selected: usize,
     feed: SearchFeed,
     on_detail: DetailFactory,
+}
+
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    let len = s.len();
+    if i > len {
+        i = len;
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn move_cursor_left(s: &str, cursor: usize) -> usize {
+    let cursor = floor_char_boundary(s, cursor);
+    if cursor == 0 {
+        return 0;
+    }
+    s[..cursor]
+        .chars()
+        .next_back()
+        .map(|c| cursor - c.len_utf8())
+        .unwrap_or(0)
+}
+
+fn move_cursor_right(s: &str, cursor: usize) -> usize {
+    let cursor = floor_char_boundary(s, cursor);
+    if cursor >= s.len() {
+        return cursor;
+    }
+    s[cursor..]
+        .chars()
+        .next()
+        .map(|c| cursor + c.len_utf8())
+        .unwrap_or(cursor)
 }
 
 impl SearchScreen {
@@ -84,6 +124,8 @@ impl SearchScreen {
     pub fn new(feed: SearchFeed, on_detail: DetailFactory) -> Self {
         Self {
             input: String::new(),
+            cursor: 0,
+            cursor_blink_on: true,
             candidates: Vec::new(),
             selected: 0,
             feed,
@@ -109,17 +151,49 @@ impl SearchScreen {
         self.candidates.get(self.selected)
     }
 
-    /// Type one character into the search input and publish the new
+    fn sync_cursor(&mut self) {
+        self.cursor = floor_char_boundary(&self.input, self.cursor.min(self.input.len()));
+    }
+
+    /// Type one character into the search input at the cursor and publish the new
     /// query. Exposed so tests and the key handler can share the
     /// logic.
     pub fn type_char(&mut self, c: char) {
-        self.input.push(c);
+        self.sync_cursor();
+        self.input.insert(self.cursor, c);
+        self.cursor += c.len_utf8();
         self.publish();
     }
 
     pub fn backspace(&mut self) {
-        self.input.pop();
+        self.sync_cursor();
+        if self.cursor == 0 {
+            return;
+        }
+        let prev = move_cursor_left(&self.input, self.cursor);
+        self.input.replace_range(prev..self.cursor, "");
+        self.cursor = prev;
         self.publish();
+    }
+
+    fn delete_forward(&mut self) {
+        self.sync_cursor();
+        if self.cursor >= self.input.len() {
+            return;
+        }
+        let next = move_cursor_right(&self.input, self.cursor);
+        self.input.replace_range(self.cursor..next, "");
+        self.publish();
+    }
+
+    fn cursor_left(&mut self) {
+        self.sync_cursor();
+        self.cursor = move_cursor_left(&self.input, self.cursor);
+    }
+
+    fn cursor_right(&mut self) {
+        self.sync_cursor();
+        self.cursor = move_cursor_right(&self.input, self.cursor);
     }
 
     pub fn set_candidates(&mut self, candidates: Vec<ResolvedEntity>) {
@@ -152,6 +226,38 @@ impl SearchScreen {
             next = len - 1;
         }
         self.selected = next as usize;
+    }
+
+    fn input_line(&self) -> Line<'static> {
+        let s = self.input.as_str();
+        let cur = floor_char_boundary(s, self.cursor.min(s.len()));
+        let cursor_style = |blink: bool| {
+            if blink {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            }
+        };
+
+        let mut spans: Vec<Span<'static>> = vec![Span::raw("> ")];
+        if cur >= s.len() {
+            spans.push(Span::raw(s.to_string()));
+            spans.push(Span::styled(" ", cursor_style(self.cursor_blink_on)));
+            return Line::from(spans);
+        }
+
+        let ch = s[cur..]
+            .chars()
+            .next()
+            .expect("cursor on boundary with cur < len");
+        let after = cur + ch.len_utf8();
+        spans.push(Span::raw(s[..cur].to_string()));
+        spans.push(Span::styled(
+            ch.to_string(),
+            cursor_style(self.cursor_blink_on),
+        ));
+        spans.push(Span::raw(s[after..].to_string()));
+        Line::from(spans)
     }
 }
 
@@ -212,7 +318,7 @@ impl Screen for SearchScreen {
         }
 
         frame.render_widget(Clear, input_rect);
-        let header = Paragraph::new(format!("> {}_", self.input))
+        let header = Paragraph::new(self.input_line())
             .block(Block::default().borders(Borders::ALL).title("Search"));
         frame.render_widget(header, input_rect);
     }
@@ -227,6 +333,18 @@ impl Screen for SearchScreen {
             },
             KeyCode::Backspace => {
                 self.backspace();
+                Command::None
+            }
+            KeyCode::Delete => {
+                self.delete_forward();
+                Command::None
+            }
+            KeyCode::Left => {
+                self.cursor_left();
+                Command::None
+            }
+            KeyCode::Right => {
+                self.cursor_right();
                 Command::None
             }
             KeyCode::Char(c) => {
@@ -247,6 +365,7 @@ impl Screen for SearchScreen {
 
     fn tick(&mut self) -> Command {
         self.drain_feed();
+        self.cursor_blink_on = !self.cursor_blink_on;
         Command::None
     }
 
