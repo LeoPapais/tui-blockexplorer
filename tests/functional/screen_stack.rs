@@ -307,6 +307,35 @@ fn apply_command_replace_with_open_modal_closes_the_modal() {
 
     assert_eq!(stack.top().unwrap().title(), "tx");
     assert!(!stack.has_modal());
+    assert_eq!(stack.len(), 2, "root must stay under the new detail screen");
+    assert_eq!(stack.titles().next().unwrap(), "home");
+}
+
+#[test]
+fn replace_from_modal_does_not_pop_the_root_screen() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Replace(LabelScreen::boxed("address")));
+
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack.titles().next().unwrap(), "home");
+    assert_eq!(stack.top().unwrap().title(), "address");
+}
+
+#[test]
+fn replace_from_modal_on_two_level_stack_replaces_top_detail_only() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("tx"));
+    stack.open_modal(LabelScreen::boxed("search"));
+
+    stack.apply_command(Command::Replace(LabelScreen::boxed("address")));
+
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack.titles().next().unwrap(), "home");
+    assert_eq!(stack.top().unwrap().title(), "address");
 }
 
 // ---------------------------------------------------------------------------

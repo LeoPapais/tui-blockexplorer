@@ -278,9 +278,14 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, screen: &dyn Screen) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let hints = screen.footer_hints();
-    if hints.is_empty() {
-        return;
+    let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
+    for pair in [("/", "Search"), ("?", "Help"), ("Esc", "Back")] {
+        hints.push(pair);
+    }
+    for pair in screen.footer_hints() {
+        if !hints.iter().any(|(k, _)| *k == pair.0) {
+            hints.push(pair);
+        }
     }
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 3);
     for (i, (key, action)) in hints.iter().enumerate() {

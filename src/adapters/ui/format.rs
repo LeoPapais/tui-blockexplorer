@@ -79,6 +79,26 @@ pub fn humanize_gas_units(gas: u64) -> String {
     thousands(u128::from(gas))
 }
 
+/// Humanize an ERC-20-style integer amount with a fixed `decimals`
+/// setting (off-chain metadata). The display is grouped like ETH but
+/// without a currency suffix — callers add the symbol.
+#[must_use]
+pub fn humanize_token_units(amount: u128, decimals: u8) -> String {
+    if decimals == 0 {
+        return thousands(amount);
+    }
+    let div = 10u128.pow(u32::from(decimals));
+    let whole = amount / div;
+    let frac = amount % div;
+    if frac == 0 {
+        return thousands(whole);
+    }
+    let frac_str = format!("{:0width$}", frac, width = usize::from(decimals));
+    let trimmed = frac_str.trim_end_matches('0');
+    let integer = thousands(whole);
+    format!("{integer}.{trimmed}")
+}
+
 /// US-style thousands grouping for a `u128`.
 fn thousands(mut n: u128) -> String {
     if n == 0 {
@@ -200,5 +220,11 @@ mod tests {
         assert_eq!(humanize_gas_units(1_000), "1,000");
         assert_eq!(humanize_gas_units(52_341), "52,341");
         assert_eq!(humanize_gas_units(21_000_000), "21,000,000");
+    }
+
+    #[test]
+    fn humanize_token_units_integer_and_fraction() {
+        assert_eq!(humanize_token_units(1_500_000, 6), "1.5");
+        assert_eq!(humanize_token_units(1_000_000, 6), "1");
     }
 }

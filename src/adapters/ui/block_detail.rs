@@ -9,8 +9,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    widgets::{Block as RatBlock, Borders, List, ListItem, Paragraph, Wrap},
+    style::{Color, Modifier, Style},
+    text::Line,
+    widgets::{Block as RatBlock, Borders, List, ListItem, Paragraph, Tabs, Wrap},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -283,15 +284,35 @@ impl Screen for BlockDetailScreen {
             chunks[0],
         );
 
-        // Tab bar
-        let tabs = format!(
-            "[ {overview} ]  [ {transactions} ]  [ {blobs} ]",
-            overview = marker(self.active_tab, BlockTab::Overview),
-            transactions = marker(self.active_tab, BlockTab::Transactions),
-            blobs = marker(self.active_tab, BlockTab::BlobsAndWithdrawals),
-        );
+        // Tab bar — same `Tabs` widget + palette as `AddressDetailScreen`.
+        let tab_titles: Vec<Line<'static>> = [
+            BlockTab::Overview,
+            BlockTab::Transactions,
+            BlockTab::BlobsAndWithdrawals,
+        ]
+        .into_iter()
+        .map(|t| Line::from(format!(" {} ", t.label())))
+        .collect();
+        let tab_idx = match self.active_tab {
+            BlockTab::Overview => 0,
+            BlockTab::Transactions => 1,
+            BlockTab::BlobsAndWithdrawals => 2,
+        };
         frame.render_widget(
-            Paragraph::new(tabs).block(RatBlock::default().borders(Borders::ALL).title("Tabs")),
+            Tabs::new(tab_titles)
+                .select(tab_idx)
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .title("Tabs  —  Tab / Shift-Tab"),
+                )
+                .divider(" ")
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Indexed(238))
+                        .fg(Color::White),
+                ),
             chunks[1],
         );
 
@@ -522,14 +543,6 @@ impl Screen for BlockDetailScreen {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
-    }
-}
-
-fn marker(active: BlockTab, tab: BlockTab) -> String {
-    if active == tab {
-        format!("*{}*", tab.label())
-    } else {
-        tab.label().to_string()
     }
 }
 

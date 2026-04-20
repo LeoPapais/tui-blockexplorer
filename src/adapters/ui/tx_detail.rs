@@ -37,14 +37,14 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::{
     adapters::ui::{
         field_cursor::CursorServices,
-        format::{humanize_eth, humanize_gas_units, humanize_gwei},
+        format::{humanize_eth, humanize_gas_units, humanize_gwei, humanize_token_units},
         screen::{Command, Screen},
         scroll::ScrollState,
     },
     application::{DecodedLog, DecodedMethod, EventAbi, LoadStatus, SignatureSource, TxView},
     domain::{
-        AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, CallNode, Chain, DiffChange,
-        LogEntry, NavigableValue, StateDiff, TxHash, TxStatus, Wei,
+        Address, AddressStateDiff, AssetChange, AssetChangeKind, AssetKind, CallNode, Chain,
+        DiffChange, LogEntry, NavigableValue, StateDiff, TxHash, TxStatus, Wei,
     },
 };
 
@@ -170,6 +170,8 @@ pub struct TxDetailScreen {
     logs_selected: usize,
     /// Right-pane field cursor for the Logs tab (plan 13.4).
     logs_field: usize,
+    /// Line cursor on the Raw JSON tab (mirrors Overview rows).
+    raw_row: usize,
     /// Pane focus inside the Logs tab (plan 13.4).
     logs_focus: LogsFocus,
     /// Bounded scroll used by tabs whose content is rendered as a
@@ -206,6 +208,7 @@ impl TxDetailScreen {
             overview_row: 0,
             logs_selected: 0,
             logs_field: 0,
+            raw_row: 0,
             logs_focus: LogsFocus::List,
             scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
@@ -296,6 +299,7 @@ impl TxDetailScreen {
             self.overview_row = 0;
             self.logs_selected = 0;
             self.logs_field = 0;
+            self.raw_row = 0;
             self.logs_focus = LogsFocus::List;
             self.with_scroll(|s| s.reset());
         }
@@ -429,7 +433,8 @@ impl Screen for TxDetailScreen {
         match self.active_tab {
             TxTab::Overview => self.handle_overview_key(key),
             TxTab::Logs => self.handle_logs_key(key),
-            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Raw => self.handle_raw_key(key),
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges => {
                 self.handle_scroll_key(key);
             }
         }
@@ -468,6 +473,9 @@ impl TxDetailScreen {
         if target == TxTab::Logs {
             self.logs_focus = LogsFocus::List;
             self.logs_field = 0;
+        }
+        if target == TxTab::Raw {
+            self.raw_row = 0;
         }
     }
 
@@ -578,6 +586,39 @@ impl TxDetailScreen {
         }
     }
 
+    fn handle_raw_key(&mut self, key: KeyEvent) {
+        let Some(view) = self.current.as_ref() else {
+            return;
+        };
+        let rows = raw_rows_for_view(view);
+        if rows.is_empty() {
+            return;
+        }
+        if self.raw_row >= rows.len() {
+            self.raw_row = rows.len() - 1;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.raw_row = (self.raw_row + rows.len() - 1) % rows.len();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.raw_row = (self.raw_row + 1) % rows.len();
+            }
+            KeyCode::Left => self.switch_tab(self.active_tab.previous()),
+            KeyCode::Right => self.switch_tab(self.active_tab.next()),
+            KeyCode::Home => self.raw_row = 0,
+            KeyCode::End => self.raw_row = rows.len() - 1,
+            _ => {}
+        }
+    }
+
+    fn raw_rows(&self) -> Vec<OverviewRow> {
+        self.current
+            .as_ref()
+            .map(raw_rows_for_view)
+            .unwrap_or_default()
+    }
+
     /// Re-send the current tx hash on the feed when it is pending.
     /// The background task re-runs the full pipeline, which refreshes
     /// the Asset Changes / State Changes tabs against the latest
@@ -616,7 +657,11 @@ impl TxDetailScreen {
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
                 }
             }),
-            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges | TxTab::Raw => {
+            TxTab::Raw => self
+                .raw_rows()
+                .get(self.raw_row)
+                .map(|r| r.copy_value.clone()),
+            TxTab::Internal | TxTab::AssetChanges | TxTab::StateChanges => {
                 self.current.as_ref().map(|v| v.tx.hash.to_hex())
             }
         };
@@ -649,19 +694,16 @@ impl TxDetailScreen {
             TxTab::Internal => {
                 self.render_scrollable(frame, area, "Internal", internal_body(&view.call_tree))
             }
-            TxTab::AssetChanges => self.render_scrollable(
-                frame,
-                area,
-                "Asset Changes",
-                asset_changes_body(&view.asset_changes),
-            ),
+            TxTab::AssetChanges => {
+                self.render_scrollable(frame, area, "Asset Changes", asset_changes_tab_body(view))
+            }
             TxTab::StateChanges => self.render_scrollable(
                 frame,
                 area,
                 "State Changes",
                 state_changes_body(&view.state_diff),
             ),
-            TxTab::Raw => self.render_scrollable(frame, area, "Raw", view.tx.raw_json.clone()),
+            TxTab::Raw => self.render_raw_tab(frame, area, view),
         }
     }
 
@@ -723,27 +765,58 @@ impl TxDetailScreen {
         let log = &view.decoded_logs[self.logs_selected];
         let fields = self.log_fields(log);
         let focused = matches!(self.logs_focus, LogsFocus::Detail);
-        let lines: Vec<Line<'static>> = std::iter::once(Line::from(Span::styled(
-            format!("addr: {}", log.raw.address.to_hex()),
-            Style::default().fg(Color::Gray),
-        )))
-        .chain(
-            fields
-                .iter()
-                .enumerate()
-                .map(|(idx, field)| log_field_line(field, focused && idx == self.logs_field)),
-        )
-        .collect();
-        let title = if focused {
-            "Log detail *"
-        } else {
-            "Log detail"
-        };
+        let detail_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(chunks[1]);
+
+        let decoded_lines: Vec<Line<'static>> = fields
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| log_field_line(field, focused && idx == self.logs_field))
+            .collect();
+        let title = if focused { "Decoded *" } else { "Decoded" };
+        frame.render_widget(
+            Paragraph::new(decoded_lines)
+                .wrap(Wrap { trim: false })
+                .block(RatBlock::default().borders(Borders::ALL).title(title)),
+            detail_split[0],
+        );
+
+        let raw_text = log_raw_dump(log);
+        frame.render_widget(
+            Paragraph::new(raw_text)
+                .wrap(Wrap { trim: false })
+                .block(RatBlock::default().borders(Borders::ALL).title("Raw log")),
+            detail_split[1],
+        );
+    }
+
+    fn render_raw_tab(&self, frame: &mut Frame<'_>, area: Rect, view: &TxView) {
+        let rows = raw_rows_for_view(view);
+        if rows.is_empty() {
+            frame.render_widget(
+                Paragraph::new("(empty)")
+                    .block(RatBlock::default().borders(Borders::ALL).title("Raw")),
+                area,
+            );
+            return;
+        }
+        let lines: Vec<Line<'static>> = rows
+            .iter()
+            .enumerate()
+            .map(|(idx, row)| overview_line(row, idx == self.raw_row))
+            .collect();
+        let total = lines.len() as u16;
+        let viewport = area.height.saturating_sub(2);
+        self.with_scroll(|s| s.set_dimensions(total, viewport));
+        let offset = self.scroll.get().offset();
         frame.render_widget(
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
-                .block(RatBlock::default().borders(Borders::ALL).title(title)),
-            chunks[1],
+                .scroll((offset, 0))
+                .block(RatBlock::default().borders(Borders::ALL).title("Raw JSON")),
+            area,
         );
     }
 
@@ -968,6 +1041,190 @@ fn short_address(addr: &crate::domain::Address) -> String {
     format!("{}…{}", &hex[..8], &hex[hex.len() - 4..])
 }
 
+/// `Transfer(address,address,uint256)` topic hash.
+const ERC20_TRANSFER_TOPIC0: [u8; 32] = [
+    0xdd, 0xf2, 0x52, 0xad, 0x1b, 0xe2, 0xc8, 0x9b, 0x69, 0xc2, 0xb0, 0x68, 0xfc, 0x37, 0x8d, 0xaa,
+    0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16, 0x28, 0xf5, 0x5a, 0x4d, 0xf5, 0x23, 0xb3, 0xef,
+];
+
+fn log_raw_dump(log: &DecodedLog) -> String {
+    let mut s = format!("contract: {}\n", log.raw.address.to_hex());
+    for (i, topic) in log.raw.topics.iter().enumerate() {
+        s.push_str(&format!("topic{i}: 0x{}\n", hex::encode(topic)));
+    }
+    s.push_str(&format!("data: 0x{}", hex::encode(&log.raw.data)));
+    s
+}
+
+fn raw_rows_for_view(view: &TxView) -> Vec<OverviewRow> {
+    let raw = view.tx.raw_json.as_str();
+    if raw.trim().is_empty() {
+        return vec![OverviewRow {
+            label: "line",
+            display: "(empty)".into(),
+            copy_value: String::new(),
+            raw_hint: None,
+        }];
+    }
+    raw.lines()
+        .enumerate()
+        .map(|(i, line)| OverviewRow {
+            label: "line",
+            display: format!("{i}: {line}"),
+            copy_value: line.to_string(),
+            raw_hint: None,
+        })
+        .collect()
+}
+
+fn asset_changes_tab_body(view: &TxView) -> String {
+    let mut out = derived_transfers_text(view);
+    let addon = simulation_addon_text(&view.asset_changes);
+    if !addon.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&addon);
+    }
+    out
+}
+
+fn derived_transfers_text(view: &TxView) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("Receipt transfers (native ETH + ERC-20 Transfer logs)".to_string());
+    let tx = &view.tx;
+    if tx.value.value() > 0 {
+        match tx.to {
+            Some(to) => lines.push(format!(
+                "{}  ──► {}  {}",
+                short_address(&tx.from),
+                short_address(&to),
+                humanize_eth(tx.value),
+            )),
+            None => lines.push(format!(
+                "{}  ──► (contract creation)  {}",
+                short_address(&tx.from),
+                humanize_eth(tx.value),
+            )),
+        }
+    }
+    for log in &view.decoded_logs {
+        if let Some(line) = erc20_transfer_line(log) {
+            lines.push(line);
+        }
+    }
+    if lines.len() == 1 {
+        lines.push(
+            "(no native ETH in `value` and no ERC-20 Transfer events in this receipt)".to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn simulation_addon_text(status: &LoadStatus<Vec<AssetChange>>) -> String {
+    match status {
+        LoadStatus::Pending => "Alchemy simulateAssetChanges: loading…".to_string(),
+        LoadStatus::Unsupported => {
+            "Alchemy simulateAssetChanges: unavailable on this chain / tier.".to_string()
+        }
+        LoadStatus::Failed(msg) => format!("Alchemy simulateAssetChanges failed: {msg}"),
+        LoadStatus::Loaded(ch) if ch.is_empty() => String::new(),
+        LoadStatus::Loaded(changes) => {
+            let mut s = String::from("── Simulation extras (alchemy) ──\n");
+            s.push_str(&format_simulated_changes(changes));
+            s
+        }
+    }
+}
+
+fn erc20_transfer_line(log: &DecodedLog) -> Option<String> {
+    let t0 = log.raw.topics.first()?;
+    if *t0 != ERC20_TRANSFER_TOPIC0 || log.raw.topics.len() < 3 {
+        return None;
+    }
+    let mut from_b = [0u8; 20];
+    from_b.copy_from_slice(&log.raw.topics[1][12..]);
+    let from = Address::from_bytes(from_b);
+    let mut to_b = [0u8; 20];
+    to_b.copy_from_slice(&log.raw.topics[2][12..]);
+    let to = Address::from_bytes(to_b);
+    let amount_str = erc20_transfer_amount_display(&log.raw.data);
+    Some(format!(
+        "{}  ──► {}  {}  (token {})",
+        short_address(&from),
+        short_address(&to),
+        amount_str,
+        short_address(&log.raw.address),
+    ))
+}
+
+fn erc20_transfer_amount_display(data: &[u8]) -> String {
+    match transfer_data_u128(data) {
+        Some(v) => format!("{} (assumed 18 decimals)", humanize_token_units(v, 18)),
+        None => format!("0x{}", hex::encode(data)),
+    }
+}
+
+fn transfer_data_u128(data: &[u8]) -> Option<u128> {
+    if data.is_empty() {
+        return Some(0);
+    }
+    if data.len() < 32 {
+        return None;
+    }
+    let w: &[u8; 32] = data[..32].try_into().ok()?;
+    if w[..16].iter().any(|&b| b != 0) {
+        return None;
+    }
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&w[16..]);
+    Some(u128::from_be_bytes(b))
+}
+
+fn format_simulated_changes(changes: &[AssetChange]) -> String {
+    let mut out = String::new();
+    for (idx, change) in changes.iter().enumerate() {
+        let kind = match change.kind {
+            AssetChangeKind::Transfer => "TRANSFER",
+            AssetChangeKind::Approve => "APPROVE",
+            AssetChangeKind::Other => "OTHER",
+        };
+        let asset = match &change.asset {
+            AssetKind::Native => "ETH (native)".to_string(),
+            AssetKind::Erc20 {
+                symbol, contract, ..
+            } => {
+                format!("{symbol} @ {}", contract.to_hex())
+            }
+            AssetKind::Erc721 {
+                symbol,
+                contract,
+                token_id,
+            } => {
+                format!("{symbol} #{token_id} @ {}", contract.to_hex())
+            }
+            AssetKind::Erc1155 {
+                symbol,
+                contract,
+                token_id,
+            } => {
+                format!("{symbol} id={token_id} @ {}", contract.to_hex())
+            }
+        };
+        let from = change
+            .from
+            .map(|a| a.to_hex())
+            .unwrap_or_else(|| "(mint)".to_string());
+        let to = change
+            .to
+            .map(|a| a.to_hex())
+            .unwrap_or_else(|| "(burn)".to_string());
+        out.push_str(&format!(
+            "#{idx}  {kind}  {asset}\n  from: {from}\n  to:   {to}\n  amount: {amount}\n\n",
+            amount = humanize_wei_if_native(change.kind, &change.asset, change.amount),
+        ));
+    }
+    out
+}
+
 fn log_summary(idx: usize, log: &DecodedLog) -> String {
     match log.signature.as_ref() {
         Some(sig) => format!("#{idx}  {}", sig.signature),
@@ -1170,17 +1427,10 @@ fn log_field_line(field: &LogField, selected: bool) -> Line<'static> {
     } else {
         Style::default()
     };
-    let mut spans = vec![
+    Line::from(vec![
         Span::styled(label, base_style),
         Span::styled(field.display.clone(), base_style),
-    ];
-    if selected && let Some(hint) = &field.raw_hint {
-        spans.push(Span::styled(
-            format!("    {hint}"),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    Line::from(spans)
+    ])
 }
 
 /// Parse the positional argument types out of a function / event
@@ -1276,64 +1526,6 @@ fn decode_word(ty: Option<&str>, word: &[u8; 32]) -> (String, String) {
         return (s.clone(), s);
     }
     (raw_hex.clone(), raw_hex)
-}
-
-fn asset_changes_body(status: &LoadStatus<Vec<AssetChange>>) -> String {
-    match status {
-        LoadStatus::Pending => "Simulating asset changes...".to_string(),
-        LoadStatus::Unsupported => {
-            "Asset-change simulation is unavailable on this chain / tier.".to_string()
-        }
-        LoadStatus::Failed(msg) => format!("Simulation failed: {msg}"),
-        LoadStatus::Loaded(changes) if changes.is_empty() => {
-            "No asset changes detected.".to_string()
-        }
-        LoadStatus::Loaded(changes) => {
-            let mut out = String::new();
-            for (idx, change) in changes.iter().enumerate() {
-                let kind = match change.kind {
-                    AssetChangeKind::Transfer => "TRANSFER",
-                    AssetChangeKind::Approve => "APPROVE",
-                    AssetChangeKind::Other => "OTHER",
-                };
-                let asset = match &change.asset {
-                    AssetKind::Native => "ETH (native)".to_string(),
-                    AssetKind::Erc20 {
-                        symbol, contract, ..
-                    } => {
-                        format!("{symbol} @ {}", contract.to_hex())
-                    }
-                    AssetKind::Erc721 {
-                        symbol,
-                        contract,
-                        token_id,
-                    } => {
-                        format!("{symbol} #{token_id} @ {}", contract.to_hex())
-                    }
-                    AssetKind::Erc1155 {
-                        symbol,
-                        contract,
-                        token_id,
-                    } => {
-                        format!("{symbol} id={token_id} @ {}", contract.to_hex())
-                    }
-                };
-                let from = change
-                    .from
-                    .map(|a| a.to_hex())
-                    .unwrap_or_else(|| "(mint)".to_string());
-                let to = change
-                    .to
-                    .map(|a| a.to_hex())
-                    .unwrap_or_else(|| "(burn)".to_string());
-                out.push_str(&format!(
-                    "#{idx}  {kind}  {asset}\n  from: {from}\n  to:   {to}\n  amount: {amount}\n\n",
-                    amount = humanize_wei_if_native(change.kind, &change.asset, change.amount),
-                ));
-            }
-            out
-        }
-    }
 }
 
 fn humanize_wei_if_native(_kind: AssetChangeKind, asset: &AssetKind, amount: Wei) -> String {

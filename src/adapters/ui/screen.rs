@@ -272,6 +272,13 @@ impl ScreenStack {
                 Transition::Continue
             }
             Command::Replace(screen) => {
+                // Dismissing a modal must not peel the screen that was
+                // underneath — `SearchScreen` uses `Replace` after pick,
+                // and the previous behaviour (`modal = None` then
+                // unconditional `pop`) deleted the root `Home` when the
+                // stack was only `[Home]` + modal. See
+                // `plan/12-screen-runtime.md` §7.
+                let had_modal = self.modal.is_some();
                 self.modal = None;
                 // Edge case symmetric to the Pop guard above: on an
                 // empty stack there is nothing to replace, so treat it
@@ -280,7 +287,15 @@ impl ScreenStack {
                 if self.screens.is_empty() {
                     return Transition::Continue;
                 }
-                self.screens.pop();
+                if !had_modal {
+                    self.screens.pop();
+                } else if self.screens.len() > 1 {
+                    // Modal confirmed while already drilled into a
+                    // detail screen: peel the current top so the new
+                    // detail replaces the user's context (same as a
+                    // non-modal `Replace`).
+                    self.screens.pop();
+                }
                 self.screens.push(screen);
                 Transition::Continue
             }

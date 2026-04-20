@@ -61,6 +61,70 @@ impl EventLogPort for AlchemyEventLog {
             (range.from.value(), range.to.value())
         };
 
+        if from > to {
+            return Ok(Vec::new());
+        }
+        self.get_logs_chunked(address, from, to).await
+    }
+}
+
+impl AlchemyEventLog {
+    async fn get_logs_chunked(
+        &self,
+        address: Address,
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<LogEntry>, DomainError> {
+        let mut out = Vec::new();
+        let mut start = from;
+        while start <= to {
+            let end = (start + MAX_BLOCKS_PER_REQUEST.saturating_sub(1)).min(to);
+            out.extend(self.get_logs_for_span(address, start, end).await?);
+            start = end.saturating_add(1);
+        }
+        Ok(out)
+    }
+
+    /// Alchemy rejects oversized `eth_getLogs` payloads with
+    /// `-32602` / "Log response size exceeded". Within each block
+    /// window we bisect iteratively (no recursive `async fn`) until
+    /// every slice succeeds or a single block still overflows.
+    async fn get_logs_for_span(
+        &self,
+        address: Address,
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<LogEntry>, DomainError> {
+        let mut stack = vec![(from, to)];
+        let mut out = Vec::new();
+        while let Some((lo, hi)) = stack.pop() {
+            if lo > hi {
+                continue;
+            }
+            match self.fetch_logs(address, lo, hi).await {
+                Ok(mut logs) => out.append(&mut logs),
+                Err(DomainError::InvalidInput(msg))
+                    if lo < hi
+                        && (msg.contains("Log response")
+                            || msg.contains("response size")
+                            || msg.contains("eth_getLogs")) =>
+                {
+                    let mid = lo.saturating_add(hi.saturating_sub(lo) / 2);
+                    stack.push((mid.saturating_add(1), hi));
+                    stack.push((lo, mid));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    async fn fetch_logs(
+        &self,
+        address: Address,
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<LogEntry>, DomainError> {
         let filter = json!({
             "address": address.to_hex(),
             "fromBlock": format!("0x{:x}", from),
@@ -82,6 +146,10 @@ impl EventLogPort for AlchemyEventLog {
 /// "latest" logs via the `u64::MAX` sentinel. 5_000 blocks is the
 /// conservative limit most providers accept without extra pagination.
 const DEFAULT_WINDOW: u64 = 5_000;
+
+/// Alchemy documents a 2_000-block window for uncapped log responses.
+/// We never issue a wider single `eth_getLogs` span than this.
+const MAX_BLOCKS_PER_REQUEST: u64 = 2_000;
 
 fn map_log(raw: RawLog) -> Result<LogEntry, DomainError> {
     let address = Address::from_hex(&raw.address)?;

@@ -132,7 +132,9 @@ fn block_detail_footer_lists_navigation_and_copy_hints() {
     let open_tx = Box::new(|_h| -> Box<dyn Screen> { panic!("open_tx in footer test") });
     let screen = BlockDetailScreen::with_block(Chain::Ethereum, sample_block(), feed, open_tx);
 
-    let buffer = render(&screen, 120, 30);
+    // Globals (`/`, `?`, `Esc`) prepend the screen hints; keep the
+    // terminal wide enough that `[Y]` is not clipped on the last row.
+    let buffer = render(&screen, 220, 30);
     let footer = footer_row(&buffer);
     for needle in [
         "[Tab]",

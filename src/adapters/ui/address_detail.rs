@@ -570,6 +570,23 @@ impl AddressDetailScreen {
                         .collect()
                 })
                 .unwrap_or_default(),
+            AddressTab::Contract
+                if matches!(self.active_contract_sub, ContractSubTab::Overview) =>
+            {
+                let mut fields = vec![FieldEntry::new(
+                    "address",
+                    NavigableValue::Address(self.address),
+                )];
+                if let Some(ov) = self.contract_overview.as_ref()
+                    && let Some(ref px) = ov.proxy
+                {
+                    fields.push(FieldEntry::new(
+                        "implementation",
+                        NavigableValue::Address(px.implementation),
+                    ));
+                }
+                fields
+            }
             _ => Vec::new(),
         }
     }
@@ -1332,7 +1349,11 @@ impl Screen for AddressDetailScreen {
         {
             hints.push(("1..3", "Window"));
         }
-        hints.push(("Esc", "Back"));
+        if matches!(self.active_tab, AddressTab::Contract)
+            && matches!(self.active_contract_sub, ContractSubTab::Abi)
+        {
+            hints.push(("Y", "Copy ABI"));
+        }
         hints
     }
 
@@ -1362,8 +1383,11 @@ impl AddressDetailScreen {
         // always pops (plan/15-backlog.md §8.16). Other tabs that
         // use Backspace for text input (Read/args, Storage/slot) are
         // dispatched further down; this arm only fires on Overview.
+        let contract_overview_cursor = matches!(self.active_tab, AddressTab::Contract)
+            && matches!(self.active_contract_sub, ContractSubTab::Overview);
         if matches!(key.code, KeyCode::Backspace)
-            && matches!(self.active_tab_or_fallback(), AddressTab::Overview)
+            && (matches!(self.active_tab_or_fallback(), AddressTab::Overview)
+                || contract_overview_cursor)
             && self.cursor.is_active()
         {
             self.cursor.deactivate();
@@ -1377,9 +1401,10 @@ impl AddressDetailScreen {
         // before the user activates the cursor.
         match key.code {
             KeyCode::Char('y') => {
-                if matches!(self.active_tab_or_fallback(), AddressTab::Overview)
-                    && self.cursor.is_active()
-                {
+                let cursor_tab = matches!(self.active_tab_or_fallback(), AddressTab::Overview)
+                    || (matches!(self.active_tab, AddressTab::Contract)
+                        && matches!(self.active_contract_sub, ContractSubTab::Overview));
+                if cursor_tab && self.cursor.is_active() {
                     let fields = self.navigable_fields();
                     if let Some(entry) = self.cursor.current(&fields) {
                         self.last_copied_value = Some(entry.value.copy_text());
@@ -1393,6 +1418,12 @@ impl AddressDetailScreen {
                 return Command::None;
             }
             KeyCode::Char('Y') => {
+                if matches!(self.active_tab, AddressTab::Contract)
+                    && matches!(self.active_contract_sub, ContractSubTab::Abi)
+                {
+                    self.copy_abi_to_clipboard();
+                    return Command::None;
+                }
                 self.copy_ens_or_address();
                 return Command::None;
             }
@@ -1657,7 +1688,54 @@ impl AddressDetailScreen {
     }
 
     fn handle_contract_overview_key(&mut self, key: KeyEvent) -> Command {
+        let fields = self.navigable_fields();
+        let n = fields.len();
+        match key.code {
+            KeyCode::Left => {
+                self.cursor.move_in(n, CursorDir::Left);
+                return Command::None;
+            }
+            KeyCode::Right => {
+                self.cursor.move_in(n, CursorDir::Right);
+                return Command::None;
+            }
+            KeyCode::Up => {
+                self.cursor.move_in(n, CursorDir::Up);
+                return Command::None;
+            }
+            KeyCode::Down => {
+                self.cursor.move_in(n, CursorDir::Down);
+                return Command::None;
+            }
+            KeyCode::Enter if self.cursor.is_active() => {
+                if let (Some(entry), Some(services)) =
+                    (self.cursor.current(&fields), self.cursor_services.as_ref())
+                    && let Some(screen) = services.open(&entry.value)
+                {
+                    return Command::Push(screen);
+                }
+                return Command::None;
+            }
+            _ => {}
+        }
         self.handle_paragraph_scroll_key(key)
+    }
+
+    fn copy_abi_to_clipboard(&mut self) {
+        let Some(source) = self.source.as_ref() else {
+            return;
+        };
+        if !source.is_verified || source.abi.trim().is_empty() {
+            return;
+        }
+        let pretty = serde_json::from_str::<serde_json::Value>(&source.abi)
+            .ok()
+            .and_then(|v| serde_json::to_string_pretty(&v).ok())
+            .unwrap_or_else(|| source.abi.clone());
+        self.last_copied_value = Some(pretty.clone());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&NavigableValue::Plain(pretty));
+        }
     }
 
     fn handle_paragraph_scroll_key(&mut self, key: KeyEvent) -> Command {
@@ -2938,7 +3016,7 @@ Nonce       {nonce}\n\
 \n\
 {source_line}\n\
 \n\
-[]/[]] cycle sub-tabs    [Up/Down] pick file on Source    [PageUp/PageDown] scroll",
+[ / ] sub-tabs    Tab — main tabs    Source: arrows pick file",
         addr = address.to_hex(),
         balance = ov.account.balance.value(),
         nonce = ov.account.nonce,
