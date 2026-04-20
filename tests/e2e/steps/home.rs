@@ -448,6 +448,61 @@ fn buffer_contains(buffer: &Buffer, needle: &str) -> bool {
     false
 }
 
+// ---------------------------------------------------------------------------
+// Esc / q on Home (plan/12-screen-runtime.md §7.1)
+// ---------------------------------------------------------------------------
+
+fn dispatch_key_on_top(world: &mut AppWorld, key: KeyEvent) {
+    let stack = world
+        .stack
+        .as_mut()
+        .expect("Background `Given the user is on Home` must build the stack");
+    let cmd = stack
+        .top_mut()
+        .expect("stack must have a top screen")
+        .handle_key(key);
+    let transition = stack.apply_command(cmd);
+    if transition.should_exit() {
+        world.stack_exited = true;
+    }
+}
+
+#[when("the user presses Esc on Home")]
+async fn user_presses_esc_on_home(world: &mut AppWorld) {
+    dispatch_key_on_top(world, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+}
+
+#[when("the user presses q on Home")]
+async fn user_presses_q_on_home(world: &mut AppWorld) {
+    dispatch_key_on_top(world, KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+}
+
+#[then("Home is still on top of the stack")]
+async fn home_is_still_on_top(world: &mut AppWorld) {
+    let stack = world.stack.as_ref().expect("stack must exist");
+    let top = stack
+        .top()
+        .expect("stack must not be empty after Esc on Home");
+    assert_eq!(top.title(), "Home");
+    assert_eq!(stack.len(), 1);
+}
+
+#[then("the app is still running")]
+async fn app_is_still_running(world: &mut AppWorld) {
+    assert!(
+        !world.stack_exited,
+        "Pop on a single-screen stack must not signal Transition::Exit"
+    );
+}
+
+#[then("the app is no longer running")]
+async fn app_is_no_longer_running(world: &mut AppWorld) {
+    assert!(
+        world.stack_exited,
+        "Quit must signal Transition::Exit and tear the event loop down"
+    );
+}
+
 /// Mirrors `home::format_u64` (private). Keeps the step definitions
 /// independent from UI internals while still asserting on the same
 /// formatted output the user sees.

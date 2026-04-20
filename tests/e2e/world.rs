@@ -140,6 +140,13 @@ pub struct AppWorld {
     /// top.
     pub stack: Option<ScreenStack>,
 
+    /// Mirrors `Transition::should_exit()` from the latest
+    /// `ScreenStack::apply_command` call: `true` once the dispatcher
+    /// would leave the event loop. Used by the Home Esc / q
+    /// scenarios to assert that Esc never exits and that q still
+    /// does. See `plan/12-screen-runtime.md` §7.1.
+    pub stack_exited: bool,
+
     /// Optional shared TTL cache for the search feed. The default
     /// scenarios keep it `None`; the repeat-within-TTL scenario sets
     /// it via a Given step. See `plan/2-search.md` §12.4.
