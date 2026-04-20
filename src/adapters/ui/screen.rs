@@ -13,8 +13,11 @@ pub enum Command {
     /// No state change.
     None,
     /// Pop the current screen. If a modal is open the dispatcher will
-    /// close the modal instead; see [`ScreenStack::apply_command`]. If
-    /// the back stack becomes empty, the runtime exits cleanly.
+    /// close the modal instead; see [`ScreenStack::apply_command`].
+    /// A `Pop` that would leave the back stack empty is a no-op: the
+    /// root screen (typically Home) stays on top and the event loop
+    /// keeps running. [`Command::Quit`] is the only way out of the
+    /// loop. See `plan/12-screen-runtime.md` §7.1.
     Pop,
     /// Exit the process right away.
     Quit,
@@ -233,15 +236,18 @@ impl ScreenStack {
                 // underlying screen.
                 if self.modal.is_some() {
                     self.modal = None;
-                    Transition::Continue
-                } else {
-                    self.screens.pop();
-                    if self.screens.is_empty() {
-                        Transition::Exit
-                    } else {
-                        Transition::Continue
-                    }
+                    return Transition::Continue;
                 }
+                // Root-screen protection: Pop that would empty the
+                // stack is a no-op. See `plan/12-screen-runtime.md`
+                // §7.1 — Home (or whatever is at the root) must stay
+                // reachable; Quit is the only path out of the event
+                // loop.
+                if self.screens.len() <= 1 {
+                    return Transition::Continue;
+                }
+                self.screens.pop();
+                Transition::Continue
             }
             Command::Quit => {
                 self.clear();
@@ -257,6 +263,13 @@ impl ScreenStack {
             }
             Command::Replace(screen) => {
                 self.modal = None;
+                // Edge case symmetric to the Pop guard above: on an
+                // empty stack there is nothing to replace, so treat it
+                // as a no-op. The composition root is the only
+                // legitimate source of the initial screen.
+                if self.screens.is_empty() {
+                    return Transition::Continue;
+                }
                 self.screens.pop();
                 self.screens.push(screen);
                 Transition::Continue

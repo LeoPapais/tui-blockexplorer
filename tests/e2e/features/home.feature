@@ -43,6 +43,21 @@ Feature: Home screen
     Then the Network card updates the latest block number
     And the Gas Tracker card recomputes its values
 
+  Scenario: Esc on Home keeps the app running
+    # See plan/12-screen-runtime.md §7.1: Pop on a single-screen stack is a
+    # no-op so Esc on Home cannot close the app by accident.
+    Given the user is on Home
+    When the user presses Esc on Home
+    Then Home is still on top of the stack
+    And the app is still running
+
+  Scenario: q on Home quits the app
+    # Regression guard for the only remaining exit path bound to the
+    # keyboard: q (and, by mirroring, Ctrl+C / SIGINT).
+    Given the user is on Home
+    When the user presses q on Home
+    Then the app is no longer running
+
   Scenario: First-run banner invites the user to Settings
     Given the Home screen is rendered without an alchemy key
     Then the Home screen shows the first-run credentials banner

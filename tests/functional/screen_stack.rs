@@ -309,13 +309,56 @@ fn apply_command_replace_with_open_modal_closes_the_modal() {
     assert!(!stack.has_modal());
 }
 
+// ---------------------------------------------------------------------------
+// plan/12-screen-runtime.md §7.1: Pop on a single-screen (or empty) stack is a
+// no-op. The root screen is never popped off and Quit is the only path out of
+// the event loop.
+// ---------------------------------------------------------------------------
+
 #[test]
-fn apply_command_pop_on_last_screen_signals_exit() {
+fn pop_on_single_screen_stack_is_noop() {
     let mut stack = ScreenStack::new();
     stack.push(LabelScreen::boxed("home"));
 
     let transition = stack.apply_command(Command::Pop);
 
-    assert!(transition.should_exit());
+    assert!(
+        !transition.should_exit(),
+        "Pop on the root screen must not exit the event loop"
+    );
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn pop_on_empty_stack_is_noop() {
+    let mut stack = ScreenStack::new();
+
+    let transition = stack.apply_command(Command::Pop);
+
+    assert!(!transition.should_exit());
+    assert!(stack.is_empty());
+}
+
+#[test]
+fn pop_with_two_screens_shrinks_to_one() {
+    let mut stack = ScreenStack::new();
+    stack.push(LabelScreen::boxed("home"));
+    stack.push(LabelScreen::boxed("tx"));
+
+    let transition = stack.apply_command(Command::Pop);
+
+    assert!(!transition.should_exit());
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack.top().unwrap().title(), "home");
+}
+
+#[test]
+fn replace_on_empty_stack_is_noop() {
+    let mut stack = ScreenStack::new();
+
+    let transition = stack.apply_command(Command::Replace(LabelScreen::boxed("tx")));
+
+    assert!(!transition.should_exit());
     assert!(stack.is_empty());
 }
