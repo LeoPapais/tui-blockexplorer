@@ -220,15 +220,15 @@ On every screen that opts in:
 
 ### 8.2 BDD (`tests/e2e/features/*.feature`)
 
-Each detail feature gains one scenario exercising the cursor flow:
+BDD coverage for the cursor is deferred to a follow-up slice. The
+per-screen functional tests (§8.1) already exercise the cursor
+through the same `StubClipboard` + `StubNavigationFactory` harness
+the scenarios would use; growing the Cucumber world with the cursor
+stubs is a mechanical follow-up once the primitive has settled in
+production.
 
-* `home.feature`: `Scenario: Enter on the network card block number opens Block Detail`.
-* `address_detail.feature`: `Scenario: Cursor over "from" address opens Address Detail`.
-* `block_detail.feature`: `Scenario: y copies the hash under the cursor`.
-* `tx_detail.feature`: `Scenario: Enter on the block number of a tx opens Block Detail`.
-* `mempool.feature`: `Scenario: Enter on a mempool hash opens Tx Detail`.
-
-The steps drive the same stubs the functional tests use.
+Tracked under `plan/15-backlog.md` §8.16 alongside the rest of the
+per-sub-tab cursor coverage.
 
 ## 9. Deferred
 
