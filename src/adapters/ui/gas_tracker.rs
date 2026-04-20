@@ -497,6 +497,18 @@ impl Screen for GasTrackerScreen {
                 }
                 return Command::None;
             }
+            // Default `y` (no active cursor) copies the first
+            // navigable field so the shortcut always does something
+            // useful. Mirrors the legacy copy behaviour on the other
+            // detail screens.
+            KeyCode::Char('y') => {
+                if let (Some(entry), Some(services)) =
+                    (fields.first(), self.cursor_services.as_ref())
+                {
+                    services.copy(&entry.value);
+                }
+                return Command::None;
+            }
             KeyCode::Enter if self.cursor.is_active() => {
                 if let (Some(entry), Some(services)) =
                     (self.cursor.current(&fields), self.cursor_services.as_ref())

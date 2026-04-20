@@ -284,6 +284,20 @@ impl ContractSubTab {
             ContractSubTab::Storage => "Storage",
         }
     }
+
+    /// Map an ASCII digit to its sub-tab. `1` → Overview … `6` →
+    /// Storage. Returns `None` for any other character.
+    fn from_digit(d: char) -> Option<Self> {
+        match d {
+            '1' => Some(ContractSubTab::Overview),
+            '2' => Some(ContractSubTab::Source),
+            '3' => Some(ContractSubTab::Abi),
+            '4' => Some(ContractSubTab::Read),
+            '5' => Some(ContractSubTab::Events),
+            '6' => Some(ContractSubTab::Storage),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +335,17 @@ impl TokenSubTab {
             TokenSubTab::Overview => "Overview",
             TokenSubTab::Transfers => "Transfers",
             TokenSubTab::Chart => "Chart",
+        }
+    }
+
+    /// Map an ASCII digit to its sub-tab. `1` → Overview … `3` →
+    /// Chart. Returns `None` for any other character.
+    fn from_digit(d: char) -> Option<Self> {
+        match d {
+            '1' => Some(TokenSubTab::Overview),
+            '2' => Some(TokenSubTab::Transfers),
+            '3' => Some(TokenSubTab::Chart),
+            _ => None,
         }
     }
 }
@@ -914,17 +939,25 @@ impl AddressDetailScreen {
         if self.current.is_none() {
             return;
         }
-        self.last_copied_value = Some(self.address.to_hex());
+        let value = NavigableValue::Address(self.address);
+        self.last_copied_value = Some(value.copy_text());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&value);
+        }
     }
 
     fn copy_ens_or_address(&mut self) {
         let Some(ov) = self.current.as_ref() else {
             return;
         };
-        self.last_copied_value = Some(match ov.ens_name.as_deref() {
-            Some(name) => name.to_string(),
-            None => ov.address.to_hex(),
-        });
+        let value = match ov.ens_name.as_deref() {
+            Some(name) => NavigableValue::EnsName(name.to_string()),
+            None => NavigableValue::Address(ov.address),
+        };
+        self.last_copied_value = Some(value.copy_text());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&value);
+        }
     }
 
     fn copy_active_as_csv(&mut self) {
@@ -938,7 +971,13 @@ impl AddressDetailScreen {
                 csv_for_overview(self.current.as_ref())
             }
         };
-        self.last_copied_value = Some(csv);
+        // CSV is opaque text (no navigation target); wrap it in
+        // `Plain` so the clipboard path mirrors every other copy.
+        let value = NavigableValue::Plain(csv);
+        self.last_copied_value = Some(value.copy_text());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&value);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1181,7 +1220,11 @@ impl Screen for AddressDetailScreen {
         frame.render_widget(
             Tabs::new(titles)
                 .select(active_idx)
-                .block(Block::default().borders(Borders::ALL).title("Tabs"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Tabs  —  Tab / Shift-Tab to switch"),
+                )
                 .divider(" ")
                 .highlight_style(
                     Style::default()
@@ -1206,7 +1249,7 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Contract sub-tabs"),
+                                    .title("Contract sub-tabs  —  [1-6] or [ ]"),
                             )
                             .divider(" ")
                             .highlight_style(
@@ -1229,7 +1272,7 @@ impl Screen for AddressDetailScreen {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title("Token sub-tabs"),
+                                    .title("Token sub-tabs  —  [1-3] or [ ]"),
                             )
                             .divider(" ")
                             .highlight_style(
@@ -1349,23 +1392,70 @@ impl AddressDetailScreen {
                 self.copy_active_as_csv();
                 return Command::None;
             }
-            // Token chart window switches are available from any
-            // tab so `2` / `3` work while the user is still on
-            // Overview. Matches the prior TokenDetailScreen
-            // contract (plan/8 §12.4).
-            KeyCode::Char('1') => {
-                self.set_token_window(PriceWindow::D1);
-                return Command::None;
-            }
-            KeyCode::Char('2') => {
-                self.set_token_window(PriceWindow::M1);
-                return Command::None;
-            }
-            KeyCode::Char('3') => {
-                self.set_token_window(PriceWindow::Y1);
-                return Command::None;
-            }
             _ => {}
+        }
+
+        // Digit sub-tab shortcuts on Contract / Token. Primary
+        // discoverable keybinding because `[`/`]` is awkward on
+        // several layouts (notably ABNT Brazilian). `[`/`]` stays
+        // wired below for existing muscle memory.
+        //
+        // The Read tab owns the digit keys when the args editor has
+        // focus — numeric arguments to `read` calls must reach the
+        // buffer. Outside that case, digits always prefer the
+        // sub-tab selector on these two tabs.
+        if let KeyCode::Char(d) = key.code
+            && d.is_ascii_digit()
+        {
+            let in_read_args = matches!(self.active_tab, AddressTab::Contract)
+                && matches!(self.active_contract_sub, ContractSubTab::Read)
+                && matches!(self.read_focus, ReadFocus::Args);
+            if !in_read_args {
+                match self.active_tab {
+                    AddressTab::Contract => {
+                        if let Some(sub) = ContractSubTab::from_digit(d) {
+                            self.active_contract_sub = sub;
+                            self.with_contract_scroll(|s| s.reset());
+                            return Command::None;
+                        }
+                    }
+                    AddressTab::Token => {
+                        if let Some(sub) = TokenSubTab::from_digit(d) {
+                            self.active_token_sub = sub;
+                            return Command::None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Token chart window switches on the Token tab stay on the
+        // digits only for sub-tabs that do not have their own meaning
+        // (none today once the digit selector took over the Token
+        // tab); on any OTHER tab `1`/`2`/`3` keep their historical
+        // Chart-window behaviour so the shortcut still works from
+        // Overview / Transactions / Tokens, matching the prior
+        // TokenDetailScreen contract (plan/8 §12.4).
+        if matches!(
+            self.active_tab,
+            AddressTab::Overview | AddressTab::Transactions | AddressTab::Tokens
+        ) {
+            match key.code {
+                KeyCode::Char('1') => {
+                    self.set_token_window(PriceWindow::D1);
+                    return Command::None;
+                }
+                KeyCode::Char('2') => {
+                    self.set_token_window(PriceWindow::M1);
+                    return Command::None;
+                }
+                KeyCode::Char('3') => {
+                    self.set_token_window(PriceWindow::Y1);
+                    return Command::None;
+                }
+                _ => {}
+            }
         }
 
         // Incomplete-token shortcut from any tab: `c` jumps to the

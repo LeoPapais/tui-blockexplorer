@@ -209,20 +209,29 @@ impl BlockDetailScreen {
             return;
         };
         let value = match self.active_tab {
-            BlockTab::Overview | BlockTab::BlobsAndWithdrawals => block.hash.to_hex(),
+            BlockTab::Overview | BlockTab::BlobsAndWithdrawals => {
+                NavigableValue::BlockHash(block.hash)
+            }
             BlockTab::Transactions => match block.tx_hashes.get(self.tx_selected) {
-                Some(hash) => hash.to_hex(),
+                Some(hash) => NavigableValue::TxHash(*hash),
                 None => return,
             },
         };
-        self.last_copied_value = Some(value);
+        self.last_copied_value = Some(value.copy_text());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&value);
+        }
     }
 
     fn copy_block_number(&mut self) {
         let Some(block) = self.current.as_ref() else {
             return;
         };
-        self.last_copied_value = Some(block.number.value().to_string());
+        let value = NavigableValue::BlockNumber(block.number);
+        self.last_copied_value = Some(value.copy_text());
+        if let Some(services) = self.cursor_services.as_ref() {
+            services.copy(&value);
+        }
     }
 
     #[must_use]
