@@ -6,7 +6,7 @@
 //! `active_contract_sub = Source`.
 
 use blockexplorer_tui::{
-    adapters::ui::{AddressDetailScreen, AddressTab, Screen, address_feed},
+    adapters::ui::{AddressDetailScreen, AddressTab, ContractSubTab, Screen, address_feed},
     domain::{
         Address, AddressKind, AddressOverview, Chain, ContractOverview, ContractSource, SourceFile,
         Wei,
@@ -121,4 +121,64 @@ fn pragma_on_source_subtab_keeps_the_keyword_style() {
     let style = buf[(x, y)].style();
     assert_eq!(style.fg, Some(Color::Cyan));
     assert!(style.add_modifier.contains(Modifier::BOLD));
+}
+
+fn contract_screen() -> AddressDetailScreen {
+    let (feed, _sender) = address_feed();
+    let mut screen = AddressDetailScreen::with_factories_and_tab(
+        Chain::Ethereum,
+        addr(),
+        feed,
+        None,
+        None,
+        AddressTab::Contract,
+    );
+    screen.set_overview_for_test(sample_overview());
+    let _ = sample_contract();
+    screen.set_contract_source_for_test(sample_source());
+    screen
+}
+
+#[test]
+fn digit_key_selects_contract_subtab() {
+    // `1`..`6` MUST land on the six Contract sub-tabs in order.
+    let cases = [
+        ('1', ContractSubTab::Overview),
+        ('2', ContractSubTab::Source),
+        ('3', ContractSubTab::Abi),
+        ('4', ContractSubTab::Read),
+        ('5', ContractSubTab::Events),
+        ('6', ContractSubTab::Storage),
+    ];
+    for (digit, expected) in cases {
+        let mut screen = contract_screen();
+        screen.handle_key(KeyEvent::new(KeyCode::Char(digit), KeyModifiers::NONE));
+        assert_eq!(
+            screen.active_contract_sub(),
+            expected,
+            "digit `{digit}` must land on {expected:?}",
+        );
+    }
+}
+
+#[test]
+fn contract_subtab_strip_advertises_digit_and_bracket_hint() {
+    // Users arrive with Contract tab active; the strip title must
+    // tell them there are TWO ways to cycle: number keys or `[ ]`.
+    let screen = contract_screen();
+    let buf = render_buffer(&screen, 140, 24);
+    let rows = buf.area.height;
+    let cols = buf.area.width;
+    let mut haystack = String::new();
+    for y in 0..rows {
+        for x in 0..cols {
+            haystack.push_str(buf[(x, y)].symbol());
+        }
+        haystack.push('\n');
+    }
+    assert!(
+        haystack.contains("[1-6]"),
+        "sub-tab strip title should advertise the digit shortcut \
+         ([1-6]); got:\n{haystack}",
+    );
 }

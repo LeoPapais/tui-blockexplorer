@@ -4,7 +4,10 @@
 //! copy), 13.3 (bounded scrolling), 13.5 (tab nav with `Shift+Tab`
 //! / arrow keys) and 12.6.3 (`s` re-simulate on pending txs).
 
-use blockexplorer_tui::adapters::ui::{Screen, TxDetailScreen, TxTab, tx_feed};
+use std::sync::Arc;
+
+use blockexplorer_tui::adapters::ui::{CursorServices, Screen, TxDetailScreen, TxTab, tx_feed};
+use blockexplorer_tui::application::ports::ClipboardPort;
 use blockexplorer_tui::application::{LoadStatus, TxView};
 use blockexplorer_tui::domain::{
     Address, BlockHash, BlockNumber, CallKind, CallNode, Chain, Transaction, TxHash, TxStatus,
@@ -13,6 +16,8 @@ use blockexplorer_tui::domain::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -113,6 +118,23 @@ fn y_copies_the_selected_overview_row_value() {
         screen.last_copied_value().as_deref(),
         Some(first_value.as_str())
     );
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    let mut screen = loaded_screen(sample_tx());
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    screen = screen.with_cursor_services(services);
+
+    let expected = screen.overview_selected_copy_value().unwrap();
+    screen.handle_key(key(KeyCode::Char('y')));
+
+    assert_eq!(clipboard.last_copied().as_deref(), Some(expected.as_str()));
 }
 
 #[test]

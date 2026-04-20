@@ -5,13 +5,20 @@
 //! The tests drive the screen directly through `Screen::handle_key`
 //! so the assertions do not depend on any terminal wiring.
 
-use blockexplorer_tui::adapters::ui::{BlockDetailScreen, BlockTab, Screen, block_feed};
+use std::sync::Arc;
+
+use blockexplorer_tui::adapters::ui::{
+    BlockDetailScreen, BlockTab, CursorServices, Screen, block_feed,
+};
+use blockexplorer_tui::application::ports::ClipboardPort;
 use blockexplorer_tui::domain::{
     Address, Block, BlockHash, BlockNumber, Chain, TxHash, UnixTimestamp, Wei, Withdrawal,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -57,6 +64,46 @@ fn build_screen(block: Block) -> BlockDetailScreen {
         panic!("open_tx should not be invoked in clipboard tests");
     });
     BlockDetailScreen::with_block(Chain::Ethereum, block, feed, open_tx)
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    let block = sample_block();
+    let expected_hash = block.hash.to_hex();
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = build_screen(block).with_cursor_services(services);
+
+    screen.handle_key(key(KeyCode::Char('y')));
+
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(expected_hash.as_str())
+    );
+}
+
+#[test]
+fn shift_y_routes_the_block_number_to_the_clipboard() {
+    let block = sample_block();
+    let expected_number = block.number.value().to_string();
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = build_screen(block).with_cursor_services(services);
+
+    screen.handle_key(shift(KeyCode::Char('Y')));
+
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(expected_number.as_str())
+    );
 }
 
 #[test]

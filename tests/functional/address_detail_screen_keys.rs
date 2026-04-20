@@ -14,7 +14,12 @@
 //! The assertions drive the screen directly through
 //! `Screen::handle_key`, mirroring `block_detail_screen_keys.rs`.
 
-use blockexplorer_tui::adapters::ui::{AddressDetailScreen, AddressTab, Screen, address_feed};
+use std::sync::Arc;
+
+use blockexplorer_tui::adapters::ui::{
+    AddressDetailScreen, AddressTab, CursorServices, Screen, address_feed,
+};
+use blockexplorer_tui::application::ports::ClipboardPort;
 use blockexplorer_tui::domain::{
     Address, AddressKind, AddressOverview, BlockNumber, Chain, PriceLookup, TokenHolding,
     TokenMetadata, TokenPrice, TransferAsset, TransferCategory, TransferEvent, TransferPage,
@@ -22,6 +27,8 @@ use blockexplorer_tui::domain::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
+
+use super::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -253,6 +260,57 @@ fn e_on_overview_exports_a_minimal_summary_csv() {
     assert_eq!(lines[0], "address,ens,kind,balance,nonce");
     assert_eq!(lines.len(), 2);
     assert!(lines[1].starts_with(&format!("{},vitalik.eth,eoa,", expected_address)));
+}
+
+#[test]
+fn y_without_cursor_still_routes_to_clipboard_when_services_are_present() {
+    let ov = overview_with_ens(Some("vitalik.eth"));
+    let expected = ov.address.to_hex();
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = build_screen(ov).with_cursor_services(services);
+
+    screen.handle_key(key(KeyCode::Char('y')));
+
+    assert_eq!(clipboard.last_copied().as_deref(), Some(expected.as_str()));
+}
+
+#[test]
+fn shift_y_routes_the_ens_name_to_the_clipboard() {
+    let ov = overview_with_ens(Some("vitalik.eth"));
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = build_screen(ov).with_cursor_services(services);
+
+    screen.handle_key(shift_y());
+
+    assert_eq!(clipboard.last_copied().as_deref(), Some("vitalik.eth"));
+}
+
+#[test]
+fn e_routes_csv_to_the_clipboard_when_services_are_present() {
+    let ov = overview_with_ens(Some("vitalik.eth"));
+    let clipboard = StubClipboard::new();
+    let services = CursorServices::new(
+        Arc::new(clipboard.clone()) as Arc<dyn ClipboardPort>,
+        Arc::new(StubNavigationFactory::new()),
+        Chain::Ethereum,
+    );
+    let mut screen = build_screen(ov).with_cursor_services(services);
+    assert_eq!(screen.active_tab(), AddressTab::Overview);
+
+    screen.handle_key(key(KeyCode::Char('e')));
+
+    let copied = clipboard.last_copied().expect("CSV routed to clipboard");
+    assert!(copied.starts_with("address,ens,kind,balance,nonce\n"));
 }
 
 #[test]

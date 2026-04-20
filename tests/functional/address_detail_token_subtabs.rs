@@ -7,7 +7,7 @@
 //! window series).
 
 use blockexplorer_tui::adapters::ui::{
-    AddressDetailScreen, AddressTab, ContractSubTab, Screen, address_feed,
+    AddressDetailScreen, AddressTab, ContractSubTab, Screen, TokenSubTab, address_feed,
 };
 use blockexplorer_tui::domain::{
     Address, AddressKind, AddressOverview, Chain, PriceLookup, PricePoint, PriceSeries,
@@ -240,4 +240,38 @@ fn live_tail_is_capped_at_rolling_cap() {
 
     let series = screen.token_series().expect("series present");
     assert_eq!(series.points.len(), PriceSeries::ROLLING_CAP);
+}
+
+#[test]
+fn digit_key_selects_token_subtab() {
+    // `1`..`3` MUST land on the three Token sub-tabs in order, even
+    // though `1`..`3` used to double as Chart-window shortcuts.
+    let cases = [
+        ('1', TokenSubTab::Overview),
+        ('2', TokenSubTab::Transfers),
+        ('3', TokenSubTab::Chart),
+    ];
+    for (digit, expected) in cases {
+        let (feed, sender) = address_feed();
+        let mut screen = AddressDetailScreen::with_factories_and_tab(
+            Chain::Ethereum,
+            addr(),
+            feed,
+            None,
+            None,
+            AddressTab::Token,
+        );
+        screen.set_overview_for_test(contract_overview());
+        sender
+            .token_overview_tx
+            .send(Some(standard_overview()))
+            .unwrap();
+        let _ = screen.tick();
+        screen.handle_key(key(KeyCode::Char(digit)));
+        assert_eq!(
+            screen.active_token_sub(),
+            expected,
+            "digit `{digit}` must land on {expected:?}",
+        );
+    }
 }
