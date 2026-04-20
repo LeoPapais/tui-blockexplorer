@@ -40,6 +40,7 @@ external-only data policy).
 | 14 | [14-config-and-credentials.md](14-config-and-credentials.md)   | Config + feed wiring      | done   |
 | 15 | [15-backlog.md](15-backlog.md)                                 | Backlog (pendências 0–14) | draft  |
 | 16 | [16-probe-findings-and-deferred.md](16-probe-findings-and-deferred.md) | Probe findings + consolidated deferred backlog | draft  |
+| 17 | [17-navigable-values.md](17-navigable-values.md)               | Navigable values + field cursor | done (MVP) |
 
 Status values: `draft` (still in planning), `ready` (ready to implement), `done`
 (implemented and covered by passing tests), `deferred`.
