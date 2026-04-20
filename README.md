@@ -8,6 +8,25 @@ The project is planning-first: every feature is specified under
 [`plan/`](plan/README.md) before any code is written. Tests (BDD for user
 journeys, TDD for use cases) come before implementation.
 
+## Key bindings at a glance
+
+| Key                 | Action                                                |
+|---------------------|-------------------------------------------------------|
+| `/`                 | Universal search                                      |
+| `?`                 | Help modal (lists every binding below)                |
+| `q` / `Ctrl+C`      | Quit                                                  |
+| `Esc`               | Back / close modal                                    |
+| `Tab` / `Shift-Tab` | Switch main tab on detail screens                     |
+| `[` / `]`           | Switch sub-tab (Contract / Token)                     |
+| `1`..`9`            | Jump directly to a sub-tab by number                  |
+| Arrows              | Move the field cursor (or list selection)             |
+| `Enter`             | Open related screen for the value under the cursor    |
+| `y`                 | Copy value under cursor (or the screen's default)     |
+| `Y`                 | Copy ENS / canonical identifier                       |
+| `e`                 | Export active tab as CSV (Address / Block)            |
+
+Full walkthrough in Portuguese: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
+
 ## Running
 
 ```bash
@@ -95,6 +114,16 @@ scripts/install-hooks.sh
 On every `git commit` the hook runs `cargo fmt --all -- --check` and
 `cargo clippy --all-targets -- -D warnings`. Bypass in emergencies with
 `git commit --no-verify`; CI will still flag anything the bypass hid.
+
+## User guide
+
+A longer walkthrough of every screen — in Portuguese, matching the
+working language of this repo — lives at
+[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md). Read it first if you
+are git-cloning the repo for the first time; it covers the full
+keymap, the cursor model, the search overlay, each detail screen
+and the troubleshooting flow for things like `y` silently dropping
+in a headless session.
 
 ## Where to look
 

@@ -1,0 +1,343 @@
+# Guia do usuário — blockexplorer-tui
+
+Este guia descreve, em português, como usar o `blockexplorer-tui`
+no dia a dia: o que cada tela mostra, quais atalhos estão
+disponíveis e como diagnosticar os erros mais comuns. Para
+detalhes de arquitetura e roadmap, veja [`plan/README.md`](../plan/README.md).
+
+## 1. O que é o blockexplorer-tui
+
+`blockexplorer-tui` é um block explorer estilo Etherscan que roda
+inteiramente dentro do terminal. Ele fala com provedores externos
+(Alchemy para RPC e WebSocket, Etherscan V2 para ABIs e labels,
+Sourcify 4byte para assinaturas de funções/eventos) e NUNCA mantém
+um índice local — tudo é consultado ao vivo, com cache TTL em
+memória quando fizer sentido. A interface é construída em `ratatui`
++ `crossterm`, segue arquitetura hexagonal e é totalmente
+navegável apenas por teclado.
+
+## 2. Como rodar
+
+```bash
+# Modo demo (sem credenciais): Home com dados congelados
+cargo run -- --demo
+
+# Modo ao vivo (Alchemy obrigatório)
+ALCHEMY_API_KEY=<sua-chave> cargo run
+
+# Ao vivo com decodificação via Etherscan (recomendado)
+ALCHEMY_API_KEY=<alchemy> ETHERSCAN_API_KEY=<etherscan> cargo run
+
+# Escolher outra chain (padrão é Ethereum mainnet)
+ALCHEMY_API_KEY=<k> BLOCKEXPLORER_TUI_CHAIN=base cargo run
+
+# Gerar um arquivo de configuração semeado e sair
+cargo run -- --init-config
+```
+
+Slugs válidos para `BLOCKEXPLORER_TUI_CHAIN`: `ethereum`,
+`ethereum-sepolia`, `base`, `polygon`, `optimism`, `arbitrum`. Um
+valor inválido é rejeitado com a lista completa no próprio erro.
+
+### Arquivo de configuração opcional
+
+`$XDG_CONFIG_HOME/blockexplorer-tui/config.toml`:
+
+```toml
+[credentials]
+alchemy = "sua-chave"
+etherscan = "sua-chave-etherscan-v2"  # opcional
+
+[defaults]
+chain = "ethereum"
+```
+
+Variáveis de ambiente sempre têm prioridade sobre o arquivo.
+
+## 3. Atalhos globais
+
+Esses atalhos funcionam em qualquer tela.
+
+| Tecla      | Ação                                               |
+|------------|----------------------------------------------------|
+| `/`        | Abre a busca universal (modal)                     |
+| `?`        | Abre o modal de ajuda com a lista de atalhos       |
+| `q`        | Sai do programa                                    |
+| `Ctrl+C`   | Sai do programa                                    |
+| `Esc`      | Volta uma tela (ou fecha o modal aberto no topo)   |
+
+O modal de ajuda lista os atalhos principais descritos abaixo. A
+ordem do modal é fixa (testes asserem sobre ela); novas entradas
+são apenas acrescentadas ao final.
+
+## 4. Navegação entre telas
+
+A interface organiza telas em uma pilha (`ScreenStack`):
+
+- `Enter` empurra uma tela nova na pilha a partir de seleções,
+  valores sob o cursor ou resultados de busca.
+- `Esc` faz `pop` e volta para a tela anterior. Na Home, um `Esc`
+  com a pilha vazia não fecha o programa — use `q` ou `Ctrl+C`.
+- O breadcrumb no topo mostra o caminho atual (`Home › Block › Tx`).
+- Busca é sempre modal: o overlay fica sobreposto à tela atual, e
+  `Enter` numa sugestão empurra a tela correspondente.
+
+## 5. Cursor sobre valores
+
+Cada tela de detalhe tem um cursor que percorre os valores
+"navegáveis" (endereços, hashes, números de bloco, ENS, etc.).
+Esse cursor é desativado por padrão — ele só "acorda" depois da
+primeira seta.
+
+| Tecla            | Ação                                                      |
+|------------------|-----------------------------------------------------------|
+| `→` / `←` / `↑` / `↓` | Move o cursor entre os campos navegáveis              |
+| `y`              | Copia o valor sob o cursor (forma canônica) para o clipboard |
+| `Y`              | Copia o identificador canônico da tela (ENS ou hex)       |
+| `Enter`          | Abre a tela correspondente ao valor sob o cursor          |
+| `Esc`            | Desativa o cursor (sem sair da tela)                      |
+
+Quando o cursor está inativo, `y` ainda copia um valor sensato por
+tela (hash do bloco, hash da tx, endereço principal, etc.). Todas
+as cópias atravessam o adaptador `ArboardClipboard` quando o
+ambiente gráfico está disponível; em ambientes headless o adaptador
+degrada para um no-op silencioso e o TUI segue vivo.
+
+## 6. Tela Home
+
+A Home abre por padrão e mostra:
+
+- Header da chain ativa, status de rede e último bloco.
+- Gas tracker resumido (slow / average / fast / base fee).
+- Indicador de conexão (Connected / Disconnected / Reconnecting).
+- Primeiro-uso: banner que aponta para o Settings quando
+  `ALCHEMY_API_KEY` ainda não está configurado.
+
+Atalhos específicos da Home:
+
+| Tecla | Ação                                |
+|-------|-------------------------------------|
+| `/`   | Abre busca universal                |
+| `m`   | Abre Mempool                        |
+| `g`   | Abre Gas Tracker                    |
+| `s`   | Abre Settings                       |
+
+## 7. Busca
+
+O overlay de busca aceita:
+
+- Hashes de transação (`0x` + 64 hex).
+- Hashes de bloco (`0x` + 64 hex).
+- Números de bloco (decimal).
+- Endereços EVM (`0x` + 40 hex).
+- Nomes ENS (`*.eth`).
+- Tickers de token (quando `ETHERSCAN_API_KEY` está presente).
+- URLs de Etherscan (qualquer host conhecido da família Etherscan
+  é reconhecido e o caminho é interpretado).
+
+Navegação dentro do overlay:
+
+| Tecla  | Ação                                        |
+|--------|---------------------------------------------|
+| Digitar | Atualiza a lista de sugestões ao vivo      |
+| `↑`/`↓` | Move a seleção                             |
+| `Enter` | Empurra a tela do candidato selecionado    |
+| `Esc`   | Fecha a busca sem navegar                  |
+
+O overlay desenha o input na base da tela e as sugestões logo
+acima. A resolução passa por um cache TTL com chave
+`(chain, input)` para não bombardear o RPC com teclas repetidas.
+
+## 8. AddressDetail unificado
+
+Uma única tela (`AddressDetailScreen`) cobre EOAs, contratos e
+tokens ERC-20. As abas aparecem dinamicamente de acordo com o
+tipo do endereço:
+
+- EOA: `Overview`, `Transactions`, `Tokens`.
+- Contrato: as três acima mais `Contract`.
+- Token ERC-20: as quatro acima mais `Token`.
+
+Dentro de `Contract` existem 6 sub-abas: Overview, Source, ABI,
+Read, Events, Storage. Dentro de `Token` existem 3: Overview,
+Transfers, Chart.
+
+| Tecla              | Ação                                                        |
+|--------------------|-------------------------------------------------------------|
+| `Tab` / `Shift-Tab` | Próxima / anterior aba principal                           |
+| `[` / `]`          | Anterior / próxima sub-aba (em Contract ou Token)           |
+| `1`..`6`           | Seleciona sub-aba direto em `Contract` (Overview..Storage)  |
+| `1`..`3`           | Seleciona sub-aba direto em `Token` (Overview..Chart)       |
+| `y`                | Copia o endereço em hex (ou o valor sob o cursor)           |
+| `Y`                | Copia o nome ENS (ou hex se não houver ENS)                 |
+| `e`                | Exporta a aba atual como CSV para o clipboard               |
+| `c`                | Pula para a sub-aba Contract quando o token tem metadados inválidos |
+| `Enter`            | Abre a tela do valor sob o cursor (ou da linha selecionada) |
+
+Os atalhos `1`..`N` foram adicionados em abril de 2026 porque `[`
+e `]` são desconfortáveis em vários layouts (em particular ABNT
+Brasileiro, onde `[` é `AltGr+=` e `]` é `AltGr++`). As duas
+formas coexistem. Enquanto o editor de argumentos da sub-aba
+`Read` está em foco, os dígitos são entregues ao buffer — assim
+você consegue digitar argumentos numéricos sem trocar de sub-aba.
+
+## 9. BlockDetail
+
+`BlockDetailScreen` renderiza um bloco completo em três abas:
+
+- `Overview`: número, hash, pai, miner, gas, base fee, timestamp,
+  tamanho, extra_data.
+- `Transactions`: lista com o hash e a categoria de cada tx.
+- `Blobs / Withdrawals`: retiradas do beacon e blobs EIP-4844.
+
+| Tecla       | Ação                                          |
+|-------------|-----------------------------------------------|
+| `Tab`/`Shift-Tab` | Cicla entre as abas                      |
+| `[` / `]`   | Bloco anterior / próximo                      |
+| `↑`/`↓`     | Move a seleção na aba Transactions            |
+| `Enter`     | Abre a tx selecionada                         |
+| `y`         | Copia hash do bloco (Overview/Blobs) ou hash da tx selecionada (Transactions) |
+| `Y`         | Copia o número do bloco                       |
+
+## 10. TxDetail
+
+`TxDetailScreen` renderiza uma transação em 6 abas: `Overview`,
+`Logs`, `Internal`, `Asset Changes`, `State Changes`, `Raw`.
+
+- `Overview` mostra From/To, value, gas, status, e os campos são
+  navegáveis com o cursor (`Enter` abre a Address/Block correspondente).
+- `Logs` decoda eventos usando ABI + openchain + Samczsun, nessa
+  ordem. Selecione um log com `↑/↓` e entre em detalhe com `Enter`.
+- `Internal` lista a árvore de chamadas (trace), incluindo
+  `DELEGATECALL` e `STATICCALL`.
+- `Asset Changes` e `State Changes` populam a partir de
+  `debug_traceTransaction` e `alchemy_simulateAssetChanges` /
+  diff; txs mineradas exibem "unsupported" quando o provedor não
+  retorna dados.
+- `Raw` mostra o JSON original.
+
+| Tecla                | Ação                                                 |
+|----------------------|------------------------------------------------------|
+| `Tab` / `Shift-Tab`  | Cicla entre as abas                                  |
+| `←` / `→`            | Também ciclam abas (exceto na Overview, onde entram no cursor) |
+| `↑`/`↓` ou `j`/`k`   | Rolagem ou seleção                                   |
+| `PageUp`/`PageDown`  | Rolagem por página                                   |
+| `y`                  | Copia a linha selecionada (Overview) ou o hash da tx |
+| `s`                  | Re-simula a tx (apenas quando pending)               |
+| `Enter`              | Abre tela relacionada para o valor sob o cursor      |
+
+Proxies (EIP-1967, UUPS, Transparent) são detectados em cascata:
+Alchemy slot-probe primeiro, Etherscan como fallback com cache TTL.
+A aba `Overview` mostra o proxy e a implementação via o selo
+correspondente.
+
+## 11. Mempool
+
+`MempoolScreen` consome o stream de txs pendentes do Alchemy via
+WebSocket. O WS adapter ainda não está totalmente wired (veja
+`plan/5-mempool.md` §11.3.4) — no live mode a tela abre em estado
+"waiting..." e o status bar mostra reconexão quando apropriado.
+
+| Tecla   | Ação                                                    |
+|---------|---------------------------------------------------------|
+| `↑`/`↓` | Move a seleção                                          |
+| `Enter` | Abre a tx selecionada                                   |
+| `p`     | Pausa / despausa o stream                               |
+| `c`     | Limpa a lista                                           |
+| `y`     | Copia o hash da linha selecionada                       |
+
+`update_filter` é exposto para filtrar por `from` via o control
+channel — o stream pode descartar eventos antes de chegarem à UI.
+
+## 12. Gas Tracker
+
+`GasTrackerScreen` mostra as tarifas slow / average / fast,
+base fee, tendência recente e percentis (p50/p75/p90/p95)
+computados sobre uma janela rolante.
+
+| Tecla   | Ação                                                    |
+|---------|---------------------------------------------------------|
+| `p`     | Pausa / despausa o polling                              |
+| `Ctrl+R`| Força refresh imediato (despausa também)                |
+| `u`     | Abre o modal de conversão de unidades                   |
+| `y`     | Copia a primeira tarifa (ou o campo sob o cursor)       |
+
+No modal de conversão, dígitos / `.` / `-` são aceitos no input.
+Outros caracteres são ignorados e `p` não pauta enquanto o modal
+está aberto.
+
+## 13. Settings
+
+`SettingsScreen` mostra:
+
+- A chain ativa (display name + slug).
+- Se a chave Alchemy / Etherscan foi encontrada.
+- O caminho do `config.toml` atual (dica, não editável pela tela).
+- Um painel de health com o status mais recente dos provedores.
+- Presets de paleta numerados: `1` Dark, `2` Light, `3` High
+  contrast, `4` Solarized. O preset ativo é marcado com `*`.
+
+O banner de primeiro uso aparece quando não há chave Alchemy e o
+binário foi aberto com `--demo`.
+
+## 14. Primeira execução
+
+- Sem chave Alchemy e sem `--demo`: o binário imprime uma dica de
+  setup, sugere `--init-config` e sai com código 0 (não é erro).
+- Com `--demo`: a Home abre com dados congelados e um banner
+  avisa que Settings pode gerar um seed de config.
+- `cargo run -- --init-config` cria
+  `$XDG_CONFIG_HOME/blockexplorer-tui/config.toml` com um bloco
+  `[defaults]` vazio. O arquivo é idempotente: rodar de novo não
+  sobrescreve credenciais que já estejam lá.
+
+## 15. Troubleshooting
+
+**`y` não copia nada no terminal.** O adaptador `ArboardClipboard`
+tenta abrir uma conexão com o clipboard do sistema no boot. Se
+`DISPLAY` (X11) ou `WAYLAND_DISPLAY` não estiverem setados, o
+adaptador degrada para um no-op e um `tracing::warn!` é emitido
+indicando o motivo. Soluções:
+
+- Rode dentro de uma sessão gráfica (SSH com `-X` funciona para
+  X11; sessões `tmux` + `ssh` cruas não têm acesso ao clipboard).
+- Em WSL, instale `wl-clipboard` ou `xclip` e exporte `DISPLAY`.
+- Em CI / headless: esperado — o TUI continua usável, só o `y` é
+  no-op.
+
+**Chain inválida em `BLOCKEXPLORER_TUI_CHAIN`.** A mensagem de
+erro lista todos os slugs aceitos (`ethereum`,
+`ethereum-sepolia`, `base`, `polygon`, `optimism`, `arbitrum`).
+Não há fallback silencioso.
+
+**Links de Etherscan.** O parser de busca aceita URLs dos hosts
+`etherscan.io`, `sepolia.etherscan.io`, `basescan.org`,
+`polygonscan.com`, `optimistic.etherscan.io` e `arbiscan.io`. O
+caminho (`/tx/...`, `/block/...`, `/address/...`) é convertido no
+`ResolvedEntity` correspondente.
+
+**"Unsupported" em abas de TxDetail.** O tracer ou o diff não
+suportam aquele hardfork / caminho. Isso não é um bug nem uma
+falha de rede — o provider retornou `null`. Ao menos a aba
+`Overview` continua populada.
+
+## 16. Limitações conhecidas
+
+O MVP deliberadamente não inclui:
+
+- Watchlist persistente.
+- Decompilador / verificação de bytecode.
+- Suporte a NFTs (coleções, metadados, imagens).
+- Aba `Write` (apenas `Read` está exposta).
+- Mouse (planejado para um release futuro).
+
+Esses itens estão catalogados em `plan/15-backlog.md` e serão
+promovidos para seus próprios arquivos de plano quando priorizados.
+
+---
+
+Para aprofundar: [`plan/README.md`](../plan/README.md) é o índice
+mestre. Cada arquivo `plan/N-*.md` documenta uma fatia do
+produto, com use cases, portas, BDD scenarios e testes funcionais
+em 1:1. Se uma funcionalidade NÃO está descrita em `plan/`, ela
+não faz parte do produto — a regra é planning-first.
