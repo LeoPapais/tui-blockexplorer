@@ -13,25 +13,27 @@ use std::{
 };
 
 use blockexplorer_tui::{
+    adapters::ui::{NavigationFactory, Screen},
     application::{
         SignatureSource,
         ports::{
             AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-            BlockReceiptsPort, ChainRegistryPort, Clock, ContractReaderPort, ContractSourcePort,
-            EnsResolverPort, EventLogPort, GasOraclePort, LabelPort, NetworkStatusPort,
-            NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
-            Rng, SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
-            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
-            TxSimulationPort, TxTracePort,
+            BlockReceiptsPort, ChainRegistryPort, ClipboardPort, Clock, ContractReaderPort,
+            ContractSourcePort, EnsResolverPort, EventLogPort, GasOraclePort, LabelPort,
+            NetworkStatusPort, NewHeadsStreamPort, PendingTxStreamPort, PortfolioPort, PricesPort,
+            ProxyDetectionPort, Rng, SignatureDirectoryPort, SignatureHit, StoragePort,
+            TokenPriceStreamPort, TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort,
+            TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{
         AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
         BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode, Chain,
         ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
-        NetworkStatus, NewHead, PendingTx, PendingTxEvent, PendingTxFilter, PriceLookup,
-        PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview,
-        TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
+        NavigableValue, NetworkStatus, NewHead, PendingTx, PendingTxEvent, PendingTxFilter,
+        PriceLookup, PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata,
+        TokenOverview, TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary,
+        Wei,
     },
 };
 use serde::Deserialize;
@@ -1767,5 +1769,90 @@ impl Rng for SeededRng {
     fn next_u64(&self) -> u64 {
         let mut guard = self.state.lock().expect("rng lock poisoned");
         Self::step(&mut guard)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: ClipboardPort
+// ---------------------------------------------------------------------------
+
+/// In-memory `ClipboardPort` used by the per-screen cursor tests.
+/// Holds the last string `set` received; `last_copied()` returns a
+/// clone of it so assertions stay immutable. See
+/// `plan/17-navigable-values.md` §5.2.
+#[derive(Default, Clone)]
+pub struct StubClipboard {
+    last: Arc<Mutex<Option<String>>>,
+}
+
+impl StubClipboard {
+    /// Empty clipboard.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Latest value passed to [`ClipboardPort::set`], or `None` when
+    /// the stub was never called.
+    #[must_use]
+    pub fn last_copied(&self) -> Option<String> {
+        self.last
+            .lock()
+            .expect("stub clipboard lock poisoned")
+            .clone()
+    }
+}
+
+impl ClipboardPort for StubClipboard {
+    fn set(&self, text: &str) -> Result<(), DomainError> {
+        *self.last.lock().expect("stub clipboard lock poisoned") = Some(text.to_string());
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: NavigationFactory
+// ---------------------------------------------------------------------------
+
+/// Recording `NavigationFactory` used by per-screen cursor tests.
+///
+/// Every call to `open` appends the `(value, chain)` pair to an
+/// internal log before returning `None` (so the screen stack stays
+/// untouched — tests assert on the recording only). See
+/// `plan/17-navigable-values.md` §5.3.
+#[derive(Default, Clone)]
+pub struct StubNavigationFactory {
+    recorded: Arc<Mutex<Vec<(NavigableValue, Chain)>>>,
+}
+
+impl StubNavigationFactory {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Snapshot of every `(value, chain)` the screen asked to open.
+    #[must_use]
+    pub fn recorded(&self) -> Vec<(NavigableValue, Chain)> {
+        self.recorded
+            .lock()
+            .expect("stub navigation lock poisoned")
+            .clone()
+    }
+
+    /// Convenience for assertions that only care about the values.
+    #[must_use]
+    pub fn recorded_values(&self) -> Vec<NavigableValue> {
+        self.recorded().into_iter().map(|(v, _)| v).collect()
+    }
+}
+
+impl NavigationFactory for StubNavigationFactory {
+    fn open(&self, value: &NavigableValue, active_chain: Chain) -> Option<Box<dyn Screen>> {
+        self.recorded
+            .lock()
+            .expect("stub navigation lock poisoned")
+            .push((value.clone(), active_chain));
+        None
     }
 }
