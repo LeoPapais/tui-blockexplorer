@@ -52,7 +52,7 @@ use crate::{
             CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
         },
         ui::{
-            AddressDetailScreen, AddressTab, AppConfigSnapshot, BlockDetailScreen,
+            AddressDetailScreen, AddressTab, AppConfigSnapshot, BlockDetailScreen, CursorServices,
             DetailPlaceholderScreen, GasTrackerScreen, GlobalKeyMap, HelpModal, HomeScreen,
             MempoolScreen, Screen, ScreenStack, SearchScreen, SettingsScreen, TxDetailScreen,
             address_feed, block_feed, gas_feed, gas_refresh_channel, search_feed, tx_feed,
@@ -82,6 +82,7 @@ fn live_tx_detail_screen(
     hash: crate::domain::TxHash,
     rpc: RpcClient,
     etherscan_key: Option<String>,
+    cursor_services: Option<CursorServices>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyTxReader::new(rpc.clone());
     let (feed, sender) = tx_feed();
@@ -109,7 +110,11 @@ fn live_tx_detail_screen(
         sender,
     ));
 
-    Box::new(TxDetailScreen::loading(chain, hash, feed))
+    let screen = TxDetailScreen::loading(chain, hash, feed);
+    match cursor_services {
+        Some(services) => Box::new(screen.with_cursor_services(services)),
+        None => Box::new(screen),
+    }
 }
 
 /// Build a live unified `AddressDetailScreen`.
@@ -126,6 +131,7 @@ fn live_address_detail_screen(
     rpc: RpcClient,
     alchemy_key: String,
     etherscan_key: Option<String>,
+    cursor_services: Option<CursorServices>,
 ) -> Box<dyn Screen> {
     let reader = AlchemyAddressReader::new(rpc.clone());
     let transfers = AlchemyTransfers::new(rpc.clone());
@@ -170,13 +176,21 @@ fn live_address_detail_screen(
 
     let rpc_for_tx = rpc.clone();
     let etherscan_for_tx = etherscan_key.clone();
+    let services_for_tx = cursor_services.clone();
     let open_tx: crate::adapters::ui::address_detail::OpenTxFactory = Box::new(move |hash| {
-        live_tx_detail_screen(chain, hash, rpc_for_tx.clone(), etherscan_for_tx.clone())
+        live_tx_detail_screen(
+            chain,
+            hash,
+            rpc_for_tx.clone(),
+            etherscan_for_tx.clone(),
+            services_for_tx.clone(),
+        )
     });
 
     let rpc_for_token = rpc;
     let alchemy_for_token = alchemy_key;
     let etherscan_for_token = etherscan_key;
+    let services_for_token = cursor_services.clone();
     let open_token: crate::adapters::ui::address_detail::OpenTokenFactory =
         Box::new(move |contract| {
             live_address_detail_screen(
@@ -186,17 +200,22 @@ fn live_address_detail_screen(
                 rpc_for_token.clone(),
                 alchemy_for_token.clone(),
                 etherscan_for_token.clone(),
+                services_for_token.clone(),
             )
         });
 
-    Box::new(AddressDetailScreen::with_factories_and_tab(
+    let screen = AddressDetailScreen::with_factories_and_tab(
         chain,
         address,
         feed,
         Some(open_tx),
         Some(open_token),
         initial_tab,
-    ))
+    );
+    match cursor_services {
+        Some(services) => Box::new(screen.with_cursor_services(services)),
+        None => Box::new(screen),
+    }
 }
 
 /// Wrapper around `AlchemyPrices` that degrades to a Noop when the
@@ -549,16 +568,44 @@ fn default_keymap() -> GlobalKeyMap {
 }
 
 fn demo_help_factory() -> Box<dyn Screen> {
-    Box::new(HelpModal::new(
-        "blockexplorer-tui",
-        vec![
-            ("/".to_string(), "Open search".to_string()),
-            ("?".to_string(), "Show help".to_string()),
-            ("q".to_string(), "Quit".to_string()),
-            ("Esc".to_string(), "Back / close modal".to_string()),
-            ("Ctrl+C".to_string(), "Quit".to_string()),
-        ],
-    ))
+    Box::new(HelpModal::new("blockexplorer-tui", help_entries()))
+}
+
+/// Canonical help-modal entries, shared by the demo and live
+/// keymaps so the `?` overlay stays consistent across boot paths.
+/// New rows must be APPENDED (never reordered) because some
+/// functional tests assert on the top-of-list rendering.
+fn help_entries() -> Vec<(String, String)> {
+    vec![
+        ("/".to_string(), "Open search".to_string()),
+        ("?".to_string(), "Show help".to_string()),
+        ("q".to_string(), "Quit".to_string()),
+        ("Esc".to_string(), "Back / close modal".to_string()),
+        ("Ctrl+C".to_string(), "Quit".to_string()),
+        ("Tab / Shift-Tab".to_string(), "Switch main tab".to_string()),
+        (
+            "[ / ]".to_string(),
+            "Switch sub-tab (Contract/Token)".to_string(),
+        ),
+        ("1..9".to_string(), "Jump directly to sub-tab".to_string()),
+        ("Arrows".to_string(), "Move field cursor".to_string()),
+        (
+            "Enter".to_string(),
+            "Open related screen for field under cursor".to_string(),
+        ),
+        (
+            "y".to_string(),
+            "Copy field under cursor (or screen's default value)".to_string(),
+        ),
+        (
+            "Y".to_string(),
+            "Copy ENS / canonical identifier".to_string(),
+        ),
+        (
+            "e".to_string(),
+            "Export active tab as CSV (Address/Block)".to_string(),
+        ),
+    ]
 }
 
 /// Live keymap: wires the global `/` binding to a SearchScreen that
@@ -584,10 +631,18 @@ fn build_live_keymap(config: &AppConfig) -> GlobalKeyMap {
         .with_cost_recorder(CostMeter::shared());
     let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
 
+    // The keymap's search modal is an independent screen stack (it
+    // lives in the modal slot), so it deserves its own
+    // `CursorServices`. `live_cursor_services` acquires a fresh
+    // `ArboardClipboard` handle and logs if the host has no display.
+    let cursor_services =
+        navigate::live_cursor_services(rpc.clone(), key.clone(), etherscan_key.clone(), chain);
+
     let search_factory = {
         let rpc = rpc.clone();
         let etherscan_key = etherscan_key.clone();
         let alchemy_key = key.clone();
+        let cursor_services = cursor_services.clone();
         move || -> Box<dyn Screen> {
             build_live_search_screen(
                 chain,
@@ -595,6 +650,7 @@ fn build_live_keymap(config: &AppConfig) -> GlobalKeyMap {
                 alchemy_key.clone(),
                 etherscan_key.clone(),
                 search_cache.clone(),
+                cursor_services.clone(),
             )
         }
     };
@@ -610,6 +666,7 @@ fn build_live_search_screen(
     alchemy_key: String,
     etherscan_key: Option<String>,
     search_cache: SearchCache,
+    cursor_services: CursorServices,
 ) -> Box<dyn Screen> {
     let block = AlchemyBlockLookup::new(rpc.clone());
     let tx = AlchemyTxLookup::new(rpc.clone());
@@ -634,6 +691,7 @@ fn build_live_search_screen(
         let rpc = rpc.clone();
         let etherscan_key = etherscan_key.clone();
         let alchemy_key = alchemy_key.clone();
+        let cursor_services = cursor_services.clone();
         Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
             match entity {
                 ResolvedEntity::Block { number, .. } => {
@@ -642,24 +700,28 @@ fn build_live_search_screen(
                     std::mem::drop(block_feed::spawn(chain, reader, sender));
                     let rpc_for_tx = rpc.clone();
                     let etherscan_for_tx = etherscan_key.clone();
+                    let services_for_tx = cursor_services.clone();
                     let open_tx = Box::new(move |hash| {
                         live_tx_detail_screen(
                             chain,
                             hash,
                             rpc_for_tx.clone(),
                             etherscan_for_tx.clone(),
+                            Some(services_for_tx.clone()),
                         )
                     });
-                    Box::new(BlockDetailScreen::loading(
-                        chain,
-                        BlockId::Number(number),
-                        feed,
-                        open_tx,
-                    ))
+                    Box::new(
+                        BlockDetailScreen::loading(chain, BlockId::Number(number), feed, open_tx)
+                            .with_cursor_services(cursor_services.clone()),
+                    )
                 }
-                ResolvedEntity::Tx { hash, .. } => {
-                    live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
-                }
+                ResolvedEntity::Tx { hash, .. } => live_tx_detail_screen(
+                    chain,
+                    hash,
+                    rpc.clone(),
+                    etherscan_key.clone(),
+                    Some(cursor_services.clone()),
+                ),
                 ResolvedEntity::Address { address, .. }
                 | ResolvedEntity::DelegatedEoa { address, .. } => live_address_detail_screen(
                     chain,
@@ -668,6 +730,7 @@ fn build_live_search_screen(
                     rpc.clone(),
                     alchemy_key.clone(),
                     etherscan_key.clone(),
+                    Some(cursor_services.clone()),
                 ),
                 ResolvedEntity::Contract { address } => live_address_detail_screen(
                     chain,
@@ -676,6 +739,7 @@ fn build_live_search_screen(
                     rpc.clone(),
                     alchemy_key.clone(),
                     etherscan_key.clone(),
+                    Some(cursor_services.clone()),
                 ),
                 ResolvedEntity::Token(meta) => live_address_detail_screen(
                     chain,
@@ -684,6 +748,7 @@ fn build_live_search_screen(
                     rpc.clone(),
                     alchemy_key.clone(),
                     etherscan_key.clone(),
+                    Some(cursor_services.clone()),
                 ),
                 other => Box::new(DetailPlaceholderScreen::new(other)),
             }
@@ -719,95 +784,29 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let session = HomeSession::new(network, gas, chains, chain);
     let (feed, _home_handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
 
+    // Build the `CursorServices` bundle ONCE per live stack so every
+    // screen factory (Home, Mempool, Gas, Settings, and the detail
+    // screens opened via search) shares the same clipboard handle.
+    // See `plan/17-navigable-values.md` §5.
+    let cursor_services =
+        navigate::live_cursor_services(rpc.clone(), key.to_string(), etherscan_key.clone(), chain);
+
     let search_cache: SearchCache = TtlCache::with_ttl(SEARCH_CACHE_TTL);
     let search_factory = {
         let rpc = rpc.clone();
         let etherscan_key = etherscan_key.clone();
         let alchemy_key = key.to_string();
         let search_cache = search_cache.clone();
+        let cursor_services = cursor_services.clone();
         Box::new(move || -> Box<dyn Screen> {
-            let block = AlchemyBlockLookup::new(rpc.clone());
-            let tx = AlchemyTxLookup::new(rpc.clone());
-            let addr = AlchemyAddressLookup::new(rpc.clone());
-            let ens = AlchemyEnsResolver::new(rpc.clone());
-            let token = build_token_search(etherscan_key.as_deref());
-            let token_reader = AlchemyTokenReader::new(rpc.clone());
-            let (search_feed_rx, sender) = search_feed();
-            std::mem::drop(search_feed::spawn_with_cache(
+            build_live_search_screen(
                 chain,
-                block,
-                tx,
-                addr,
-                ens,
-                token,
-                token_reader,
-                sender,
-                Some(search_cache.clone()),
-            ));
-
-            let detail_factory = {
-                let rpc = rpc.clone();
-                let etherscan_key = etherscan_key.clone();
-                let alchemy_key = alchemy_key.clone();
-                Box::new(move |entity: ResolvedEntity| -> Box<dyn Screen> {
-                    match entity {
-                        ResolvedEntity::Block { number, .. } => {
-                            let reader = AlchemyBlockReader::new(rpc.clone());
-                            let (feed, sender) = block_feed();
-                            std::mem::drop(block_feed::spawn(chain, reader, sender));
-                            let rpc_for_tx = rpc.clone();
-                            let etherscan_for_tx = etherscan_key.clone();
-                            let open_tx = Box::new(move |hash| {
-                                live_tx_detail_screen(
-                                    chain,
-                                    hash,
-                                    rpc_for_tx.clone(),
-                                    etherscan_for_tx.clone(),
-                                )
-                            });
-                            Box::new(BlockDetailScreen::loading(
-                                chain,
-                                BlockId::Number(number),
-                                feed,
-                                open_tx,
-                            ))
-                        }
-                        ResolvedEntity::Tx { hash, .. } => {
-                            live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
-                        }
-                        ResolvedEntity::Address { address, .. }
-                        | ResolvedEntity::DelegatedEoa { address, .. } => {
-                            live_address_detail_screen(
-                                chain,
-                                address,
-                                AddressTab::Overview,
-                                rpc.clone(),
-                                alchemy_key.clone(),
-                                etherscan_key.clone(),
-                            )
-                        }
-                        ResolvedEntity::Contract { address } => live_address_detail_screen(
-                            chain,
-                            address,
-                            AddressTab::Contract,
-                            rpc.clone(),
-                            alchemy_key.clone(),
-                            etherscan_key.clone(),
-                        ),
-                        ResolvedEntity::Token(meta) => live_address_detail_screen(
-                            chain,
-                            meta.address,
-                            AddressTab::Token,
-                            rpc.clone(),
-                            alchemy_key.clone(),
-                            etherscan_key.clone(),
-                        ),
-                        other => Box::new(DetailPlaceholderScreen::new(other)),
-                    }
-                })
-            };
-
-            Box::new(SearchScreen::new(search_feed_rx, detail_factory))
+                rpc.clone(),
+                alchemy_key.clone(),
+                etherscan_key.clone(),
+                search_cache.clone(),
+                cursor_services.clone(),
+            )
         })
     };
 
@@ -819,6 +818,7 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let mempool_factory = {
         let rpc_for_tx = rpc.clone();
         let etherscan_for_tx = etherscan_key.clone();
+        let cursor_services = cursor_services.clone();
         Box::new(move || -> Box<dyn Screen> {
             let stream = EmptyPendingTxStream;
             let rx = futures_block_on(async {
@@ -834,21 +834,30 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
 
             let rpc = rpc_for_tx.clone();
             let etherscan_key = etherscan_for_tx.clone();
+            let services_for_tx = cursor_services.clone();
             let open_tx = Box::new(move |hash| {
-                live_tx_detail_screen(chain, hash, rpc.clone(), etherscan_key.clone())
+                live_tx_detail_screen(
+                    chain,
+                    hash,
+                    rpc.clone(),
+                    etherscan_key.clone(),
+                    Some(services_for_tx.clone()),
+                )
             });
             // TODO(plan/5 §11.3.4): when the live WS adapter lands,
             // plumb mempool_status_feed() in here and publish
             // Connected / Disconnected on the reconnect loop.
             Box::new(
                 MempoolScreen::new(rx, PendingTxFilter::default(), open_tx)
-                    .with_filter_control(filter_control),
+                    .with_filter_control(filter_control)
+                    .with_cursor_services(cursor_services.clone()),
             )
         })
     };
 
     let gas_factory = {
         let rpc = rpc.clone();
+        let cursor_services = cursor_services.clone();
         Box::new(move || -> Box<dyn Screen> {
             let oracle = AlchemyGasOracleAdapter::new(rpc.clone());
             let (feed, sender) = gas_feed();
@@ -863,7 +872,11 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
                 gas_feed::DEFAULT_REFRESH_PERIOD,
                 Some(refresh_listener),
             ));
-            Box::new(GasTrackerScreen::new(chain, None, feed).with_refresh_handle(refresh_handle))
+            Box::new(
+                GasTrackerScreen::new(chain, None, feed)
+                    .with_refresh_handle(refresh_handle)
+                    .with_cursor_services(cursor_services.clone()),
+            )
         })
     };
 
@@ -873,11 +886,13 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
             alchemy_key_present: config.has_alchemy_key(),
             config_path_hint: Some("~/.config/blockexplorer-tui/config.toml (via XDG)".to_string()),
         };
-        Box::new(move || -> Box<dyn Screen> { Box::new(SettingsScreen::new(snapshot.clone())) })
+        let cursor_services = cursor_services.clone();
+        Box::new(move || -> Box<dyn Screen> {
+            Box::new(
+                SettingsScreen::new(snapshot.clone()).with_cursor_services(cursor_services.clone()),
+            )
+        })
     };
-
-    let cursor_services =
-        navigate::live_cursor_services(rpc.clone(), key.to_string(), etherscan_key.clone(), chain);
 
     let mut stack = ScreenStack::new();
     stack.push(Box::new(
