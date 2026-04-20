@@ -48,7 +48,7 @@ use crate::{
         highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
-        theme::PalettePreset,
+        theme::{Palette, PalettePreset},
     },
     domain::{
         AbiFunction, AbiParamType, AbiValue, Address, AddressKind, AddressOverview, BlockNumber,
@@ -340,12 +340,27 @@ enum TokenProbeState {
     IsToken(TokenOverview),
 }
 
-/// Focus within the Read sub-tab: the function picker on the left,
-/// or the argument editor on the right.
+/// Focus within the Read sub-tab: function list, argument editor,
+/// or the result pane (scrollable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReadFocus {
     FunctionList,
     Args,
+    Result,
+}
+
+/// Focus within the Source sub-tab: file list vs source viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceFocus {
+    Files,
+    Viewer,
+}
+
+/// Focus within the Storage sub-tab: slot input vs value body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageFocus {
+    Slot,
+    Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +391,12 @@ pub struct AddressDetailScreen {
     function_list_state: ListState,
     file_list_state: ListState,
     read_focus: ReadFocus,
+    /// Scroll offset for the Read tab result pane (independent of
+    /// [`AddressDetailScreen::contract_scroll`]).
+    read_result_scroll: std::cell::Cell<ScrollState>,
+    source_focus: SourceFocus,
+    storage_focus: StorageFocus,
+    storage_value_scroll: std::cell::Cell<ScrollState>,
     arg_buffers: Vec<String>,
     arg_cursor: usize,
     last_result: Option<Result<Vec<DecodedValue>, String>>,
@@ -493,6 +514,10 @@ impl AddressDetailScreen {
             function_list_state,
             file_list_state,
             read_focus: ReadFocus::FunctionList,
+            read_result_scroll: std::cell::Cell::new(ScrollState::new()),
+            source_focus: SourceFocus::Files,
+            storage_focus: StorageFocus::Slot,
+            storage_value_scroll: std::cell::Cell::new(ScrollState::new()),
             arg_buffers: Vec::new(),
             arg_cursor: 0,
             last_result: None,
@@ -1118,6 +1143,7 @@ impl AddressDetailScreen {
         }
         match self.build_args() {
             Ok(args) => {
+                self.with_read_result_scroll(|s| s.reset());
                 let _ = self.feed.read_tx.send(ReadRequest { function, args });
             }
             Err(msg) => {
@@ -1149,6 +1175,20 @@ impl AddressDetailScreen {
         let viewport = area.height.saturating_sub(2);
         self.with_contract_scroll(|s| s.set_dimensions(content_lines, viewport));
         self.contract_scroll.get().offset()
+    }
+
+    fn bound_read_result_for(&self, body: &str, area: Rect) -> u16 {
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        self.with_read_result_scroll(|s| s.set_dimensions(content_lines, viewport));
+        self.read_result_scroll.get().offset()
+    }
+
+    fn bound_storage_value_for(&self, body: &str, area: Rect) -> u16 {
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        self.with_storage_value_scroll(|s| s.set_dimensions(content_lines, viewport));
+        self.storage_value_scroll.get().offset()
     }
 
     fn set_token_window(&mut self, window: PriceWindow) {
@@ -1395,13 +1435,54 @@ impl AddressDetailScreen {
         detail_body_border_style(self.focus_layer, &palette)
     }
 
+    /// Border for a split pane when the body has content focus: only
+    /// `focused` pane gets the accent outline.
+    fn split_pane_border(&self, focused: bool) -> Style {
+        let palette = PalettePreset::DarkDefault.palette();
+        Self::pane_border(self.focus_layer, focused, &palette)
+    }
+
+    fn pane_border(focus_layer: DetailFocusLayer, this_pane_focused: bool, palette: &Palette) -> Style {
+        if focus_layer == DetailFocusLayer::Content && this_pane_focused {
+            detail_body_border_style(DetailFocusLayer::Content, palette)
+        } else {
+            Style::default().fg(palette.foreground)
+        }
+    }
+
+    fn reset_contract_subtab_ui_state(&mut self) {
+        self.source_focus = SourceFocus::Files;
+        self.storage_focus = StorageFocus::Slot;
+        self.read_focus = ReadFocus::FunctionList;
+        self.with_contract_scroll(|s| s.reset());
+        self.with_read_result_scroll(|s| s.reset());
+        self.with_storage_value_scroll(|s| s.reset());
+    }
+
+    fn with_read_result_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.read_result_scroll.get();
+        f(&mut s);
+        self.read_result_scroll.set(s);
+    }
+
+    fn with_storage_value_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.storage_value_scroll.get();
+        f(&mut s);
+        self.storage_value_scroll.set(s);
+    }
+
     const fn main_tab_exposes_sub_strip(active: AddressTab) -> bool {
         matches!(active, AddressTab::Contract | AddressTab::Token)
     }
 
     fn promote_focus_up_from_list(&mut self) {
         self.focus_layer = match self.active_tab_or_fallback() {
-            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
+            AddressTab::Token
+                if matches!(
+                    self.active_token_sub,
+                    TokenSubTab::Transfers | TokenSubTab::Overview | TokenSubTab::Chart
+                ) =>
+            {
                 DetailFocusLayer::Subtabs
             }
             _ => DetailFocusLayer::MainTabs,
@@ -1508,7 +1589,7 @@ impl AddressDetailScreen {
             self.active_tab = AddressTab::Contract;
             self.active_contract_sub = ContractSubTab::Overview;
             self.focus_layer = DetailFocusLayer::Content;
-            self.with_contract_scroll(|s| s.reset());
+            self.reset_contract_subtab_ui_state();
             return Command::None;
         }
 
@@ -1518,11 +1599,12 @@ impl AddressDetailScreen {
                 match self.active_tab_or_fallback() {
                     AddressTab::Contract => {
                         self.active_contract_sub = self.active_contract_sub.previous();
-                        self.with_contract_scroll(|s| s.reset());
+                        self.reset_contract_subtab_ui_state();
                         return Command::None;
                     }
                     AddressTab::Token => {
                         self.active_token_sub = self.active_token_sub.previous();
+                        self.scroll = 0;
                         return Command::None;
                     }
                     _ => {}
@@ -1537,11 +1619,12 @@ impl AddressDetailScreen {
                 match self.active_tab_or_fallback() {
                     AddressTab::Contract => {
                         self.active_contract_sub = self.active_contract_sub.next();
-                        self.with_contract_scroll(|s| s.reset());
+                        self.reset_contract_subtab_ui_state();
                         return Command::None;
                     }
                     AddressTab::Token => {
                         self.active_token_sub = self.active_token_sub.next();
+                        self.scroll = 0;
                         return Command::None;
                     }
                     _ => {}
@@ -1584,10 +1667,11 @@ impl AddressDetailScreen {
                     match self.active_tab_or_fallback() {
                         AddressTab::Contract => {
                             self.active_contract_sub = self.active_contract_sub.previous();
-                            self.with_contract_scroll(|s| s.reset());
+                            self.reset_contract_subtab_ui_state();
                         }
                         AddressTab::Token => {
                             self.active_token_sub = self.active_token_sub.previous();
+                            self.scroll = 0;
                         }
                         _ => {}
                     }
@@ -1597,10 +1681,11 @@ impl AddressDetailScreen {
                     match self.active_tab_or_fallback() {
                         AddressTab::Contract => {
                             self.active_contract_sub = self.active_contract_sub.next();
-                            self.with_contract_scroll(|s| s.reset());
+                            self.reset_contract_subtab_ui_state();
                         }
                         AddressTab::Token => {
                             self.active_token_sub = self.active_token_sub.next();
+                            self.scroll = 0;
                         }
                         _ => {}
                     }
@@ -1623,11 +1708,12 @@ impl AddressDetailScreen {
             match self.active_tab_or_fallback() {
                 AddressTab::Contract => {
                     self.active_contract_sub = self.active_contract_sub.next();
-                    self.with_contract_scroll(|s| s.reset());
+                    self.reset_contract_subtab_ui_state();
                     return Command::None;
                 }
                 AddressTab::Token => {
                     self.active_token_sub = self.active_token_sub.next();
+                    self.scroll = 0;
                     return Command::None;
                 }
                 _ => {}
@@ -1637,11 +1723,12 @@ impl AddressDetailScreen {
             match self.active_tab_or_fallback() {
                 AddressTab::Contract => {
                     self.active_contract_sub = self.active_contract_sub.previous();
-                    self.with_contract_scroll(|s| s.reset());
+                    self.reset_contract_subtab_ui_state();
                     return Command::None;
                 }
                 AddressTab::Token => {
                     self.active_token_sub = self.active_token_sub.previous();
+                    self.scroll = 0;
                     return Command::None;
                 }
                 _ => {}
@@ -1828,7 +1915,48 @@ impl AddressDetailScreen {
                 }
                 _ => Command::None,
             },
-            _ => Command::None,
+            TokenSubTab::Overview => match key.code {
+                KeyCode::Up if self.scroll == 0 => {
+                    self.focus_layer = DetailFocusLayer::Subtabs;
+                    Command::None
+                }
+                KeyCode::Up => {
+                    self.scroll = self.scroll.saturating_sub(1);
+                    Command::None
+                }
+                KeyCode::Down => {
+                    self.scroll = self.scroll.saturating_add(1);
+                    Command::None
+                }
+                KeyCode::Char('k') => {
+                    self.scroll = self.scroll.saturating_sub(1);
+                    Command::None
+                }
+                KeyCode::Char('j') => {
+                    self.scroll = self.scroll.saturating_add(1);
+                    Command::None
+                }
+                KeyCode::PageUp => {
+                    self.scroll = self.scroll.saturating_sub(10);
+                    Command::None
+                }
+                KeyCode::PageDown => {
+                    self.scroll = self.scroll.saturating_add(10);
+                    Command::None
+                }
+                KeyCode::Home => {
+                    self.scroll = 0;
+                    Command::None
+                }
+                _ => Command::None,
+            },
+            TokenSubTab::Chart => match key.code {
+                KeyCode::Up => {
+                    self.focus_layer = DetailFocusLayer::Subtabs;
+                    Command::None
+                }
+                _ => Command::None,
+            },
         }
     }
 
@@ -1836,7 +1964,7 @@ impl AddressDetailScreen {
         match self.active_contract_sub {
             ContractSubTab::Overview => self.handle_contract_overview_key(key),
             ContractSubTab::Source => self.handle_source_key(key),
-            ContractSubTab::Abi => self.handle_paragraph_scroll_key(key),
+            ContractSubTab::Abi => self.handle_abi_scroll_key(key),
             ContractSubTab::Read => self.handle_read_key(key),
             ContractSubTab::Events => self.handle_events_key(key),
             ContractSubTab::Storage => self.handle_storage_key(key),
@@ -1939,29 +2067,87 @@ impl AddressDetailScreen {
         Command::None
     }
 
-    fn handle_source_key(&mut self, key: KeyEvent) -> Command {
+    /// ABI sub-tab scrolls only with `j` / `k` (no arrow / page keys).
+    fn handle_abi_scroll_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
-            KeyCode::Up => self.file_delta(-1),
-            KeyCode::Down => self.file_delta(1),
-            KeyCode::Char('k') => self.with_contract_scroll(|s| {
-                s.scroll_by(-1);
-            }),
-            KeyCode::Char('j') => self.with_contract_scroll(|s| {
-                s.scroll_by(1);
-            }),
-            KeyCode::PageUp => self.with_contract_scroll(|s| {
-                s.page_up();
-            }),
-            KeyCode::PageDown => self.with_contract_scroll(|s| {
-                s.page_down();
-            }),
-            KeyCode::Home => self.with_contract_scroll(|s| {
-                s.home();
-            }),
-            KeyCode::End => self.with_contract_scroll(|s| {
-                s.end();
-            }),
+            KeyCode::Char('k') => {
+                self.with_contract_scroll(|s| {
+                    s.scroll_by(-1);
+                });
+            }
+            KeyCode::Char('j') => {
+                self.with_contract_scroll(|s| {
+                    s.scroll_by(1);
+                });
+            }
             _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_source_key(&mut self, key: KeyEvent) -> Command {
+        let Some(source) = self.source.as_ref() else {
+            return Command::None;
+        };
+        if !source.is_verified || source.files.is_empty() {
+            return self.handle_paragraph_scroll_key(key);
+        }
+        match self.source_focus {
+            SourceFocus::Files => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    let sel = self.file_list_state.selected().unwrap_or(0);
+                    if sel == 0 {
+                        self.focus_layer = DetailFocusLayer::Subtabs;
+                    } else {
+                        self.file_delta(-1);
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => self.file_delta(1),
+                KeyCode::Right | KeyCode::Enter => {
+                    self.source_focus = SourceFocus::Viewer;
+                }
+                _ => {}
+            },
+            SourceFocus::Viewer => match key.code {
+                KeyCode::Left => {
+                    self.source_focus = SourceFocus::Files;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.contract_scroll.get().offset() == 0 {
+                        self.source_focus = SourceFocus::Files;
+                    } else {
+                        self.with_contract_scroll(|s| {
+                            s.scroll_by(-1);
+                        });
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.with_contract_scroll(|s| {
+                        s.scroll_by(1);
+                    });
+                }
+                KeyCode::PageUp => {
+                    self.with_contract_scroll(|s| {
+                        s.page_up();
+                    });
+                }
+                KeyCode::PageDown => {
+                    self.with_contract_scroll(|s| {
+                        s.page_down();
+                    });
+                }
+                KeyCode::Home => {
+                    self.with_contract_scroll(|s| {
+                        s.home();
+                    });
+                }
+                KeyCode::End => {
+                    self.with_contract_scroll(|s| {
+                        s.end();
+                    });
+                }
+                _ => {}
+            },
         }
         Command::None
     }
@@ -1970,20 +2156,31 @@ impl AddressDetailScreen {
         match self.read_focus {
             ReadFocus::FunctionList => self.handle_read_list_key(key),
             ReadFocus::Args => self.handle_read_args_key(key),
+            ReadFocus::Result => self.handle_read_result_key(key),
         }
     }
 
     fn handle_read_list_key(&mut self, key: KeyEvent) -> Command {
+        if self.functions.is_empty() {
+            return Command::None;
+        }
+        let current = self.function_list_state.selected().unwrap_or(0);
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.select_function_delta(-1),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if current == 0 {
+                    self.focus_layer = DetailFocusLayer::Subtabs;
+                } else {
+                    self.select_function_delta(-1);
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => self.select_function_delta(1),
             KeyCode::PageUp => self.select_function_delta(-10),
             KeyCode::PageDown => self.select_function_delta(10),
-            KeyCode::Home if !self.functions.is_empty() => {
+            KeyCode::Home => {
                 self.function_list_state.select(Some(0));
                 self.reset_args_for_current_fn();
             }
-            KeyCode::End if !self.functions.is_empty() => {
+            KeyCode::End => {
                 let last = self.functions.len() - 1;
                 self.function_list_state.select(Some(last));
                 self.reset_args_for_current_fn();
@@ -2004,12 +2201,26 @@ impl AddressDetailScreen {
     }
 
     fn handle_read_args_key(&mut self, key: KeyEvent) -> Command {
+        let n_args = self.arg_buffers.len();
         match key.code {
-            KeyCode::Up if self.arg_cursor > 0 => {
-                self.arg_cursor -= 1;
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.arg_cursor > 0 {
+                    self.arg_cursor -= 1;
+                } else {
+                    self.read_focus = ReadFocus::FunctionList;
+                }
             }
-            KeyCode::Down if self.arg_cursor + 1 < self.arg_buffers.len() => {
-                self.arg_cursor += 1;
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.arg_cursor + 1 < n_args {
+                    self.arg_cursor += 1;
+                } else {
+                    self.read_focus = ReadFocus::Result;
+                    self.with_read_result_scroll(|s| s.reset());
+                }
+            }
+            KeyCode::Tab => {
+                self.read_focus = ReadFocus::Result;
+                self.with_read_result_scroll(|s| s.reset());
             }
             KeyCode::Left => {
                 self.read_focus = ReadFocus::FunctionList;
@@ -2026,6 +2237,58 @@ impl AddressDetailScreen {
             }
             KeyCode::Enter => {
                 self.execute_current();
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_read_result_key(&mut self, key: KeyEvent) -> Command {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.read_result_scroll.get().offset() > 0 {
+                    self.with_read_result_scroll(|s| {
+                        s.scroll_by(-1);
+                    });
+                } else if self.arg_buffers.is_empty() {
+                    self.read_focus = ReadFocus::FunctionList;
+                } else {
+                    self.read_focus = ReadFocus::Args;
+                    self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.with_read_result_scroll(|s| {
+                    s.scroll_by(1);
+                });
+            }
+            KeyCode::PageUp => {
+                self.with_read_result_scroll(|s| {
+                    s.page_up();
+                });
+            }
+            KeyCode::PageDown => {
+                self.with_read_result_scroll(|s| {
+                    s.page_down();
+                });
+            }
+            KeyCode::Home => {
+                self.with_read_result_scroll(|s| {
+                    s.home();
+                });
+            }
+            KeyCode::End => {
+                self.with_read_result_scroll(|s| {
+                    s.end();
+                });
+            }
+            KeyCode::Left => {
+                self.read_focus = ReadFocus::Args;
+                if !self.arg_buffers.is_empty() {
+                    self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                } else {
+                    self.read_focus = ReadFocus::FunctionList;
+                }
             }
             _ => {}
         }
@@ -2069,24 +2332,75 @@ impl AddressDetailScreen {
     }
 
     fn handle_storage_key(&mut self, key: KeyEvent) -> Command {
-        match key.code {
-            KeyCode::Backspace => {
-                self.slot_buffer.pop();
-            }
-            KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
-                self.slot_buffer.push(c);
-            }
-            KeyCode::Enter => match parse_slot(&self.slot_buffer) {
-                Ok(slot) => {
-                    self.storage_slot_requested = Some(slot);
-                    self.storage_result = None;
-                    let _ = self.feed.storage_tx.send(StorageRequest { slot });
+        match self.storage_focus {
+            StorageFocus::Slot => match key.code {
+                KeyCode::Up => {
+                    self.focus_layer = DetailFocusLayer::Subtabs;
                 }
-                Err(msg) => {
-                    self.storage_result = Some(Err(msg));
+                KeyCode::Down | KeyCode::Tab | KeyCode::Right => {
+                    self.storage_focus = StorageFocus::Value;
+                    self.with_storage_value_scroll(|s| s.reset());
                 }
+                KeyCode::Backspace => {
+                    self.slot_buffer.pop();
+                }
+                KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
+                    self.slot_buffer.push(c);
+                }
+                KeyCode::Enter => match parse_slot(&self.slot_buffer) {
+                    Ok(slot) => {
+                        self.storage_slot_requested = Some(slot);
+                        self.storage_result = None;
+                        let _ = self.feed.storage_tx.send(StorageRequest { slot });
+                        self.storage_focus = StorageFocus::Value;
+                        self.with_storage_value_scroll(|s| s.reset());
+                    }
+                    Err(msg) => {
+                        self.storage_result = Some(Err(msg));
+                    }
+                },
+                _ => {}
             },
-            _ => {}
+            StorageFocus::Value => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.storage_value_scroll.get().offset() == 0 {
+                        self.storage_focus = StorageFocus::Slot;
+                    } else {
+                        self.with_storage_value_scroll(|s| {
+                            s.scroll_by(-1);
+                        });
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.with_storage_value_scroll(|s| {
+                        s.scroll_by(1);
+                    });
+                }
+                KeyCode::PageUp => {
+                    self.with_storage_value_scroll(|s| {
+                        s.page_up();
+                    });
+                }
+                KeyCode::PageDown => {
+                    self.with_storage_value_scroll(|s| {
+                        s.page_down();
+                    });
+                }
+                KeyCode::Home => {
+                    self.with_storage_value_scroll(|s| {
+                        s.home();
+                    });
+                }
+                KeyCode::End => {
+                    self.with_storage_value_scroll(|s| {
+                        s.end();
+                    });
+                }
+                KeyCode::Left => {
+                    self.storage_focus = StorageFocus::Slot;
+                }
+                _ => {}
+            },
         }
         Command::None
     }
@@ -2229,7 +2543,6 @@ impl AddressDetailScreen {
 
 impl AddressDetailScreen {
     fn render_token_overview(&self, frame: &mut Frame<'_>, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title("Overview");
         let body = match self.token_probe {
             TokenProbeState::IsToken(ref ov) if ov.is_incomplete() => {
                 render_incomplete_body(ov, self.address)
@@ -2267,8 +2580,21 @@ Market cap    {mcap}\n\
             }
             _ => "Loading...".to_string(),
         };
+        let content_lines = body.lines().count() as u16;
+        let viewport = area.height.saturating_sub(2);
+        let cap = content_lines.saturating_sub(viewport);
+        self.scroll_cap.set(cap);
+        let offset = self.scroll.min(cap);
         frame.render_widget(
-            Paragraph::new(body).wrap(Wrap { trim: false }).block(block),
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Overview"),
+                ),
             area,
         );
     }
@@ -2276,6 +2602,7 @@ Market cap    {mcap}\n\
     fn render_token_transfers(&self, frame: &mut Frame<'_>, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(self.body_outline())
             .title("Transfers (ERC-20)");
         match self.token_transfers.as_ref() {
             None => frame.render_widget(Paragraph::new("Loading transfers...").block(block), area),
@@ -2308,7 +2635,10 @@ Market cap    {mcap}\n\
 
     fn render_token_chart(&self, frame: &mut Frame<'_>, area: Rect) {
         let title = format!("Price chart ({})", self.active_token_window.label());
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(self.body_outline())
+            .title(title);
         let series = match self.token_series.get(&self.active_token_window) {
             None => {
                 frame.render_widget(
@@ -2398,7 +2728,12 @@ impl AddressDetailScreen {
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(Block::default().borders(Borders::ALL).title("Overview")),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Overview"),
+                ),
             area,
         );
     }
@@ -2410,7 +2745,12 @@ impl AddressDetailScreen {
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(Block::default().borders(Borders::ALL).title(title)),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title(title),
+                ),
             area,
         );
     }
@@ -2418,8 +2758,12 @@ impl AddressDetailScreen {
     fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(source) = self.source.as_ref() else {
             frame.render_widget(
-                Paragraph::new("Loading source...")
-                    .block(Block::default().borders(Borders::ALL).title("Source")),
+                Paragraph::new("Loading source...").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Source"),
+                ),
                 area,
             );
             return;
@@ -2432,7 +2776,12 @@ Open the ABI tab for a raw ABI read (empty when unverified) or come back\n\
 once a decompiler integration lands (see plan/7 section 13).",
                 )
                 .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title("Source")),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Source"),
+                ),
                 area,
             );
             return;
@@ -2441,6 +2790,9 @@ once a decompiler integration lands (see plan/7 section 13).",
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
             .split(area);
+        let files_border = self.split_pane_border(matches!(self.source_focus, SourceFocus::Files));
+        let viewer_border =
+            self.split_pane_border(matches!(self.source_focus, SourceFocus::Viewer));
         let items: Vec<ListItem> = source
             .files
             .iter()
@@ -2449,7 +2801,12 @@ once a decompiler integration lands (see plan/7 section 13).",
         let mut state = self.file_list_state;
         frame.render_stateful_widget(
             List::new(items)
-                .block(Block::default().borders(Borders::ALL).title("Files"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(files_border)
+                        .title("Files"),
+                )
                 .highlight_style(
                     Style::default()
                         .add_modifier(Modifier::BOLD)
@@ -2477,7 +2834,12 @@ once a decompiler integration lands (see plan/7 section 13).",
             paragraph
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(Block::default().borders(Borders::ALL).title(title)),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(viewer_border)
+                        .title(title),
+                ),
             columns[1],
         );
     }
@@ -2485,8 +2847,12 @@ once a decompiler integration lands (see plan/7 section 13).",
     fn render_read_tab(&self, frame: &mut Frame<'_>, area: Rect) {
         if self.source.is_none() {
             frame.render_widget(
-                Paragraph::new("Loading ABI...")
-                    .block(Block::default().borders(Borders::ALL).title("Read")),
+                Paragraph::new("Loading ABI...").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Read"),
+                ),
                 area,
             );
             return;
@@ -2498,7 +2864,12 @@ once a decompiler integration lands (see plan/7 section 13).",
 Contract may be unverified or expose only events / constructors.",
                 )
                 .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title("Read")),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Read"),
+                ),
                 area,
             );
             return;
@@ -2507,6 +2878,11 @@ Contract may be unverified or expose only events / constructors.",
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(area);
+        let list_border =
+            self.split_pane_border(matches!(self.read_focus, ReadFocus::FunctionList));
+        let sig_border = self.split_pane_border(false);
+        let args_border = self.split_pane_border(matches!(self.read_focus, ReadFocus::Args));
+        let result_border = self.split_pane_border(matches!(self.read_focus, ReadFocus::Result));
         let items: Vec<ListItem> = self
             .functions
             .iter()
@@ -2518,11 +2894,16 @@ Contract may be unverified or expose only events / constructors.",
         let mut state = self.function_list_state;
         let list_title = match self.read_focus {
             ReadFocus::FunctionList => "Functions (focused)",
-            ReadFocus::Args => "Functions",
+            ReadFocus::Args | ReadFocus::Result => "Functions",
         };
         frame.render_stateful_widget(
             List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(list_title))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(list_border)
+                        .title(list_title),
+                )
                 .highlight_style(
                     Style::default()
                         .add_modifier(Modifier::BOLD)
@@ -2562,12 +2943,17 @@ Contract may be unverified or expose only events / constructors.",
             None => "(no function selected)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(meta_text)
-                .block(Block::default().borders(Borders::ALL).title("Signature")),
+            Paragraph::new(meta_text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(sig_border)
+                    .title("Signature"),
+            ),
             detail_chunks[0],
         );
         let args_title = match self.read_focus {
             ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
+            ReadFocus::Result => "Arguments",
             ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
         };
         let args_body = match function {
@@ -2600,7 +2986,12 @@ Contract may be unverified or expose only events / constructors.",
         frame.render_widget(
             Paragraph::new(args_body)
                 .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title(args_title)),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(args_border)
+                        .title(args_title),
+                ),
             detail_chunks[1],
         );
         let result_body = match (
@@ -2625,10 +3016,17 @@ Contract may be unverified or expose only events / constructors.",
             }
             _ => "(press Enter on the arguments pane to execute)".to_string(),
         };
+        let res_offset = self.bound_read_result_for(&result_body, detail_chunks[2]);
         frame.render_widget(
             Paragraph::new(result_body)
                 .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title("Result")),
+                .scroll((res_offset, 0))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(result_border)
+                        .title("Result"),
+                ),
             detail_chunks[2],
         );
     }
@@ -2679,7 +3077,12 @@ Contract may be unverified or expose only events / constructors.",
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
                 .scroll((offset, 0))
-                .block(Block::default().borders(Borders::ALL).title("Events")),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Events"),
+                ),
             area,
         );
     }
@@ -2693,8 +3096,16 @@ Contract may be unverified or expose only events / constructors.",
             "Slot (decimal or 0x-hex): {}\n[Enter] to read, [Backspace] to edit",
             self.slot_buffer,
         );
+        let slot_border = self.split_pane_border(matches!(self.storage_focus, StorageFocus::Slot));
+        let value_border =
+            self.split_pane_border(matches!(self.storage_focus, StorageFocus::Value));
         frame.render_widget(
-            Paragraph::new(prompt).block(Block::default().borders(Borders::ALL).title("Slot")),
+            Paragraph::new(prompt).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(slot_border)
+                    .title("Slot"),
+            ),
             chunks[0],
         );
         let body = match (self.storage_slot_requested, self.storage_result.as_ref()) {
@@ -2705,10 +3116,17 @@ Contract may be unverified or expose only events / constructors.",
             (None, Some(Err(msg))) => format!("ERROR: {msg}"),
             (None, Some(Ok(_))) => unreachable!(),
         };
+        let v_offset = self.bound_storage_value_for(&body, chunks[1]);
         frame.render_widget(
             Paragraph::new(body)
                 .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title("Value")),
+                .scroll((v_offset, 0))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(value_border)
+                        .title("Value"),
+                ),
             chunks[1],
         );
     }

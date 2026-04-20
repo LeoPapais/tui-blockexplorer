@@ -174,16 +174,20 @@ impl BlockDetailScreen {
     }
 
     /// Navigable fields exposed on the Overview tab. Order matches
-    /// the on-screen reading order: number, hash, parent hash, miner.
+    /// the on-screen reading order in [`overview_body`] (hash, parent,
+    /// timestamp, miner, optional signer).
     #[must_use]
     pub fn navigable_fields(&self) -> Vec<FieldEntry> {
         let Some(b) = self.current.as_ref() else {
             return Vec::new();
         };
         let mut out = vec![
-            FieldEntry::new("block_number", NavigableValue::BlockNumber(b.number)),
             FieldEntry::new("block_hash", NavigableValue::BlockHash(b.hash)),
             FieldEntry::new("parent_hash", NavigableValue::BlockHash(b.parent_hash)),
+            FieldEntry::new(
+                "timestamp",
+                NavigableValue::Plain(b.timestamp.seconds().to_string()),
+            ),
             FieldEntry::new("miner", NavigableValue::Address(b.miner)),
         ];
         if let Some(signer) = b.extra_signer {
@@ -502,6 +506,14 @@ impl Screen for BlockDetailScreen {
                     return Command::None;
                 }
                 KeyCode::Down => {
+                    self.cursor.move_in(fields.len(), CursorDir::Down);
+                    return Command::None;
+                }
+                KeyCode::Char('k') => {
+                    self.cursor.move_in(fields.len(), CursorDir::Up);
+                    return Command::None;
+                }
+                KeyCode::Char('j') => {
                     self.cursor.move_in(fields.len(), CursorDir::Down);
                     return Command::None;
                 }

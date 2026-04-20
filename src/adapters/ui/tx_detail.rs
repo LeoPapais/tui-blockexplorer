@@ -53,6 +53,14 @@ use crate::{
     },
 };
 
+/// Nested keyboard focus within the transaction Logs tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxLogsPane {
+    List,
+    Decoded,
+    Raw,
+}
+
 pub struct TxFeed {
     pub input_tx: UnboundedSender<TxHash>,
     pub updates_rx: UnboundedReceiver<TxView>,
@@ -137,6 +145,7 @@ impl TxTab {
 enum LogsFocus {
     List,
     Detail,
+    Raw,
 }
 
 /// A selectable row on the Overview tab. Holds a humanized display
@@ -186,6 +195,8 @@ pub struct TxDetailScreen {
     /// through `&self` and `handle_key` can then clamp the offset
     /// against up-to-date dimensions.
     scroll: Cell<ScrollState>,
+    /// Scroll for the Raw log pane on the Logs tab.
+    logs_raw_scroll: Cell<ScrollState>,
     /// Last value produced by the `y` "copy" binding. The real
     /// runtime wires a clipboard adapter on top; tests inspect the
     /// field directly.
@@ -218,6 +229,7 @@ impl TxDetailScreen {
             raw_row: 0,
             logs_focus: LogsFocus::List,
             scroll: Cell::new(ScrollState::new()),
+            logs_raw_scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
             resimulate_count: 0,
             cursor_services: None,
@@ -296,6 +308,20 @@ impl TxDetailScreen {
         self.last_copied_value.clone()
     }
 
+    /// Which nested pane of the Logs tab owns focus (`None` when the
+    /// active tab is not Logs).
+    #[must_use]
+    pub fn logs_tab_pane(&self) -> Option<TxLogsPane> {
+        if self.active_tab != TxTab::Logs {
+            return None;
+        }
+        Some(match self.logs_focus {
+            LogsFocus::List => TxLogsPane::List,
+            LogsFocus::Detail => TxLogsPane::Decoded,
+            LogsFocus::Raw => TxLogsPane::Raw,
+        })
+    }
+
     /// Number of successful `s` re-simulate keystrokes handled since
     /// construction. Mined txs ignore `s`; pending txs increment the
     /// counter and re-send the tx hash on the feed.
@@ -316,7 +342,14 @@ impl TxDetailScreen {
             self.raw_row = 0;
             self.logs_focus = LogsFocus::List;
             self.with_scroll(|s| s.reset());
+            self.with_logs_raw_scroll(|s| s.reset());
         }
+    }
+
+    fn with_logs_raw_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.logs_raw_scroll.get();
+        f(&mut s);
+        self.logs_raw_scroll.set(s);
     }
 
     /// Helper to mutate the inner `ScrollState` through the `Cell`.
@@ -397,9 +430,18 @@ impl Screen for TxDetailScreen {
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
             KeyCode::Esc => {
-                if self.active_tab == TxTab::Logs && self.logs_focus == LogsFocus::Detail {
-                    self.logs_focus = LogsFocus::List;
-                    return Command::None;
+                if self.active_tab == TxTab::Logs {
+                    match self.logs_focus {
+                        LogsFocus::Raw => {
+                            self.logs_focus = LogsFocus::Detail;
+                            return Command::None;
+                        }
+                        LogsFocus::Detail => {
+                            self.logs_focus = LogsFocus::List;
+                            return Command::None;
+                        }
+                        LogsFocus::List => {}
+                    }
                 }
                 return Command::Pop;
             }
@@ -411,8 +453,25 @@ impl Screen for TxDetailScreen {
         // `Shift` modifier + `Tab`; handle both.
         let is_back_tab = key.code == KeyCode::BackTab
             || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
+        if is_back_tab
+            && self.focus_layer == DetailFocusLayer::Content
+            && self.active_tab == TxTab::Logs
+            && self.logs_focus == LogsFocus::Raw
+        {
+            self.logs_focus = LogsFocus::Detail;
+            return Command::None;
+        }
         if is_back_tab {
             self.switch_tab(self.active_tab.previous());
+            return Command::None;
+        }
+        if key.code == KeyCode::Tab
+            && self.focus_layer == DetailFocusLayer::Content
+            && self.active_tab == TxTab::Logs
+            && self.logs_focus == LogsFocus::Detail
+        {
+            self.logs_focus = LogsFocus::Raw;
+            self.with_logs_raw_scroll(|s| s.reset());
             return Command::None;
         }
         if key.code == KeyCode::Tab {
@@ -517,6 +576,7 @@ impl TxDetailScreen {
         if target == TxTab::Logs {
             self.logs_focus = LogsFocus::List;
             self.logs_field = 0;
+            self.with_logs_raw_scroll(|s| s.reset());
         }
         if target == TxTab::Raw {
             self.raw_row = 0;
@@ -603,10 +663,61 @@ impl TxDetailScreen {
                         self.logs_field = (self.logs_field + fields.len() - 1) % fields.len();
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        self.logs_field = (self.logs_field + 1) % fields.len();
+                        if self.logs_field + 1 < fields.len() {
+                            self.logs_field += 1;
+                        } else {
+                            self.logs_focus = LogsFocus::Raw;
+                            self.with_logs_raw_scroll(|s| s.reset());
+                        }
                     }
                     KeyCode::Left | KeyCode::Backspace => {
                         self.logs_focus = LogsFocus::List;
+                    }
+                    _ => {}
+                }
+            }
+            LogsFocus::Raw => {
+                if log_count == 0 {
+                    self.logs_focus = LogsFocus::List;
+                    return;
+                }
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if self.logs_raw_scroll.get().offset() == 0 {
+                            self.logs_focus = LogsFocus::Detail;
+                        } else {
+                            self.with_logs_raw_scroll(|s| {
+                                s.scroll_by(-1);
+                            });
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.with_logs_raw_scroll(|s| {
+                            s.scroll_by(1);
+                        });
+                    }
+                    KeyCode::PageUp => {
+                        self.with_logs_raw_scroll(|s| {
+                            s.page_up();
+                        });
+                    }
+                    KeyCode::PageDown => {
+                        self.with_logs_raw_scroll(|s| {
+                            s.page_down();
+                        });
+                    }
+                    KeyCode::Home => {
+                        self.with_logs_raw_scroll(|s| {
+                            s.home();
+                        });
+                    }
+                    KeyCode::End => {
+                        self.with_logs_raw_scroll(|s| {
+                            s.end();
+                        });
+                    }
+                    KeyCode::Left | KeyCode::Backspace => {
+                        self.logs_focus = LogsFocus::Detail;
                     }
                     _ => {}
                 }
@@ -732,6 +843,7 @@ impl TxDetailScreen {
                 match self.logs_focus {
                     LogsFocus::Detail => fields.get(self.logs_field).map(|f| f.copy_value.clone()),
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
+                    LogsFocus::Raw => Some(log_raw_dump(log)),
                 }
             }),
             TxTab::Raw => self
@@ -759,6 +871,15 @@ impl TxDetailScreen {
     fn body_block_border(&self) -> Style {
         let palette = PalettePreset::DarkDefault.palette();
         detail_body_border_style(self.focus_layer, &palette)
+    }
+
+    fn logs_pane_border(&self, pane_focused: bool) -> Style {
+        let palette = PalettePreset::DarkDefault.palette();
+        if self.focus_layer == DetailFocusLayer::Content && pane_focused {
+            detail_body_border_style(DetailFocusLayer::Content, &palette)
+        } else {
+            Style::default().fg(palette.foreground)
+        }
     }
 
     fn render_body(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -819,13 +940,13 @@ impl TxDetailScreen {
     }
 
     fn render_logs(&self, frame: &mut Frame<'_>, area: Rect, view: &TxView) {
-        let bb = self.body_block_border();
+        let list_bb = self.logs_pane_border(matches!(self.logs_focus, LogsFocus::List));
         if view.decoded_logs.is_empty() {
             frame.render_widget(
                 Paragraph::new("No logs emitted.").block(
                     RatBlock::default()
                         .borders(Borders::ALL)
-                        .border_style(bb)
+                        .border_style(list_bb)
                         .title("Logs"),
                 ),
                 area,
@@ -843,14 +964,12 @@ impl TxDetailScreen {
             .enumerate()
             .map(|(idx, log)| ListItem::new(log_summary(idx, log)))
             .collect();
-        let list_focused = matches!(self.logs_focus, LogsFocus::List);
-        let list_title = if list_focused { "Logs *" } else { "Logs" };
         let list = List::new(items)
             .block(
                 RatBlock::default()
                     .borders(Borders::ALL)
-                    .border_style(bb)
-                    .title(list_title),
+                    .border_style(list_bb)
+                    .title("Logs"),
             )
             .highlight_style(
                 Style::default()
@@ -865,7 +984,8 @@ impl TxDetailScreen {
 
         let log = &view.decoded_logs[self.logs_selected];
         let fields = self.log_fields(log);
-        let focused = matches!(self.logs_focus, LogsFocus::Detail);
+        let decoded_bb = self.logs_pane_border(matches!(self.logs_focus, LogsFocus::Detail));
+        let raw_bb = self.logs_pane_border(matches!(self.logs_focus, LogsFocus::Raw));
         let detail_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -874,29 +994,37 @@ impl TxDetailScreen {
         let decoded_lines: Vec<Line<'static>> = fields
             .iter()
             .enumerate()
-            .map(|(idx, field)| log_field_line(field, focused && idx == self.logs_field))
+            .map(|(idx, field)| log_field_line(field, {
+                matches!(self.logs_focus, LogsFocus::Detail) && idx == self.logs_field
+            }))
             .collect();
-        let title = if focused { "Decoded *" } else { "Decoded" };
         frame.render_widget(
             Paragraph::new(decoded_lines)
                 .wrap(Wrap { trim: false })
                 .block(
                     RatBlock::default()
                         .borders(Borders::ALL)
-                        .border_style(bb)
-                        .title(title),
+                        .border_style(decoded_bb)
+                        .title("Decoded"),
                 ),
             detail_split[0],
         );
 
         let raw_text = log_raw_dump(log);
+        let raw_lines = raw_text.lines().count() as u16;
+        let raw_viewport = detail_split[1].height.saturating_sub(2);
+        self.with_logs_raw_scroll(|s| s.set_dimensions(raw_lines, raw_viewport));
+        let raw_offset = self.logs_raw_scroll.get().offset();
         frame.render_widget(
-            Paragraph::new(raw_text).wrap(Wrap { trim: false }).block(
-                RatBlock::default()
-                    .borders(Borders::ALL)
-                    .border_style(bb)
-                    .title("Raw log"),
-            ),
+            Paragraph::new(raw_text)
+                .wrap(Wrap { trim: false })
+                .scroll((raw_offset, 0))
+                .block(
+                    RatBlock::default()
+                        .borders(Borders::ALL)
+                        .border_style(raw_bb)
+                        .title("Raw log"),
+                ),
             detail_split[1],
         );
     }

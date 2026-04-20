@@ -49,4 +49,4 @@ pub use search::{
 };
 pub use settings::{AppConfigSnapshot, ProviderHealthSnapshot, SettingsScreen};
 pub use theme::{Palette, PalettePreset};
-pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxTab, tx_feed};
+pub use tx_detail::{TxDetailScreen, TxFeed, TxFeedSender, TxLogsPane, TxTab, tx_feed};

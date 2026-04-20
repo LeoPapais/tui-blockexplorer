@@ -75,7 +75,12 @@ fn overview_exposes_block_hash_parent_hash_and_miner() {
     let labels: Vec<&str> = fields.iter().map(|f| f.label).collect();
     assert_eq!(
         labels,
-        vec!["block_number", "block_hash", "parent_hash", "miner"]
+        vec![
+            "block_hash",
+            "parent_hash",
+            "timestamp",
+            "miner",
+        ]
     );
 }
 
@@ -88,11 +93,10 @@ fn cursor_enter_on_parent_hash_opens_block_detail_by_hash() {
     assert_eq!(screen.active_tab(), BlockTab::Overview);
     screen.handle_key(key(KeyCode::Right));
     screen.handle_key(key(KeyCode::Right));
-    screen.handle_key(key(KeyCode::Right));
     assert_eq!(
         screen.cursor().active(),
-        Some(2),
-        "cursor should land on parent_hash after three Right presses",
+        Some(1),
+        "cursor should land on parent_hash after two Right presses",
     );
     let cmd = screen.handle_key(key(KeyCode::Enter));
     assert_eq!(cmd, Command::None);
@@ -107,8 +111,7 @@ fn cursor_y_copies_hash_under_the_cursor() {
     let block_hash = block.hash;
     let (mut screen, clipboard, _) = wire_services(block);
     screen.handle_key(key(KeyCode::Right));
-    screen.handle_key(key(KeyCode::Right));
-    assert_eq!(screen.cursor().active(), Some(1));
+    assert_eq!(screen.cursor().active(), Some(0));
     screen.handle_key(key(KeyCode::Char('y')));
     assert_eq!(
         clipboard.last_copied().as_deref(),

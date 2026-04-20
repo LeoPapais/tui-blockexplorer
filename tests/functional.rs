@@ -301,6 +301,9 @@ mod block_detail_cursor;
 #[path = "functional/tx_detail_cursor.rs"]
 mod tx_detail_cursor;
 
+#[path = "functional/tx_logs_focus.rs"]
+mod tx_logs_focus;
+
 #[path = "functional/address_detail_cursor.rs"]
 mod address_detail_cursor;
 

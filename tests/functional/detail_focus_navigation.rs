@@ -82,6 +82,22 @@ fn address_transactions_up_at_top_focuses_main_tabs() {
 }
 
 #[test]
+fn block_detail_overview_j_and_k_move_field_cursor() {
+    let (feed, _sender) = block_feed();
+    let open_tx = Box::new(|_h| -> Box<dyn Screen> {
+        panic!("open_tx should not run");
+    });
+    let mut screen =
+        BlockDetailScreen::with_block(Chain::Ethereum, sample_block_with_txs(), feed, open_tx);
+    screen.handle_key(key(KeyCode::Right));
+    assert_eq!(screen.cursor().active(), Some(0));
+    screen.handle_key(key(KeyCode::Char('j')));
+    assert_eq!(screen.cursor().active(), Some(1));
+    screen.handle_key(key(KeyCode::Char('k')));
+    assert_eq!(screen.cursor().active(), Some(0));
+}
+
+#[test]
 fn tx_detail_down_from_main_tabs_returns_to_content() {
     let tx = Transaction {
         chain: Chain::Ethereum,
