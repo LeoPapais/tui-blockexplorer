@@ -1,5 +1,8 @@
 # 6 — Address Detail
 
+> Status: merged into [plan/16-unified-address-detail.md](16-unified-address-detail.md) (April 2026).
+> Kept here as history for the feeds and ports that powered each tab.
+
 Status: **done** — MVP Overview + Transactions + Tokens tabs are
 live, the Contract tab appears dynamically when the loaded address
 has bytecode, and the April-2026 follow-up (plan/15-backlog.md

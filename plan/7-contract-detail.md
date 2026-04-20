@@ -1,5 +1,8 @@
 # 7 — Contract Detail
 
+> Status: merged into [plan/16-unified-address-detail.md](16-unified-address-detail.md) (April 2026).
+> Kept here as history for the feeds and ports that powered each tab.
+
 Status: **done** — MVP Overview + EIP-1967 proxy detection shipped
 earlier; Source, ABI, Read, Events and Storage tabs landed next; and
 section 12.5 wraps up the April-2026 follow-ups (UUPS + Transparent

@@ -1,5 +1,8 @@
 # 8 — Token Detail
 
+> Status: merged into [plan/16-unified-address-detail.md](16-unified-address-detail.md) (April 2026).
+> Kept here as history for the feeds and ports that powered each tab.
+
 Status: **in progress** — Overview tab (metadata + totalSupply) is
 live and covered by BDD. Slice 12.4 extends it with:
 
