@@ -190,6 +190,9 @@ mod address_detail_screen_keys;
 #[path = "functional/address_detail_tabs.rs"]
 mod address_detail_tabs;
 
+#[path = "functional/address_detail_contract_impl_tab.rs"]
+mod address_detail_contract_impl_tab;
+
 #[path = "functional/address_detail_contract_subtabs.rs"]
 mod address_detail_contract_subtabs;
 

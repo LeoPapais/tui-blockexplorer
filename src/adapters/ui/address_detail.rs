@@ -63,11 +63,35 @@ use crate::{
 // On-demand requests (formerly lived in src/adapters/ui/contract_detail.rs)
 // ---------------------------------------------------------------------------
 
+/// Which ABI artifact was used to build calldata for a Read request.
+///
+/// The background feed always passes the **user-facing** address (the
+/// proxy/listener contract) as `to` for `eth_call`. When the active tab
+/// is **Contract (impl)**, calldata is derived from the implementation
+/// contract ABI while `to` remains the proxy — matching `delegatecall`
+/// semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCalldataSource {
+    /// ABI loaded for the proxy contract address (main Contract tab).
+    ProxyArtifact,
+    /// ABI loaded for the detected implementation (Contract impl tab).
+    ImplementationArtifact,
+}
+
 /// Single-request envelope for the Read sub-tab.
 #[derive(Debug, Clone)]
 pub struct ReadRequest {
     pub function: AbiFunction,
     pub args: Vec<AbiValue>,
+    pub calldata_source: ReadCalldataSource,
+}
+
+/// Async result for Read: routes to the correct tab state by calldata source.
+#[derive(Debug)]
+pub struct ReadDelivery {
+    pub calldata_source: ReadCalldataSource,
+    pub signature: String,
+    pub result: ReadResult,
 }
 
 /// Result of a single read invocation.
@@ -114,8 +138,12 @@ pub struct AddressFeed {
     // Contract gated.
     pub contract_overview_rx: UnboundedReceiver<ContractOverview>,
     pub source_rx: UnboundedReceiver<ContractSource>,
+    /// Implementation contract overview (only for proxy addresses).
+    pub contract_impl_overview_rx: UnboundedReceiver<ContractOverview>,
+    /// Source + ABI for [`ContractOverview::proxy`]'s implementation.
+    pub source_impl_rx: UnboundedReceiver<ContractSource>,
     pub read_tx: UnboundedSender<ReadRequest>,
-    pub read_rx: UnboundedReceiver<ReadResult>,
+    pub read_rx: UnboundedReceiver<ReadDelivery>,
     pub events_tx: UnboundedSender<EventsRequest>,
     pub events_rx: UnboundedReceiver<EventsResult>,
     pub storage_tx: UnboundedSender<StorageRequest>,
@@ -134,8 +162,10 @@ pub struct AddressFeedSender {
     pub token_transfers_tx: UnboundedSender<TransferPage>,
     pub contract_overview_tx: UnboundedSender<ContractOverview>,
     pub source_tx: UnboundedSender<ContractSource>,
+    pub contract_impl_overview_tx: UnboundedSender<ContractOverview>,
+    pub source_impl_tx: UnboundedSender<ContractSource>,
     pub read_rx: UnboundedReceiver<ReadRequest>,
-    pub read_tx: UnboundedSender<ReadResult>,
+    pub read_tx: UnboundedSender<ReadDelivery>,
     pub events_rx: UnboundedReceiver<EventsRequest>,
     pub events_tx: UnboundedSender<EventsResult>,
     pub storage_rx: UnboundedReceiver<StorageRequest>,
@@ -156,6 +186,8 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
     let (token_transfers_tx, token_transfers_rx) = unbounded_channel();
     let (contract_overview_tx, contract_overview_rx) = unbounded_channel();
     let (source_tx, source_rx) = unbounded_channel();
+    let (contract_impl_overview_tx, contract_impl_overview_rx) = unbounded_channel();
+    let (source_impl_tx, source_impl_rx) = unbounded_channel();
     let (read_req_tx, read_req_rx) = unbounded_channel();
     let (read_res_tx, read_res_rx) = unbounded_channel();
     let (events_req_tx, events_req_rx) = unbounded_channel();
@@ -175,6 +207,8 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
             token_transfers_rx,
             contract_overview_rx,
             source_rx,
+            contract_impl_overview_rx,
+            source_impl_rx,
             read_tx: read_req_tx,
             read_rx: read_res_rx,
             events_tx: events_req_tx,
@@ -193,6 +227,8 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
             token_transfers_tx,
             contract_overview_tx,
             source_tx,
+            contract_impl_overview_tx,
+            source_impl_tx,
             read_rx: read_req_rx,
             read_tx: read_res_tx,
             events_rx: events_req_rx,
@@ -228,6 +264,11 @@ pub enum AddressTab {
     Token,
     /// Visible only when the loaded overview reports `Contract`.
     Contract,
+    /// Visible when [`ContractOverview::proxy`] is present: same
+    /// sub-tabs as `Contract`, but source/ABI/overview default to the
+    /// implementation address. Read uses implementation ABI with
+    /// `eth_call` `to` = proxy (see [`ReadCalldataSource`]).
+    ContractImpl,
 }
 
 impl AddressTab {
@@ -238,6 +279,7 @@ impl AddressTab {
             AddressTab::Tokens => "Tokens",
             AddressTab::Token => "Token",
             AddressTab::Contract => "Contract",
+            AddressTab::ContractImpl => "Impl",
         }
     }
 }
@@ -384,25 +426,38 @@ pub struct AddressDetailScreen {
     active_token_window: PriceWindow,
     live_samples: usize,
 
-    // Contract-gated state.
+    // Contract-gated state (proxy / user-facing contract).
     contract_overview: Option<ContractOverview>,
     source: Option<ContractSource>,
     functions: Vec<AbiFunction>,
     function_list_state: ListState,
     file_list_state: ListState,
+    /// Implementation dossier when `contract_overview` reports a proxy.
+    contract_overview_impl: Option<ContractOverview>,
+    source_impl: Option<ContractSource>,
+    functions_impl: Vec<AbiFunction>,
+    function_list_state_impl: ListState,
+    file_list_state_impl: ListState,
     read_focus: ReadFocus,
+    read_focus_impl: ReadFocus,
     /// Scroll offset for the Read tab result pane (independent of
     /// [`AddressDetailScreen::contract_scroll`]).
     read_result_scroll: std::cell::Cell<ScrollState>,
+    read_result_scroll_impl: std::cell::Cell<ScrollState>,
     source_focus: SourceFocus,
+    source_focus_impl: SourceFocus,
     storage_focus: StorageFocus,
     storage_value_scroll: std::cell::Cell<ScrollState>,
     /// Selected line in the Storage value pane (copy + highlight).
     storage_value_line: usize,
     arg_buffers: Vec<String>,
     arg_cursor: usize,
+    arg_buffers_impl: Vec<String>,
+    arg_cursor_impl: usize,
     last_result: Option<Result<Vec<DecodedValue>, String>>,
     last_result_for: Option<String>,
+    last_result_impl: Option<Result<Vec<DecodedValue>, String>>,
+    last_result_for_impl: Option<String>,
     events: Option<Result<EventsPage, String>>,
     events_offset: u32,
     events_head: Option<BlockNumber>,
@@ -420,6 +475,7 @@ pub struct AddressDetailScreen {
     scroll: u16,
     scroll_cap: std::cell::Cell<u16>,
     contract_scroll: std::cell::Cell<ScrollState>,
+    impl_contract_scroll: std::cell::Cell<ScrollState>,
 
     tx_list_state: ListState,
     token_list_state: ListState,
@@ -498,6 +554,10 @@ impl AddressDetailScreen {
         function_list_state.select(Some(0));
         let mut file_list_state = ListState::default();
         file_list_state.select(Some(0));
+        let mut function_list_state_impl = ListState::default();
+        function_list_state_impl.select(Some(0));
+        let mut file_list_state_impl = ListState::default();
+        file_list_state_impl.select(Some(0));
         Self {
             chain,
             address,
@@ -515,16 +575,28 @@ impl AddressDetailScreen {
             functions: Vec::new(),
             function_list_state,
             file_list_state,
+            contract_overview_impl: None,
+            source_impl: None,
+            functions_impl: Vec::new(),
+            function_list_state_impl,
+            file_list_state_impl,
             read_focus: ReadFocus::FunctionList,
+            read_focus_impl: ReadFocus::FunctionList,
             read_result_scroll: std::cell::Cell::new(ScrollState::new()),
+            read_result_scroll_impl: std::cell::Cell::new(ScrollState::new()),
             source_focus: SourceFocus::Files,
+            source_focus_impl: SourceFocus::Files,
             storage_focus: StorageFocus::Slot,
             storage_value_scroll: std::cell::Cell::new(ScrollState::new()),
             storage_value_line: 0,
             arg_buffers: Vec::new(),
             arg_cursor: 0,
+            arg_buffers_impl: Vec::new(),
+            arg_cursor_impl: 0,
             last_result: None,
             last_result_for: None,
+            last_result_impl: None,
+            last_result_for_impl: None,
             events: None,
             events_offset: 0,
             events_head: None,
@@ -540,6 +612,7 @@ impl AddressDetailScreen {
             scroll: 0,
             scroll_cap: std::cell::Cell::new(0),
             contract_scroll: std::cell::Cell::new(ScrollState::new()),
+            impl_contract_scroll: std::cell::Cell::new(ScrollState::new()),
             tx_list_state,
             token_list_state,
             token_transfers_list_state,
@@ -624,6 +697,22 @@ impl AddressDetailScreen {
                 }
                 fields
             }
+            AddressTab::ContractImpl
+                if matches!(self.active_contract_sub, ContractSubTab::Overview) =>
+            {
+                let mut fields = Vec::new();
+                if let Some(ov) = self.contract_overview_impl.as_ref() {
+                    fields.push(FieldEntry::new(
+                        "address",
+                        NavigableValue::Address(ov.account.address),
+                    ));
+                }
+                fields.push(FieldEntry::new(
+                    "proxy",
+                    NavigableValue::Address(self.address),
+                ));
+                fields
+            }
             _ => Vec::new(),
         }
     }
@@ -641,8 +730,58 @@ impl AddressDetailScreen {
             && matches!(ov.kind, AddressKind::Contract)
         {
             tabs.push(AddressTab::Contract);
+            if self.contract_overview.as_ref().and_then(|c| c.proxy).is_some() {
+                tabs.push(AddressTab::ContractImpl);
+            }
         }
         tabs
+    }
+
+    #[must_use]
+    fn contract_main_is_impl(&self) -> bool {
+        matches!(self.active_tab_or_fallback(), AddressTab::ContractImpl)
+    }
+
+    #[must_use]
+    fn contract_strip_like_contract(&self) -> bool {
+        matches!(
+            self.active_tab_or_fallback(),
+            AddressTab::Contract | AddressTab::ContractImpl
+        )
+    }
+
+    #[must_use]
+    fn read_focus_active(&self) -> ReadFocus {
+        if self.contract_main_is_impl() {
+            self.read_focus_impl
+        } else {
+            self.read_focus
+        }
+    }
+
+    fn set_read_focus_active(&mut self, v: ReadFocus) {
+        if self.contract_main_is_impl() {
+            self.read_focus_impl = v;
+        } else {
+            self.read_focus = v;
+        }
+    }
+
+    #[must_use]
+    fn source_focus_active(&self) -> SourceFocus {
+        if self.contract_main_is_impl() {
+            self.source_focus_impl
+        } else {
+            self.source_focus
+        }
+    }
+
+    fn set_source_focus_active(&mut self, v: SourceFocus) {
+        if self.contract_main_is_impl() {
+            self.source_focus_impl = v;
+        } else {
+            self.source_focus = v;
+        }
     }
 
     fn active_tab_or_fallback(&self) -> AddressTab {
@@ -897,9 +1036,40 @@ impl AddressDetailScreen {
             self.clamp_file_selection();
             self.reset_args_for_current_fn();
         }
-        while let Ok(result) = self.feed.read_rx.try_recv() {
-            self.last_result = Some(result.map_err(|e| domain_error_message(&e)));
-            self.last_result_for = self.selected_function().map(|f| f.signature());
+        while let Ok(ov) = self.feed.contract_impl_overview_rx.try_recv() {
+            self.contract_overview_impl = Some(ov);
+        }
+        while let Ok(src) = self.feed.source_impl_rx.try_recv() {
+            self.functions_impl = parse_abi_functions(&src.abi);
+            self.functions_impl.sort_by(|a, b| a.name.cmp(&b.name));
+            self.source_impl = Some(src);
+            self.clamp_file_selection_impl();
+            if self.functions_impl.is_empty() {
+                self.function_list_state_impl.select(None);
+                self.arg_buffers_impl.clear();
+            } else {
+                self.function_list_state_impl.select(Some(0));
+                let arg_count = self.functions_impl[0].inputs.len();
+                self.arg_buffers_impl = vec![String::new(); arg_count];
+            }
+            self.arg_cursor_impl = 0;
+            self.last_result_impl = None;
+            self.last_result_for_impl = None;
+        }
+        while let Ok(delivery) = self.feed.read_rx.try_recv() {
+            let mapped = delivery
+                .result
+                .map_err(|e| domain_error_message(&e));
+            match delivery.calldata_source {
+                ReadCalldataSource::ProxyArtifact => {
+                    self.last_result = Some(mapped);
+                    self.last_result_for = Some(delivery.signature);
+                }
+                ReadCalldataSource::ImplementationArtifact => {
+                    self.last_result_impl = Some(mapped);
+                    self.last_result_for_impl = Some(delivery.signature);
+                }
+            }
         }
         while let Ok(result) = self.feed.events_rx.try_recv() {
             if let Ok(page) = result.as_ref() {
@@ -956,6 +1126,11 @@ impl AddressDetailScreen {
         clamp_selection(&mut self.file_list_state, len);
     }
 
+    fn clamp_file_selection_impl(&mut self) {
+        let len = self.source_impl.as_ref().map(|s| s.files.len()).unwrap_or(0);
+        clamp_selection(&mut self.file_list_state_impl, len);
+    }
+
     fn select_delta(&mut self, delta: i32) {
         let len = self.active_list_len();
         if len == 0 {
@@ -1004,9 +1179,10 @@ impl AddressDetailScreen {
         let csv = match self.active_tab_or_fallback() {
             AddressTab::Transactions => csv_for_transfers(self.transfers.as_ref()),
             AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
-            AddressTab::Overview | AddressTab::Token | AddressTab::Contract => {
-                csv_for_overview(self.current.as_ref())
-            }
+            AddressTab::Overview
+            | AddressTab::Token
+            | AddressTab::Contract
+            | AddressTab::ContractImpl => csv_for_overview(self.current.as_ref()),
         };
         // CSV is opaque text (no navigation target); wrap it in
         // `Plain` so the clipboard path mirrors every other copy.
@@ -1057,18 +1233,64 @@ impl AddressDetailScreen {
         self.reset_args_for_current_fn();
     }
 
+    #[doc(hidden)]
+    pub fn set_contract_overview_for_test(&mut self, overview: ContractOverview) {
+        self.contract_overview = Some(overview);
+    }
+
+    #[doc(hidden)]
+    pub fn set_contract_overview_impl_for_test(&mut self, overview: ContractOverview) {
+        self.contract_overview_impl = Some(overview);
+    }
+
+    #[doc(hidden)]
+    pub fn set_contract_source_impl_for_test(&mut self, source: ContractSource) {
+        self.functions_impl = parse_abi_functions(&source.abi);
+        self.functions_impl.sort_by(|a, b| a.name.cmp(&b.name));
+        self.source_impl = Some(source);
+        self.clamp_file_selection_impl();
+        if self.functions_impl.is_empty() {
+            self.function_list_state_impl.select(None);
+            self.arg_buffers_impl.clear();
+        } else {
+            self.function_list_state_impl.select(Some(0));
+            let arg_count = self.functions_impl[0].inputs.len();
+            self.arg_buffers_impl = vec![String::new(); arg_count];
+        }
+        self.arg_cursor_impl = 0;
+        self.last_result_impl = None;
+        self.last_result_for_impl = None;
+    }
+
     // ------------------------------------------------------------------
     // Contract Read helpers
     // ------------------------------------------------------------------
 
     fn selected_function(&self) -> Option<&AbiFunction> {
-        let idx = self.function_list_state.selected().unwrap_or(0);
-        self.functions.get(idx)
+        let idx = if self.contract_main_is_impl() {
+            self.function_list_state_impl.selected().unwrap_or(0)
+        } else {
+            self.function_list_state.selected().unwrap_or(0)
+        };
+        let fns = if self.contract_main_is_impl() {
+            &self.functions_impl
+        } else {
+            &self.functions
+        };
+        fns.get(idx)
     }
 
     fn selected_file(&self) -> Option<&SourceFile> {
-        let files = self.source.as_ref().map(|s| &s.files)?;
-        let idx = self.file_list_state.selected().unwrap_or(0);
+        let files = if self.contract_main_is_impl() {
+            self.source_impl.as_ref().map(|s| &s.files)?
+        } else {
+            self.source.as_ref().map(|s| &s.files)?
+        };
+        let idx = if self.contract_main_is_impl() {
+            self.file_list_state_impl.selected().unwrap_or(0)
+        } else {
+            self.file_list_state.selected().unwrap_or(0)
+        };
         files.get(idx)
     }
 
@@ -1077,19 +1299,39 @@ impl AddressDetailScreen {
             .selected_function()
             .map(|f| f.inputs.len())
             .unwrap_or(0);
-        self.arg_buffers = vec![String::new(); arg_count];
-        self.arg_cursor = 0;
-        self.last_result = None;
-        self.last_result_for = None;
+        if self.contract_main_is_impl() {
+            self.arg_buffers_impl = vec![String::new(); arg_count];
+            self.arg_cursor_impl = 0;
+            self.last_result_impl = None;
+            self.last_result_for_impl = None;
+        } else {
+            self.arg_buffers = vec![String::new(); arg_count];
+            self.arg_cursor = 0;
+            self.last_result = None;
+            self.last_result_for = None;
+        }
     }
 
     fn select_function_delta(&mut self, delta: i32) {
-        if self.functions.is_empty() {
+        let fns = if self.contract_main_is_impl() {
+            &self.functions_impl
+        } else {
+            &self.functions
+        };
+        if fns.is_empty() {
             return;
         }
-        let current = self.function_list_state.selected().unwrap_or(0) as i32;
-        let next = (current + delta).clamp(0, self.functions.len() as i32 - 1);
-        self.function_list_state.select(Some(next as usize));
+        let current = if self.contract_main_is_impl() {
+            self.function_list_state_impl.selected().unwrap_or(0) as i32
+        } else {
+            self.function_list_state.selected().unwrap_or(0) as i32
+        };
+        let next = (current + delta).clamp(0, fns.len() as i32 - 1);
+        if self.contract_main_is_impl() {
+            self.function_list_state_impl.select(Some(next as usize));
+        } else {
+            self.function_list_state.select(Some(next as usize));
+        }
         self.reset_args_for_current_fn();
     }
 
@@ -1097,15 +1339,20 @@ impl AddressDetailScreen {
         let function = self
             .selected_function()
             .ok_or_else(|| "no function selected".to_string())?;
-        if function.inputs.len() != self.arg_buffers.len() {
+        let buffers = if self.contract_main_is_impl() {
+            &self.arg_buffers_impl
+        } else {
+            &self.arg_buffers
+        };
+        if function.inputs.len() != buffers.len() {
             return Err(format!(
                 "arg buffer mismatch ({} vs {})",
                 function.inputs.len(),
-                self.arg_buffers.len()
+                buffers.len()
             ));
         }
         let mut values = Vec::with_capacity(function.inputs.len());
-        for (param, raw) in function.inputs.iter().zip(self.arg_buffers.iter()) {
+        for (param, raw) in function.inputs.iter().zip(buffers.iter()) {
             let raw = raw.trim();
             let value = match &param.kind {
                 AbiParamType::Address => Address::from_hex(raw)
@@ -1142,37 +1389,76 @@ impl AddressDetailScreen {
             return;
         };
         if !function.is_executable() {
-            self.last_result = Some(Err("function has unsupported ABI input types".to_string()));
-            self.last_result_for = Some(function.signature());
+            let err = Err("function has unsupported ABI input types".to_string());
+            let sig = function.signature();
+            if self.contract_main_is_impl() {
+                self.last_result_impl = Some(err);
+                self.last_result_for_impl = Some(sig);
+            } else {
+                self.last_result = Some(err);
+                self.last_result_for = Some(sig);
+            }
             return;
         }
+        let calldata_source = if self.contract_main_is_impl() {
+            ReadCalldataSource::ImplementationArtifact
+        } else {
+            ReadCalldataSource::ProxyArtifact
+        };
         match self.build_args() {
             Ok(args) => {
                 self.with_read_result_scroll(|s| s.reset());
-                let _ = self.feed.read_tx.send(ReadRequest { function, args });
+                let _ = self.feed.read_tx.send(ReadRequest {
+                    function,
+                    args,
+                    calldata_source,
+                });
             }
             Err(msg) => {
-                self.last_result = Some(Err(msg));
-                self.last_result_for = Some(function.signature());
+                let sig = function.signature();
+                if self.contract_main_is_impl() {
+                    self.last_result_impl = Some(Err(msg));
+                    self.last_result_for_impl = Some(sig);
+                } else {
+                    self.last_result = Some(Err(msg));
+                    self.last_result_for = Some(sig);
+                }
             }
         }
     }
 
     fn file_delta(&mut self, delta: i32) {
-        let len = self.source.as_ref().map(|s| s.files.len()).unwrap_or(0);
+        let len = if self.contract_main_is_impl() {
+            self.source_impl.as_ref().map(|s| s.files.len()).unwrap_or(0)
+        } else {
+            self.source.as_ref().map(|s| s.files.len()).unwrap_or(0)
+        };
         if len == 0 {
             return;
         }
-        let current = self.file_list_state.selected().unwrap_or(0) as i32;
+        let current = if self.contract_main_is_impl() {
+            self.file_list_state_impl.selected().unwrap_or(0) as i32
+        } else {
+            self.file_list_state.selected().unwrap_or(0) as i32
+        };
         let next = (current + delta).clamp(0, len as i32 - 1);
-        self.file_list_state.select(Some(next as usize));
+        if self.contract_main_is_impl() {
+            self.file_list_state_impl.select(Some(next as usize));
+        } else {
+            self.file_list_state.select(Some(next as usize));
+        }
         self.with_contract_scroll(|s| s.reset());
     }
 
     fn with_contract_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
-        let mut s = self.contract_scroll.get();
+        let cell = if self.contract_main_is_impl() {
+            &self.impl_contract_scroll
+        } else {
+            &self.contract_scroll
+        };
+        let mut s = cell.get();
         f(&mut s);
-        self.contract_scroll.set(s);
+        cell.set(s);
     }
 
     fn bound_scroll_for(&self, body: &str, area: Rect) -> u16 {
@@ -1233,7 +1519,10 @@ impl Screen for AddressDetailScreen {
 
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let active = self.active_tab_or_fallback();
-        let has_sub = matches!(active, AddressTab::Contract | AddressTab::Token);
+        let has_sub = matches!(
+            active,
+            AddressTab::Contract | AddressTab::ContractImpl | AddressTab::Token
+        );
 
         let constraints: Vec<Constraint> = if has_sub {
             vec![
@@ -1320,7 +1609,12 @@ impl Screen for AddressDetailScreen {
             let sub_hi =
                 tab_strip_highlight_style(self.focus_layer, DetailTabStrip::Sub, true, &palette);
             match active {
-                AddressTab::Contract => {
+                AddressTab::Contract | AddressTab::ContractImpl => {
+                    let sub_title = if matches!(active, AddressTab::ContractImpl) {
+                        "Impl sub-tabs  —  [ / ] · ←→"
+                    } else {
+                        "Contract sub-tabs  —  [ / ] · ←→"
+                    };
                     let sub_titles: Vec<Line<'static>> = ContractSubTab::ALL
                         .iter()
                         .map(|t| Line::from(format!(" {} ", t.label())))
@@ -1332,7 +1626,7 @@ impl Screen for AddressDetailScreen {
                                 Block::default()
                                     .borders(Borders::ALL)
                                     .border_style(sub_border)
-                                    .title("Contract sub-tabs  —  [ / ] · ←→"),
+                                    .title(sub_title),
                             )
                             .divider(" ")
                             .highlight_style(sub_hi),
@@ -1383,6 +1677,14 @@ impl Screen for AddressDetailScreen {
                 ContractSubTab::Events => self.render_events_tab(frame, body_rect),
                 ContractSubTab::Storage => self.render_storage_tab(frame, body_rect),
             },
+            AddressTab::ContractImpl => match self.active_contract_sub {
+                ContractSubTab::Overview => self.render_contract_overview_impl(frame, body_rect),
+                ContractSubTab::Source => self.render_source_tab(frame, body_rect),
+                ContractSubTab::Abi => self.render_abi_tab(frame, body_rect),
+                ContractSubTab::Read => self.render_read_tab(frame, body_rect),
+                ContractSubTab::Events => self.render_events_tab(frame, body_rect),
+                ContractSubTab::Storage => self.render_storage_tab(frame, body_rect),
+            },
         }
     }
 
@@ -1397,7 +1699,7 @@ impl Screen for AddressDetailScreen {
         // Fire the first Events request lazily once the user enters
         // the Events sub-tab, so we never issue eth_getLogs for
         // contracts the user just glances at.
-        if matches!(self.active_tab, AddressTab::Contract)
+        if self.contract_strip_like_contract()
             && matches!(self.active_contract_sub, ContractSubTab::Events)
             && !self.events_requested
         {
@@ -1421,7 +1723,7 @@ impl Screen for AddressDetailScreen {
             ("e", "Export"),
         ];
         match self.active_tab_or_fallback() {
-            AddressTab::Contract | AddressTab::Token => {
+            AddressTab::Contract | AddressTab::ContractImpl | AddressTab::Token => {
                 hints.push(("[", "Prev sub"));
                 hints.push(("]", "Next sub"));
             }
@@ -1432,8 +1734,10 @@ impl Screen for AddressDetailScreen {
         {
             hints.push(("1..3", "Window"));
         }
-        if matches!(self.active_tab, AddressTab::Contract)
-            && matches!(self.active_contract_sub, ContractSubTab::Abi)
+        if matches!(
+            self.active_tab,
+            AddressTab::Contract | AddressTab::ContractImpl
+        ) && matches!(self.active_contract_sub, ContractSubTab::Abi)
         {
             hints.push(("Y", "Copy ABI"));
         }
@@ -1475,18 +1779,28 @@ impl AddressDetailScreen {
     }
 
     fn reset_contract_subtab_ui_state(&mut self) {
-        self.source_focus = SourceFocus::Files;
         self.storage_focus = StorageFocus::Slot;
-        self.read_focus = ReadFocus::FunctionList;
+        self.with_storage_value_scroll(|s| s.reset());
+        if self.contract_main_is_impl() {
+            self.source_focus_impl = SourceFocus::Files;
+            self.read_focus_impl = ReadFocus::FunctionList;
+        } else {
+            self.source_focus = SourceFocus::Files;
+            self.read_focus = ReadFocus::FunctionList;
+        }
         self.with_contract_scroll(|s| s.reset());
         self.with_read_result_scroll(|s| s.reset());
-        self.with_storage_value_scroll(|s| s.reset());
     }
 
     fn with_read_result_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
-        let mut s = self.read_result_scroll.get();
+        let cell = if self.contract_main_is_impl() {
+            &self.read_result_scroll_impl
+        } else {
+            &self.read_result_scroll
+        };
+        let mut s = cell.get();
         f(&mut s);
-        self.read_result_scroll.set(s);
+        cell.set(s);
     }
 
     fn with_storage_value_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
@@ -1496,7 +1810,10 @@ impl AddressDetailScreen {
     }
 
     const fn main_tab_exposes_sub_strip(active: AddressTab) -> bool {
-        matches!(active, AddressTab::Contract | AddressTab::Token)
+        matches!(
+            active,
+            AddressTab::Contract | AddressTab::ContractImpl | AddressTab::Token
+        )
     }
 
     fn promote_focus_up_from_list(&mut self) {
@@ -1529,8 +1846,10 @@ impl AddressDetailScreen {
         // always pops (plan/15-backlog.md §8.16). Other tabs that
         // use Backspace for text input (Read/args, Storage/slot) are
         // dispatched further down; this arm only fires on Overview.
-        let contract_overview_cursor = matches!(self.active_tab, AddressTab::Contract)
-            && matches!(self.active_contract_sub, ContractSubTab::Overview);
+        let contract_overview_cursor = matches!(
+            self.active_tab,
+            AddressTab::Contract | AddressTab::ContractImpl
+        ) && matches!(self.active_contract_sub, ContractSubTab::Overview);
         if matches!(key.code, KeyCode::Backspace)
             && (matches!(self.active_tab_or_fallback(), AddressTab::Overview)
                 || contract_overview_cursor)
@@ -1547,8 +1866,10 @@ impl AddressDetailScreen {
         // before the user activates the cursor.
         match key.code {
             KeyCode::Char('y') => {
-                if matches!(self.active_tab, AddressTab::Contract)
-                    && matches!(self.active_contract_sub, ContractSubTab::Storage)
+                if matches!(
+                    self.active_tab,
+                    AddressTab::Contract | AddressTab::ContractImpl
+                ) && matches!(self.active_contract_sub, ContractSubTab::Storage)
                     && self.storage_focus == StorageFocus::Value
                 {
                     let body = self.storage_value_body();
@@ -1565,8 +1886,10 @@ impl AddressDetailScreen {
                     return Command::None;
                 }
                 let cursor_tab = matches!(self.active_tab_or_fallback(), AddressTab::Overview)
-                    || (matches!(self.active_tab, AddressTab::Contract)
-                        && matches!(self.active_contract_sub, ContractSubTab::Overview));
+                    || (matches!(
+                        self.active_tab,
+                        AddressTab::Contract | AddressTab::ContractImpl
+                    ) && matches!(self.active_contract_sub, ContractSubTab::Overview));
                 if cursor_tab && self.cursor.is_active() {
                     let fields = self.navigable_fields();
                     if let Some(entry) = self.cursor.current(&fields) {
@@ -1581,8 +1904,10 @@ impl AddressDetailScreen {
                 return Command::None;
             }
             KeyCode::Char('Y') => {
-                if matches!(self.active_tab, AddressTab::Contract)
-                    && matches!(self.active_contract_sub, ContractSubTab::Abi)
+                if matches!(
+                    self.active_tab,
+                    AddressTab::Contract | AddressTab::ContractImpl
+                ) && matches!(self.active_contract_sub, ContractSubTab::Abi)
                 {
                     self.copy_abi_to_clipboard();
                     return Command::None;
@@ -1638,7 +1963,7 @@ impl AddressDetailScreen {
         if is_back_tab {
             if self.focus_layer == DetailFocusLayer::Subtabs {
                 match self.active_tab_or_fallback() {
-                    AddressTab::Contract => {
+                    AddressTab::Contract | AddressTab::ContractImpl => {
                         self.active_contract_sub = self.active_contract_sub.previous();
                         self.reset_contract_subtab_ui_state();
                         return Command::None;
@@ -1658,7 +1983,7 @@ impl AddressDetailScreen {
         if key.code == KeyCode::Tab {
             if self.focus_layer == DetailFocusLayer::Subtabs {
                 match self.active_tab_or_fallback() {
-                    AddressTab::Contract => {
+                    AddressTab::Contract | AddressTab::ContractImpl => {
                         self.active_contract_sub = self.active_contract_sub.next();
                         self.reset_contract_subtab_ui_state();
                         return Command::None;
@@ -1706,7 +2031,7 @@ impl AddressDetailScreen {
             match key.code {
                 KeyCode::Left => {
                     match self.active_tab_or_fallback() {
-                        AddressTab::Contract => {
+                        AddressTab::Contract | AddressTab::ContractImpl => {
                             self.active_contract_sub = self.active_contract_sub.previous();
                             self.reset_contract_subtab_ui_state();
                         }
@@ -1720,7 +2045,7 @@ impl AddressDetailScreen {
                 }
                 KeyCode::Right => {
                     match self.active_tab_or_fallback() {
-                        AddressTab::Contract => {
+                        AddressTab::Contract | AddressTab::ContractImpl => {
                             self.active_contract_sub = self.active_contract_sub.next();
                             self.reset_contract_subtab_ui_state();
                         }
@@ -1747,7 +2072,7 @@ impl AddressDetailScreen {
         // Sub-tab cycling.
         if matches!(key.code, KeyCode::Char(']')) {
             match self.active_tab_or_fallback() {
-                AddressTab::Contract => {
+                AddressTab::Contract | AddressTab::ContractImpl => {
                     self.active_contract_sub = self.active_contract_sub.next();
                     self.reset_contract_subtab_ui_state();
                     return Command::None;
@@ -1762,7 +2087,7 @@ impl AddressDetailScreen {
         }
         if matches!(key.code, KeyCode::Char('[')) {
             match self.active_tab_or_fallback() {
-                AddressTab::Contract => {
+                AddressTab::Contract | AddressTab::ContractImpl => {
                     self.active_contract_sub = self.active_contract_sub.previous();
                     self.reset_contract_subtab_ui_state();
                     return Command::None;
@@ -1781,7 +2106,7 @@ impl AddressDetailScreen {
                 AddressTab::Overview => self.handle_overview_key(key),
                 AddressTab::Transactions | AddressTab::Tokens => self.handle_list_key(key),
                 AddressTab::Token => self.handle_token_key(key),
-                AddressTab::Contract => self.handle_contract_key(key),
+                AddressTab::Contract | AddressTab::ContractImpl => self.handle_contract_key(key),
             };
         }
         Command::None
@@ -2055,7 +2380,12 @@ impl AddressDetailScreen {
     }
 
     fn copy_abi_to_clipboard(&mut self) {
-        let Some(source) = self.source.as_ref() else {
+        let source = if self.contract_main_is_impl() {
+            self.source_impl.as_ref()
+        } else {
+            self.source.as_ref()
+        };
+        let Some(source) = source else {
             return;
         };
         if !source.is_verified || source.abi.trim().is_empty() {
@@ -2127,16 +2457,25 @@ impl AddressDetailScreen {
     }
 
     fn handle_source_key(&mut self, key: KeyEvent) -> Command {
-        let Some(source) = self.source.as_ref() else {
+        let source = if self.contract_main_is_impl() {
+            self.source_impl.as_ref()
+        } else {
+            self.source.as_ref()
+        };
+        let Some(source) = source else {
             return Command::None;
         };
         if !source.is_verified || source.files.is_empty() {
             return self.handle_paragraph_scroll_key(key);
         }
-        match self.source_focus {
+        match self.source_focus_active() {
             SourceFocus::Files => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    let sel = self.file_list_state.selected().unwrap_or(0);
+                    let sel = if self.contract_main_is_impl() {
+                        self.file_list_state_impl.selected().unwrap_or(0)
+                    } else {
+                        self.file_list_state.selected().unwrap_or(0)
+                    };
                     if sel == 0 {
                         self.focus_layer = DetailFocusLayer::Subtabs;
                     } else {
@@ -2145,17 +2484,22 @@ impl AddressDetailScreen {
                 }
                 KeyCode::Down | KeyCode::Char('j') => self.file_delta(1),
                 KeyCode::Right | KeyCode::Enter => {
-                    self.source_focus = SourceFocus::Viewer;
+                    self.set_source_focus_active(SourceFocus::Viewer);
                 }
                 _ => {}
             },
             SourceFocus::Viewer => match key.code {
                 KeyCode::Left => {
-                    self.source_focus = SourceFocus::Files;
+                    self.set_source_focus_active(SourceFocus::Files);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if self.contract_scroll.get().offset() == 0 {
-                        self.source_focus = SourceFocus::Files;
+                    let off = if self.contract_main_is_impl() {
+                        self.impl_contract_scroll.get().offset()
+                    } else {
+                        self.contract_scroll.get().offset()
+                    };
+                    if off == 0 {
+                        self.set_source_focus_active(SourceFocus::Files);
                     } else {
                         self.with_contract_scroll(|s| {
                             s.scroll_by(-1);
@@ -2194,7 +2538,7 @@ impl AddressDetailScreen {
     }
 
     fn handle_read_key(&mut self, key: KeyEvent) -> Command {
-        match self.read_focus {
+        match self.read_focus_active() {
             ReadFocus::FunctionList => self.handle_read_list_key(key),
             ReadFocus::Args => self.handle_read_args_key(key),
             ReadFocus::Result => self.handle_read_result_key(key),
@@ -2202,10 +2546,19 @@ impl AddressDetailScreen {
     }
 
     fn handle_read_list_key(&mut self, key: KeyEvent) -> Command {
-        if self.functions.is_empty() {
+        let fns = if self.contract_main_is_impl() {
+            &self.functions_impl
+        } else {
+            &self.functions
+        };
+        if fns.is_empty() {
             return Command::None;
         }
-        let current = self.function_list_state.selected().unwrap_or(0);
+        let current = if self.contract_main_is_impl() {
+            self.function_list_state_impl.selected().unwrap_or(0)
+        } else {
+            self.function_list_state.selected().unwrap_or(0)
+        };
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if current == 0 {
@@ -2218,12 +2571,20 @@ impl AddressDetailScreen {
             KeyCode::PageUp => self.select_function_delta(-10),
             KeyCode::PageDown => self.select_function_delta(10),
             KeyCode::Home => {
-                self.function_list_state.select(Some(0));
+                if self.contract_main_is_impl() {
+                    self.function_list_state_impl.select(Some(0));
+                } else {
+                    self.function_list_state.select(Some(0));
+                }
                 self.reset_args_for_current_fn();
             }
             KeyCode::End => {
-                let last = self.functions.len() - 1;
-                self.function_list_state.select(Some(last));
+                let last = fns.len() - 1;
+                if self.contract_main_is_impl() {
+                    self.function_list_state_impl.select(Some(last));
+                } else {
+                    self.function_list_state.select(Some(last));
+                }
                 self.reset_args_for_current_fn();
             }
             KeyCode::Enter | KeyCode::Right => {
@@ -2231,8 +2592,12 @@ impl AddressDetailScreen {
                     if f.inputs.is_empty() {
                         self.execute_current();
                     } else {
-                        self.read_focus = ReadFocus::Args;
-                        self.arg_cursor = 0;
+                        self.set_read_focus_active(ReadFocus::Args);
+                        if self.contract_main_is_impl() {
+                            self.arg_cursor_impl = 0;
+                        } else {
+                            self.arg_cursor = 0;
+                        }
                     }
                 }
             }
@@ -2242,37 +2607,62 @@ impl AddressDetailScreen {
     }
 
     fn handle_read_args_key(&mut self, key: KeyEvent) -> Command {
-        let n_args = self.arg_buffers.len();
+        let n_args = if self.contract_main_is_impl() {
+            self.arg_buffers_impl.len()
+        } else {
+            self.arg_buffers.len()
+        };
+        let arg_cursor = if self.contract_main_is_impl() {
+            self.arg_cursor_impl
+        } else {
+            self.arg_cursor
+        };
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.arg_cursor > 0 {
-                    self.arg_cursor -= 1;
+                if arg_cursor > 0 {
+                    if self.contract_main_is_impl() {
+                        self.arg_cursor_impl -= 1;
+                    } else {
+                        self.arg_cursor -= 1;
+                    }
                 } else {
-                    self.read_focus = ReadFocus::FunctionList;
+                    self.set_read_focus_active(ReadFocus::FunctionList);
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.arg_cursor + 1 < n_args {
-                    self.arg_cursor += 1;
+                if arg_cursor + 1 < n_args {
+                    if self.contract_main_is_impl() {
+                        self.arg_cursor_impl += 1;
+                    } else {
+                        self.arg_cursor += 1;
+                    }
                 } else {
-                    self.read_focus = ReadFocus::Result;
+                    self.set_read_focus_active(ReadFocus::Result);
                     self.with_read_result_scroll(|s| s.reset());
                 }
             }
             KeyCode::Tab => {
-                self.read_focus = ReadFocus::Result;
+                self.set_read_focus_active(ReadFocus::Result);
                 self.with_read_result_scroll(|s| s.reset());
             }
             KeyCode::Left => {
-                self.read_focus = ReadFocus::FunctionList;
+                self.set_read_focus_active(ReadFocus::FunctionList);
             }
             KeyCode::Backspace => {
-                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                if self.contract_main_is_impl() {
+                    if let Some(buf) = self.arg_buffers_impl.get_mut(self.arg_cursor_impl) {
+                        buf.pop();
+                    }
+                } else if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
                     buf.pop();
                 }
             }
             KeyCode::Char(c) => {
-                if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
+                if self.contract_main_is_impl() {
+                    if let Some(buf) = self.arg_buffers_impl.get_mut(self.arg_cursor_impl) {
+                        buf.push(c);
+                    }
+                } else if let Some(buf) = self.arg_buffers.get_mut(self.arg_cursor) {
                     buf.push(c);
                 }
             }
@@ -2285,17 +2675,31 @@ impl AddressDetailScreen {
     }
 
     fn handle_read_result_key(&mut self, key: KeyEvent) -> Command {
+        let n_bufs = if self.contract_main_is_impl() {
+            self.arg_buffers_impl.len()
+        } else {
+            self.arg_buffers.len()
+        };
+        let result_scroll_off = if self.contract_main_is_impl() {
+            self.read_result_scroll_impl.get().offset()
+        } else {
+            self.read_result_scroll.get().offset()
+        };
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.read_result_scroll.get().offset() > 0 {
+                if result_scroll_off > 0 {
                     self.with_read_result_scroll(|s| {
                         s.scroll_by(-1);
                     });
-                } else if self.arg_buffers.is_empty() {
-                    self.read_focus = ReadFocus::FunctionList;
+                } else if n_bufs == 0 {
+                    self.set_read_focus_active(ReadFocus::FunctionList);
                 } else {
-                    self.read_focus = ReadFocus::Args;
-                    self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                    self.set_read_focus_active(ReadFocus::Args);
+                    if self.contract_main_is_impl() {
+                        self.arg_cursor_impl = self.arg_buffers_impl.len().saturating_sub(1);
+                    } else {
+                        self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -2324,11 +2728,15 @@ impl AddressDetailScreen {
                 });
             }
             KeyCode::Left => {
-                self.read_focus = ReadFocus::Args;
-                if !self.arg_buffers.is_empty() {
-                    self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                self.set_read_focus_active(ReadFocus::Args);
+                if n_bufs > 0 {
+                    if self.contract_main_is_impl() {
+                        self.arg_cursor_impl = self.arg_buffers_impl.len().saturating_sub(1);
+                    } else {
+                        self.arg_cursor = self.arg_buffers.len().saturating_sub(1);
+                    }
                 } else {
-                    self.read_focus = ReadFocus::FunctionList;
+                    self.set_read_focus_active(ReadFocus::FunctionList);
                 }
             }
             _ => {}
@@ -2774,8 +3182,46 @@ impl AddressDetailScreen {
         );
     }
 
+    /// Contract **implementation** dossier (proxy addresses only).
+    fn render_contract_overview_impl(&self, frame: &mut Frame<'_>, area: Rect) {
+        let impl_addr = self
+            .contract_overview_impl
+            .as_ref()
+            .map(|o| o.account.address)
+            .or_else(|| {
+                self.contract_overview
+                    .as_ref()
+                    .and_then(|c| c.proxy)
+                    .map(|p| p.implementation)
+            })
+            .unwrap_or(self.address);
+        let body = contract_overview_body(
+            impl_addr,
+            self.contract_overview_impl.as_ref(),
+            self.source_impl.as_ref(),
+        );
+        let offset = self.bound_scroll_for(&body, area);
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .scroll((offset, 0))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.body_outline())
+                        .title("Overview (impl)"),
+                ),
+            area,
+        );
+    }
+
     fn render_abi_tab(&self, frame: &mut Frame<'_>, area: Rect) {
-        let (title, body) = abi_body(self.source.as_ref());
+        let src = if self.contract_main_is_impl() {
+            self.source_impl.as_ref()
+        } else {
+            self.source.as_ref()
+        };
+        let (title, body) = abi_body(src);
         let offset = self.bound_scroll_for(&body, area);
         frame.render_widget(
             Paragraph::new(body)
@@ -2792,7 +3238,12 @@ impl AddressDetailScreen {
     }
 
     fn render_source_tab(&self, frame: &mut Frame<'_>, area: Rect) {
-        let Some(source) = self.source.as_ref() else {
+        let source = if self.contract_main_is_impl() {
+            self.source_impl.as_ref()
+        } else {
+            self.source.as_ref()
+        };
+        let Some(source) = source else {
             frame.render_widget(
                 Paragraph::new("Loading source...").block(
                     Block::default()
@@ -2826,15 +3277,20 @@ once a decompiler integration lands (see plan/7 section 13).",
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
             .split(area);
-        let files_border = self.split_pane_border(matches!(self.source_focus, SourceFocus::Files));
+        let files_border =
+            self.split_pane_border(matches!(self.source_focus_active(), SourceFocus::Files));
         let viewer_border =
-            self.split_pane_border(matches!(self.source_focus, SourceFocus::Viewer));
+            self.split_pane_border(matches!(self.source_focus_active(), SourceFocus::Viewer));
         let items: Vec<ListItem> = source
             .files
             .iter()
             .map(|f| ListItem::new(f.path.clone()))
             .collect();
-        let mut state = self.file_list_state;
+        let mut state = if self.contract_main_is_impl() {
+            self.file_list_state_impl
+        } else {
+            self.file_list_state
+        };
         frame.render_stateful_widget(
             List::new(items)
                 .block(
@@ -2881,7 +3337,12 @@ once a decompiler integration lands (see plan/7 section 13).",
     }
 
     fn render_read_tab(&self, frame: &mut Frame<'_>, area: Rect) {
-        if self.source.is_none() {
+        let abi_loading = if self.contract_main_is_impl() {
+            self.source_impl.is_none()
+        } else {
+            self.source.is_none()
+        };
+        if abi_loading {
             frame.render_widget(
                 Paragraph::new("Loading ABI...").block(
                     Block::default()
@@ -2893,7 +3354,12 @@ once a decompiler integration lands (see plan/7 section 13).",
             );
             return;
         }
-        if self.functions.is_empty() {
+        let fns = if self.contract_main_is_impl() {
+            &self.functions_impl
+        } else {
+            &self.functions
+        };
+        if fns.is_empty() {
             frame.render_widget(
                 Paragraph::new(
                     "No callable functions in this ABI.\n\
@@ -2914,21 +3380,25 @@ Contract may be unverified or expose only events / constructors.",
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(area);
+        let rf = self.read_focus_active();
         let list_border =
-            self.split_pane_border(matches!(self.read_focus, ReadFocus::FunctionList));
+            self.split_pane_border(matches!(rf, ReadFocus::FunctionList));
         let sig_border = self.split_pane_border(false);
-        let args_border = self.split_pane_border(matches!(self.read_focus, ReadFocus::Args));
-        let result_border = self.split_pane_border(matches!(self.read_focus, ReadFocus::Result));
-        let items: Vec<ListItem> = self
-            .functions
+        let args_border = self.split_pane_border(matches!(rf, ReadFocus::Args));
+        let result_border = self.split_pane_border(matches!(rf, ReadFocus::Result));
+        let items: Vec<ListItem> = fns
             .iter()
             .map(|f| {
                 let marker = if f.is_read_only { " " } else { "!" };
                 ListItem::new(format!("{marker} {}", f.signature()))
             })
             .collect();
-        let mut state = self.function_list_state;
-        let list_title = match self.read_focus {
+        let mut state = if self.contract_main_is_impl() {
+            self.function_list_state_impl
+        } else {
+            self.function_list_state
+        };
+        let list_title = match rf {
             ReadFocus::FunctionList => "Functions (focused)",
             ReadFocus::Args | ReadFocus::Result => "Functions",
         };
@@ -2987,23 +3457,31 @@ Contract may be unverified or expose only events / constructors.",
             ),
             detail_chunks[0],
         );
-        let args_title = match self.read_focus {
+        let args_title = match rf {
             ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
             ReadFocus::Result => "Arguments",
             ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
+        };
+        let arg_buffers = if self.contract_main_is_impl() {
+            &self.arg_buffers_impl
+        } else {
+            &self.arg_buffers
+        };
+        let arg_cursor = if self.contract_main_is_impl() {
+            self.arg_cursor_impl
+        } else {
+            self.arg_cursor
         };
         let args_body = match function {
             Some(f) if f.inputs.is_empty() => "(no arguments)".to_string(),
             Some(f) => {
                 let mut lines = Vec::with_capacity(f.inputs.len());
-                for (idx, (param, buf)) in f.inputs.iter().zip(self.arg_buffers.iter()).enumerate()
-                {
-                    let cursor =
-                        if matches!(self.read_focus, ReadFocus::Args) && idx == self.arg_cursor {
-                            ">"
-                        } else {
-                            " "
-                        };
+                for (idx, (param, buf)) in f.inputs.iter().zip(arg_buffers.iter()).enumerate() {
+                    let cursor = if matches!(rf, ReadFocus::Args) && idx == arg_cursor {
+                        ">"
+                    } else {
+                        " "
+                    };
                     lines.push(format!(
                         "{cursor} {name} ({ty}) = {buf}",
                         name = if param.name.is_empty() {
@@ -3028,9 +3506,14 @@ Contract may be unverified or expose only events / constructors.",
             ),
             detail_chunks[1],
         );
+        let (last_res, last_for) = if self.contract_main_is_impl() {
+            (&self.last_result_impl, &self.last_result_for_impl)
+        } else {
+            (&self.last_result, &self.last_result_for)
+        };
         let result_body = match (
-            self.last_result.as_ref(),
-            self.last_result_for.as_deref(),
+            last_res.as_ref(),
+            last_for.as_deref(),
             function.map(|f| f.signature()),
         ) {
             (Some(Ok(values)), Some(sig), Some(current)) if sig == current => {

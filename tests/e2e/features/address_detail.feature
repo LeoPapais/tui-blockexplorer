@@ -126,6 +126,12 @@ Feature: Address detail
     Then an "Address" screen is on top
     And once the contract is loaded, the proxy points at "0xb0b1000000000000000000000000000000000002"
 
+  Scenario: Proxy contracts show the Impl main tab
+    Given the address reader knows contract "0xa0a1000000000000000000000000000000000001" with balance 0 and nonce 1
+    And the proxy detector reports EIP-1967 implementation "0xb0b1000000000000000000000000000000000002" for "0xa0a1000000000000000000000000000000000001"
+    When the user opens AddressDetail as contract for "0xa0a1000000000000000000000000000000000001"
+    Then once loaded, the tab bar includes the Impl tab
+
   Scenario: Source sub-tab shows verified single file
     Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
     And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"

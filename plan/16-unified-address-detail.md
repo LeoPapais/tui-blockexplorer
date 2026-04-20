@@ -44,13 +44,27 @@ flowchart LR
   Contract --> Ct_Read[Read]
   Contract --> Ct_Events[Events]
   Contract --> Ct_Storage[Storage]
+  ADS -.proxy.-> Impl[Impl]
+  Impl --> Im_Overview[Overview]
+  Impl --> Im_Source[Source]
+  Impl --> Im_Abi[ABI]
+  Impl --> Im_Read[Read]
+  Impl --> Im_Events[Events]
+  Impl --> Im_Storage[Storage]
 ```
 
 | Kind / probe                          | Main tabs                                              |
 |---------------------------------------|--------------------------------------------------------|
 | EOA (including 7702-delegated EOA)    | Overview, Transactions, Tokens                         |
 | Plain contract (`TokenProbeState::NotToken`) | Overview, Transactions, Tokens, Contract        |
-| ERC-20 (`TokenProbeState::IsToken`)   | Overview, Transactions, Tokens, Token, Contract        |
+| Contract with proxy (`ContractOverview::proxy`) | Overview, Transactions, Tokens, Contract, **Impl** |
+| ERC-20 (`TokenProbeState::IsToken`)   | Overview, Transactions, Tokens, Token, Contract (+ **Impl** when proxy metadata is present)        |
+
+### 2.1 Contract implementation tab (`Impl`)
+
+When [`ContractOverview`](src/domain/contract.rs) includes [`ProxyInfo`](src/domain/contract.rs), the main tab strip gains **Impl** (next to **Contract**). Sub-tabs match **Contract** (Overview, Source, ABI, Read, Events, Storage). Data for Overview, Source, ABI, Events, and Storage views is loaded for the **implementation address** (`ProxyInfo::implementation`) via extra feed channels (`contract_impl_overview_rx`, `source_impl_rx`) filled by `address_feed::spawn` after the proxy overview is known.
+
+**Read tab:** calldata is built from the **implementation** ABI (same as the **Impl** / ABI tab). `eth_call` / `ContractReaderPort::call` still uses the **user-facing proxy address** as `to`, matching delegatecall semantics. The UI routes async read results with [`ReadCalldataSource`](src/adapters/ui/address_detail.rs) (`ProxyArtifact` vs `ImplementationArtifact`).
 
 Sub-tabs live in a second tabs row drawn directly below the main
 tabs row **only when** `active_tab` is `Contract` or `Token`. The
@@ -104,7 +118,9 @@ Contract-gated (lazy; fired only after the first overview confirms
 
 - `source_rx` — `ContractSource`
 - `proxy_rx` folded into `contract_overview_rx` — `ContractOverview` with proxy info
-- `read_tx` / `read_rx` — `ReadRequest` → `Result<Vec<DecodedValue>, DomainError>`
+- `contract_impl_overview_rx` — second `ContractOverview` for `ProxyInfo::implementation` (only when proxy is detected)
+- `source_impl_rx` — `ContractSource` for the implementation address
+- `read_tx` / `read_rx` — `ReadRequest` → [`ReadDelivery`](src/adapters/ui/address_detail.rs) (result + `ReadCalldataSource` for UI routing); the feed still calls `ContractReaderPort` with the active **proxy** address
 - `events_tx` / `events_rx` — `EventsRequest` → `EventsPage`
 - `storage_tx` / `storage_rx` — `StorageRequest` → `[u8; 32]`
 

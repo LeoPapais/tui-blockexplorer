@@ -308,8 +308,24 @@ pub(crate) fn spawn_address_detail_as_contract_full<
                 req = read_rx.recv() => {
                     let Some(req) = req else { break; };
                     let Some(a) = active else { continue; };
-                    let result = contract_reader.call(a, chain, &req.function, req.args).await;
-                    if read_tx.send(result).is_err() { break; }
+                    use blockexplorer_tui::adapters::ui::address_detail::ReadDelivery;
+                    let blockexplorer_tui::adapters::ui::address_detail::ReadRequest {
+                        function,
+                        args,
+                        calldata_source,
+                    } = req;
+                    let signature = function.signature();
+                    let result = contract_reader.call(a, chain, &function, args).await;
+                    if read_tx
+                        .send(ReadDelivery {
+                            calldata_source,
+                            signature,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 req = events_rx.recv() => {
                     let Some(req) = req else { break; };

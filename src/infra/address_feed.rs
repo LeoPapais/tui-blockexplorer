@@ -12,7 +12,10 @@
 use tokio::task::JoinHandle;
 
 use crate::{
-    adapters::ui::AddressFeedSender,
+    adapters::ui::{
+        AddressFeedSender,
+        address_detail::ReadDelivery,
+    },
     application::{
         ports::{
             AddressReaderPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
@@ -75,6 +78,8 @@ where
             token_transfers_tx,
             contract_overview_tx,
             source_tx,
+            contract_impl_overview_tx,
+            source_impl_tx,
             mut read_rx,
             read_tx,
             mut events_rx,
@@ -147,9 +152,30 @@ where
                         &reader, &proxy_detector, addr, chain,
                     )
                     .await
-                        && contract_overview_tx.send(cov).is_err()
                     {
-                        break;
+                        if contract_overview_tx.send(cov.clone()).is_err() {
+                            break;
+                        }
+                        if let Some(px) = cov.proxy {
+                            let impl_addr = px.implementation;
+                            if let Ok(impl_cov) = load_contract_overview::run(
+                                &reader,
+                                &proxy_detector,
+                                impl_addr,
+                                chain,
+                            )
+                            .await
+                                && contract_impl_overview_tx.send(impl_cov).is_err()
+                            {
+                                break;
+                            }
+                            if let Ok(Some(src_impl)) =
+                                source.get_source(impl_addr, chain).await
+                                && source_impl_tx.send(src_impl).is_err()
+                            {
+                                break;
+                            }
+                        }
                     }
                     if let Ok(Some(src)) = source.get_source(addr, chain).await
                         && source_tx.send(src).is_err()
@@ -214,10 +240,26 @@ where
                     let Some(req) = req else { break };
                     let Some(addr) = active else { continue };
                     if !active_kind_is_contract { continue; }
+                    let crate::adapters::ui::address_detail::ReadRequest {
+                        function,
+                        args,
+                        calldata_source,
+                    } = req;
+                    let signature = function.signature();
+                    // `addr` is the proxy / user-facing contract; impl-tab Read uses
+                    // [`ReadCalldataSource::ImplementationArtifact`] only to route UI
+                    // state — `ContractReaderPort::call` still receives `addr`.
                     let result = contract_reader
-                        .call(addr, chain, &req.function, req.args)
+                        .call(addr, chain, &function, args)
                         .await;
-                    if read_tx.send(result).is_err() {
+                    if read_tx
+                        .send(ReadDelivery {
+                            calldata_source,
+                            signature,
+                            result,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }

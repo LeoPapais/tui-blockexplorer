@@ -320,6 +320,23 @@ async fn tab_bar_has_contract(world: &mut AppWorld) {
     );
 }
 
+#[then("once loaded, the tab bar includes the Impl tab")]
+async fn tab_bar_has_impl(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current(s)
+            .contract_overview()
+            .map(|c| c.proxy.is_some())
+            .unwrap_or(false)
+    })
+    .await;
+    let tabs = current(stack).tabs();
+    assert!(
+        tabs.contains(&AddressTab::ContractImpl),
+        "Impl tab missing from {tabs:?}"
+    );
+}
+
 #[then("once loaded, the tab bar does not include the Contract tab")]
 async fn tab_bar_no_contract(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
@@ -1160,6 +1177,7 @@ async fn active_main_tab_is(world: &mut AppWorld, label: String) {
         "Tokens" => AddressTab::Tokens,
         "Token" => AddressTab::Token,
         "Contract" => AddressTab::Contract,
+        "Impl" => AddressTab::ContractImpl,
         other => panic!("unknown main tab label {other}"),
     };
     assert_eq!(current(stack).active_tab(), expected);
