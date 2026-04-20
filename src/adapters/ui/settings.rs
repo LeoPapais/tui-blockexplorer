@@ -235,11 +235,14 @@ Esc to return to the previous screen, q to quit.",
     fn handle_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
-            KeyCode::Esc if self.cursor.is_active() => {
+            KeyCode::Esc => return Command::Pop,
+            // Backspace deactivates the field cursor without popping
+            // the screen. Moved off Esc so Esc always pops (see
+            // plan/15-backlog.md §8.16).
+            KeyCode::Backspace if self.cursor.is_active() => {
                 self.cursor.deactivate();
                 return Command::None;
             }
-            KeyCode::Esc => return Command::Pop,
             _ => {}
         }
 
@@ -304,6 +307,15 @@ Esc to return to the previous screen, q to quit.",
             }
             _ => Command::None,
         }
+    }
+
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("Arrows", "Cursor"),
+            ("y", "Copy"),
+            ("1..4", "Palette"),
+            ("Esc", "Back"),
+        ]
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

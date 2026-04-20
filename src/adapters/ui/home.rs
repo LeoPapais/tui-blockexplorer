@@ -426,13 +426,16 @@ impl Screen for HomeScreen {
                 self.first_run_hint = false;
                 return Command::None;
             }
-            KeyCode::Esc if self.cursor.is_active() => {
-                self.cursor.deactivate();
-                return Command::None;
-            }
             KeyCode::Esc => return Command::Pop,
             KeyCode::Enter if self.first_run_hint => {
                 self.first_run_hint = false;
+                return Command::None;
+            }
+            // Backspace deactivates the field cursor without popping
+            // the screen. Moved off Esc so Esc always pops (see
+            // plan/15-backlog.md §8.16).
+            KeyCode::Backspace if self.cursor.is_active() => {
+                self.cursor.deactivate();
                 return Command::None;
             }
             _ => {}
@@ -516,6 +519,17 @@ impl Screen for HomeScreen {
             }
         }
         Command::None
+    }
+
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("/", "Search"),
+            ("?", "Help"),
+            ("g", "Gas"),
+            ("m", "Mempool"),
+            ("s", "Settings"),
+            ("q", "Quit"),
+        ]
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

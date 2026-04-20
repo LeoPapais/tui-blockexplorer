@@ -463,11 +463,14 @@ impl Screen for GasTrackerScreen {
 
         match key.code {
             KeyCode::Char('q') => return Command::Quit,
-            KeyCode::Esc if self.cursor.is_active() => {
+            KeyCode::Esc => return Command::Pop,
+            // Backspace deactivates the field cursor without popping
+            // the screen. Moved off Esc so Esc always pops (see
+            // plan/15-backlog.md §8.16).
+            KeyCode::Backspace if self.cursor.is_active() => {
                 self.cursor.deactivate();
                 return Command::None;
             }
-            KeyCode::Esc => return Command::Pop,
             _ => {}
         }
 
@@ -537,6 +540,17 @@ impl Screen for GasTrackerScreen {
     fn tick(&mut self) -> Command {
         self.drain_feed();
         Command::None
+    }
+
+    fn footer_hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("p", "Pause"),
+            ("Ctrl+R", "Refresh"),
+            ("u", "Converter"),
+            ("Arrows", "Cursor"),
+            ("y", "Copy"),
+            ("Esc", "Back"),
+        ]
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
