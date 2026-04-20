@@ -10,8 +10,8 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{
         AddressDetailScreen, AddressTab, BlockDetailScreen, Command, DetailPlaceholderScreen,
-        HomeScreen, ScreenStack, SearchScreen, TxDetailScreen, address_feed, block_feed,
-        home_feed, search_feed, tx_feed,
+        HomeScreen, ScreenStack, SearchScreen, TxDetailScreen, address_feed, block_feed, home_feed,
+        search_feed, tx_feed,
     },
     application::{
         ConnectionStatus, HomeViewModel,
@@ -229,6 +229,107 @@ pub(crate) fn spawn_contract_detail<
                 && contract_overview_tx.send(cov).is_err()
             {
                 break;
+            }
+        }
+    });
+    Box::new(AddressDetailScreen::with_factories_and_tab(
+        chain,
+        address,
+        feed,
+        None,
+        None,
+        AddressTab::Contract,
+    ))
+}
+
+/// Fully-wired unified AddressDetail focused on the Contract tab.
+/// Wires every contract-specific port so the full Source / ABI /
+/// Read / Events / Storage sub-tab surface is driveable.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn spawn_address_detail_as_contract_full<
+    A: AddressReaderPort + Clone + Send + Sync + 'static,
+    Pr: ProxyDetectionPort + Clone + Send + Sync + 'static,
+    S: blockexplorer_tui::application::ports::ContractSourcePort + Clone + Send + Sync + 'static,
+    CR: blockexplorer_tui::application::ports::ContractReaderPort + Clone + Send + Sync + 'static,
+    E: blockexplorer_tui::application::ports::EventLogPort + Clone + Send + Sync + 'static,
+    St: blockexplorer_tui::application::ports::StoragePort + Clone + Send + Sync + 'static,
+    N: blockexplorer_tui::application::ports::NetworkStatusPort + Clone + Send + Sync + 'static,
+>(
+    chain: Chain,
+    address: Address,
+    address_reader: A,
+    proxy_detector: Pr,
+    source: S,
+    contract_reader: CR,
+    event_log: E,
+    storage: St,
+    network_status: N,
+) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
+    use blockexplorer_tui::application::use_cases::load_contract_events_page;
+    let (feed, sender) = address_feed();
+    tokio::spawn(async move {
+        let blockexplorer_tui::adapters::ui::AddressFeedSender {
+            updates_tx,
+            contract_overview_tx,
+            source_tx,
+            mut read_rx,
+            read_tx,
+            mut events_rx,
+            events_tx,
+            mut storage_rx,
+            storage_tx,
+            mut input_rx,
+            ..
+        } = sender;
+        let mut active: Option<Address> = None;
+        loop {
+            tokio::select! {
+                maybe_addr = input_rx.recv() => {
+                    let Some(addr) = maybe_addr else { break; };
+                    active = Some(addr);
+                    if let Ok(Some(ov)) = address_reader.get(addr, chain).await
+                        && updates_tx.send(ov).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(cov) = load_contract_overview::run(
+                        &address_reader, &proxy_detector, addr, chain,
+                    ).await
+                        && contract_overview_tx.send(cov).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(Some(src)) = source.get_source(addr, chain).await
+                        && source_tx.send(src).is_err()
+                    {
+                        break;
+                    }
+                }
+                req = read_rx.recv() => {
+                    let Some(req) = req else { break; };
+                    let Some(a) = active else { continue; };
+                    let result = contract_reader.call(a, chain, &req.function, req.args).await;
+                    if read_tx.send(result).is_err() { break; }
+                }
+                req = events_rx.recv() => {
+                    let Some(req) = req else { break; };
+                    let Some(a) = active else { continue; };
+                    let result = load_contract_events_page::run(
+                        &network_status,
+                        &event_log,
+                        a,
+                        chain,
+                        req.head_hint,
+                        req.offset,
+                    ).await;
+                    if events_tx.send(result).is_err() { break; }
+                }
+                req = storage_rx.recv() => {
+                    let Some(req) = req else { break; };
+                    let Some(a) = active else { continue; };
+                    let result = storage.get_at(a, chain, req.slot).await;
+                    if storage_tx.send(result).is_err() { break; }
+                }
             }
         }
     });
@@ -557,68 +658,86 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
             token_price_tx,
             token_series_tx,
             token_transfers_tx,
+            mut token_window_req_rx,
             mut input_rx,
             ..
         } = sender;
-        while let Some(addr) = input_rx.recv().await {
-            let (ov_res, tr_res, pf_res) = tokio::join!(
-                reader.get(addr, chain),
-                transfers.get_for_address(addr, chain, None),
-                portfolio.get_token_balances(addr, chain),
-            );
-            let kind_contract = matches!(
-                ov_res.as_ref(),
-                Ok(Some(ov)) if matches!(
-                    ov.kind,
-                    blockexplorer_tui::domain::AddressKind::Contract
-                )
-            );
-            if let Ok(Some(ov)) = ov_res
-                && updates_tx.send(ov).is_err()
-            {
-                break;
-            }
-            if let Ok(page) = tr_res
-                && transfers_tx.send(page).is_err()
-            {
-                break;
-            }
-            if let Ok(holdings) = pf_res
-                && portfolio_tx.send(holdings).is_err()
-            {
-                break;
-            }
-            if !kind_contract {
-                continue;
-            }
-            match token_reader.get(addr, chain).await {
-                Ok(Some(tov)) => {
-                    if token_overview_tx.send(Some(tov)).is_err() {
-                        break;
-                    }
-                    let (price_res, series_res, token_tr_res) = tokio::join!(
-                        prices.get_single(addr, chain),
-                        prices.get_history(addr, chain, PriceWindow::D1),
-                        transfers.get_for_contract(addr, chain, None),
+        let mut current_addr: Option<Address> = None;
+        loop {
+            tokio::select! {
+                biased;
+                maybe_addr = input_rx.recv() => {
+                    let Some(addr) = maybe_addr else { break; };
+                    current_addr = Some(addr);
+                    let (ov_res, tr_res, pf_res) = tokio::join!(
+                        reader.get(addr, chain),
+                        transfers.get_for_address(addr, chain, None),
+                        portfolio.get_token_balances(addr, chain),
                     );
-                    if let Ok(lookup) = price_res
-                        && token_price_tx.send(lookup).is_err()
+                    let kind_contract = matches!(
+                        ov_res.as_ref(),
+                        Ok(Some(ov)) if matches!(
+                            ov.kind,
+                            blockexplorer_tui::domain::AddressKind::Contract
+                        )
+                    );
+                    if let Ok(Some(ov)) = ov_res
+                        && updates_tx.send(ov).is_err()
                     {
                         break;
                     }
-                    if let Ok(series) = series_res
+                    if let Ok(page) = tr_res
+                        && transfers_tx.send(page).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(holdings) = pf_res
+                        && portfolio_tx.send(holdings).is_err()
+                    {
+                        break;
+                    }
+                    if !kind_contract {
+                        continue;
+                    }
+                    match token_reader.get(addr, chain).await {
+                        Ok(Some(tov)) => {
+                            if token_overview_tx.send(Some(tov)).is_err() {
+                                break;
+                            }
+                            let (price_res, series_res, token_tr_res) = tokio::join!(
+                                prices.get_single(addr, chain),
+                                prices.get_history(addr, chain, PriceWindow::D1),
+                                transfers.get_for_contract(addr, chain, None),
+                            );
+                            if let Ok(lookup) = price_res
+                                && token_price_tx.send(lookup).is_err()
+                            {
+                                break;
+                            }
+                            if let Ok(series) = series_res
+                                && token_series_tx.send(series).is_err()
+                            {
+                                break;
+                            }
+                            if let Ok(page) = token_tr_res
+                                && token_transfers_tx.send(page).is_err()
+                            {
+                                break;
+                            }
+                        }
+                        _ => {
+                            let _ = token_overview_tx.send(None);
+                        }
+                    }
+                }
+                maybe_window = token_window_req_rx.recv() => {
+                    let Some(window) = maybe_window else { break; };
+                    let Some(addr) = current_addr else { continue; };
+                    if let Ok(series) = prices.get_history(addr, chain, window).await
                         && token_series_tx.send(series).is_err()
                     {
                         break;
                     }
-                    if let Ok(page) = token_tr_res
-                        && token_transfers_tx.send(page).is_err()
-                    {
-                        break;
-                    }
-                }
-                _ => {
-                    let _ = token_overview_tx.send(None);
                 }
             }
         }

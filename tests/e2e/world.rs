@@ -120,8 +120,10 @@ pub struct AppWorld {
     /// Token-detail prices stub (spot + historical price series).
     pub prices_stub: StubPricesPort,
 
-    /// Live token-price stream stub feeding the Token Detail
-    /// dispatcher. See `plan/8-token-detail.md` §13.1.
+    /// Live token-price stream stub. Retained for future scenarios
+    /// (the Token sub-tab spawners do not subscribe today; see
+    /// plan/16 §5).
+    #[allow(dead_code)]
     pub price_stream_stub: StubTokenPriceStreamPort,
 
     pub active_chain: Option<Chain>,

@@ -107,3 +107,127 @@ Feature: Address detail
     And the user switches to the Tokens tab
     Then once loaded, the Tokens tab shows a USD total of "$2.00" and 1 token not priced
     And the Tokens tab renders at least 2 distribution chart rows
+
+  # ---------------------------------------------------------------------------
+  # Contract sub-tabs (migrated from the deleted contract_detail.feature; see
+  # plan/16-unified-address-detail.md §8.1).
+  # ---------------------------------------------------------------------------
+
+  Scenario: Contract sub-tab opens the Overview by default with no proxy
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    When the user opens AddressDetail as contract for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then an "Address" screen is on top
+    And once the contract is loaded, no proxy is detected
+
+  Scenario: Contract sub-tab surfaces an EIP-1967 proxy
+    Given the address reader knows contract "0xa0a1000000000000000000000000000000000001" with balance 0 and nonce 1
+    And the proxy detector reports EIP-1967 implementation "0xb0b1000000000000000000000000000000000002" for "0xa0a1000000000000000000000000000000000001"
+    When the user opens AddressDetail as contract for "0xa0a1000000000000000000000000000000000001"
+    Then an "Address" screen is on top
+    And once the contract is loaded, the proxy points at "0xb0b1000000000000000000000000000000000002"
+
+  Scenario: Source sub-tab shows verified single file
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then once the contract source is loaded, the verified flag is true
+    And the Source sub-tab lists 1 file
+
+  Scenario: Unverified contract surfaces the empty Source state
+    Given the address reader knows contract "0xdead000000000000000000000000000000000001" with balance 0 and nonce 0
+    When the user opens AddressDetail as contract with source for "0xdead000000000000000000000000000000000001"
+    Then once the contract is loaded, the contract source is unavailable
+
+  Scenario: Read sub-tab executes a view function and decodes the result
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the contract reader stub returns uint 1000000 for "value()" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with Read wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Read sub-tab
+    And the user selects the first function and executes it
+    Then once executed, the Read sub-tab shows the uint result 1000000
+
+  Scenario: Read sub-tab surfaces revert reason
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the contract source stub has a verified single-file source for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the contract reader stub reverts with "InsufficientBalance()" for "value()" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with Read wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Read sub-tab
+    And the user selects the first function and executes it
+    Then once executed, the Read sub-tab reports a revert with "InsufficientBalance()"
+
+  Scenario: Events sub-tab lists decoded logs
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events sub-tab
+    Then once loaded, the Events sub-tab lists 2 events
+
+  Scenario: Events sub-tab paginates backwards with "n"
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events sub-tab
+    And the user presses "n" on the Events sub-tab
+    Then once reloaded, the Events sub-tab window moved backwards by 5000 blocks
+
+  Scenario: Events sub-tab returns to the newest window with "N"
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the event log stub has 2 Transfer events for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Events sub-tab
+    And the user presses "n" on the Events sub-tab
+    And the user presses "N" on the Events sub-tab
+    Then once reloaded, the Events sub-tab page offset is 0
+
+  Scenario: Storage sub-tab reads the requested slot
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the storage stub returns the u128 value 42 at slot 0 for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail as contract with all wiring for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user switches to the Storage sub-tab
+    And the user presses Enter on the Storage sub-tab
+    Then once loaded, the Storage sub-tab shows the value 42
+
+  # ---------------------------------------------------------------------------
+  # Token sub-tabs (migrated from the deleted token_detail.feature; see
+  # plan/16-unified-address-detail.md §8.1).
+  # ---------------------------------------------------------------------------
+
+  Scenario: Token sub-tab Overview shows symbol and supply
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35188571170816
+    When the user opens AddressDetail as token for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then an "Address" screen is on top
+    And once the token probe completes, the Token Overview shows symbol "USDC" and supply 35188571170816
+
+  Scenario: Token Overview surfaces market cap when price is known
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
+    And the prices stub returns 1.0001 USD for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail with ERC-20 probe for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    Then once the ERC-20 probe completes, the tab bar includes the Token tab
+    And the inline Token overview shows symbol "USDC" and price "$1.0001"
+
+  Scenario: Chart sub-tab renders the selected window
+    Given the address reader knows contract "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" with balance 0 and nonce 1
+    And the token reader knows "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as "USDC" / "USD Coin" decimals 6 supply 35000000000000
+    And the prices stub returns 30 points for window "1m" on "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    When the user opens AddressDetail with ERC-20 probe for "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    And the user presses "2" to select window "1m"
+    Then the active window is "1m"
+    And once the feeds complete, the chart holds 30 points for window "1m"
+
+  Scenario: Token Overview flags the unsupported price provider
+    Given the address reader knows contract "0xe6a537a407488807f0bbeb0038b79004f19dddfb" with balance 0 and nonce 1
+    And the token reader knows "0xe6a537a407488807f0bbeb0038b79004f19dddfb" as "BRLA" / "BRLA Token" decimals 18 supply 1000000000000000000000
+    And the Prices API returns 404 for "0xe6a537a407488807f0bbeb0038b79004f19dddfb"
+    When the user opens AddressDetail with ERC-20 probe for "0xe6a537a407488807f0bbeb0038b79004f19dddfb"
+    Then an "Address" screen is on top
+    And once the feeds complete, the Token price row renders "(not indexed by alchemy-prices)"
+
+  Scenario: Non-standard token surfaces the incomplete badge and c jumps to Contract sub-tab
+    Given the address reader knows contract "0x0000000000000000000000000000000000009999" with balance 0 and nonce 1
+    And the token reader knows "0x0000000000000000000000000000000000009999" as an incomplete non-ERC20 contract
+    When the user opens AddressDetail with ERC-20 probe for "0x0000000000000000000000000000000000009999"
+    And the user presses "c" to view as contract
+    Then the active main tab is "Contract"

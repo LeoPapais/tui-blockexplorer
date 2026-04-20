@@ -193,6 +193,15 @@ mod block_detail_screen_keys;
 #[path = "functional/address_detail_screen_keys.rs"]
 mod address_detail_screen_keys;
 
+#[path = "functional/address_detail_tabs.rs"]
+mod address_detail_tabs;
+
+#[path = "functional/address_detail_contract_subtabs.rs"]
+mod address_detail_contract_subtabs;
+
+#[path = "functional/address_detail_token_subtabs.rs"]
+mod address_detail_token_subtabs;
+
 #[path = "functional/alchemy_ens_reverse.rs"]
 mod alchemy_ens_reverse;
 
