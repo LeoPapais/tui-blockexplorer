@@ -22,10 +22,17 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{
+    Frame, Terminal,
+    backend::CrosstermBackend,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
+};
 use tokio::{signal, sync::mpsc};
 
-use crate::adapters::ui::{Command, GlobalKeyMap, ScreenStack};
+use crate::adapters::ui::{Command, GlobalKeyMap, Screen, ScreenStack};
 
 /// Events driving the dispatcher.
 #[derive(Debug)]
@@ -218,13 +225,79 @@ fn redraw(terminal: &mut Tui, stack: &ScreenStack) -> Result<()> {
     if let Some(top) = stack.top() {
         terminal.draw(|frame| {
             let area = frame.area();
-            top.render(frame, area);
-            if let Some(modal) = stack.modal() {
-                modal.render(frame, area);
+            if stack.modal().is_some() {
+                // Modal case: screen owns the full area underneath,
+                // modal draws on top. Matches pre-footer behaviour so
+                // the search overlay still paints its own input row.
+                top.render(frame, area);
+                if let Some(modal) = stack.modal() {
+                    modal.render(frame, area);
+                }
+            } else {
+                draw_screen_with_footer(frame, area, top);
             }
         })?;
     }
     Ok(())
+}
+
+/// Render `screen` into `area`, reserving the bottom row for the
+/// screen's footer hints. Used by the runtime's redraw path and by
+/// footer render tests. See `plan/15-backlog.md` §8.13 and the TUI
+/// rules in `.cursor/rules/tui.mdc`.
+pub fn draw_screen_with_footer(frame: &mut Frame<'_>, area: Rect, screen: &dyn Screen) {
+    let (body, footer) = split_for_footer(area);
+    screen.render(frame, body);
+    render_footer(frame, footer, screen);
+}
+
+/// Split `area` into a `(body, footer)` pair: the footer is a
+/// single-row strip pinned to the bottom. When `area` has height
+/// `0` or `1` the footer is returned as zero-row and the body
+/// absorbs the whole rectangle — tiny terminals fall back to the
+/// pre-footer layout. See `plan/15-backlog.md` §8.13.
+#[must_use]
+pub fn split_for_footer(area: Rect) -> (Rect, Rect) {
+    if area.height <= 1 {
+        return (area, Rect::new(area.x, area.bottom(), area.width, 0));
+    }
+    let body = Rect {
+        height: area.height - 1,
+        ..area
+    };
+    let footer = Rect {
+        x: area.x,
+        y: area.bottom() - 1,
+        width: area.width,
+        height: 1,
+    };
+    (body, footer)
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect, screen: &dyn Screen) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let hints = screen.footer_hints();
+    if hints.is_empty() {
+        return;
+    }
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 3);
+    for (i, (key, action)) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("[{key}]"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            (*action).to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn input_loop(tx: &mpsc::UnboundedSender<AppEvent>) {
