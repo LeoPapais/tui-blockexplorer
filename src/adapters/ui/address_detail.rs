@@ -397,6 +397,8 @@ pub struct AddressDetailScreen {
     source_focus: SourceFocus,
     storage_focus: StorageFocus,
     storage_value_scroll: std::cell::Cell<ScrollState>,
+    /// Selected line in the Storage value pane (copy + highlight).
+    storage_value_line: usize,
     arg_buffers: Vec<String>,
     arg_cursor: usize,
     last_result: Option<Result<Vec<DecodedValue>, String>>,
@@ -518,6 +520,7 @@ impl AddressDetailScreen {
             source_focus: SourceFocus::Files,
             storage_focus: StorageFocus::Slot,
             storage_value_scroll: std::cell::Cell::new(ScrollState::new()),
+            storage_value_line: 0,
             arg_buffers: Vec::new(),
             arg_cursor: 0,
             last_result: None,
@@ -906,6 +909,8 @@ impl AddressDetailScreen {
         }
         while let Ok(result) = self.feed.storage_rx.try_recv() {
             self.storage_result = Some(result.map_err(|e| domain_error_message(&e)));
+            self.storage_value_line = 0;
+            self.with_storage_value_scroll(|s| s.reset());
         }
     }
 
@@ -1185,10 +1190,25 @@ impl AddressDetailScreen {
     }
 
     fn bound_storage_value_for(&self, body: &str, area: Rect) -> u16 {
-        let content_lines = body.lines().count() as u16;
+        let n = body.lines().count().max(1);
         let viewport = area.height.saturating_sub(2);
-        self.with_storage_value_scroll(|s| s.set_dimensions(content_lines, viewport));
+        let row = self.storage_value_line.min(n.saturating_sub(1)) as u16;
+        self.with_storage_value_scroll(|s| {
+            s.set_dimensions(n as u16, viewport);
+            s.scroll_row_into_view(row);
+        });
         self.storage_value_scroll.get().offset()
+    }
+
+    fn storage_value_body(&self) -> String {
+        match (self.storage_slot_requested, self.storage_result.as_ref()) {
+            (Some(slot), Some(Ok(word))) => format_storage_word(slot, word),
+            (Some(_), Some(Err(msg))) => format!("ERROR: {msg}"),
+            (Some(_), None) => "Reading...".to_string(),
+            (None, None) => "(press Enter to read the current slot)".to_string(),
+            (None, Some(Err(msg))) => format!("ERROR: {msg}"),
+            (None, Some(Ok(_))) => unreachable!(),
+        }
     }
 
     fn set_token_window(&mut self, window: PriceWindow) {
@@ -1442,7 +1462,11 @@ impl AddressDetailScreen {
         Self::pane_border(self.focus_layer, focused, &palette)
     }
 
-    fn pane_border(focus_layer: DetailFocusLayer, this_pane_focused: bool, palette: &Palette) -> Style {
+    fn pane_border(
+        focus_layer: DetailFocusLayer,
+        this_pane_focused: bool,
+        palette: &Palette,
+    ) -> Style {
         if focus_layer == DetailFocusLayer::Content && this_pane_focused {
             detail_body_border_style(DetailFocusLayer::Content, palette)
         } else {
@@ -1523,6 +1547,23 @@ impl AddressDetailScreen {
         // before the user activates the cursor.
         match key.code {
             KeyCode::Char('y') => {
+                if matches!(self.active_tab, AddressTab::Contract)
+                    && matches!(self.active_contract_sub, ContractSubTab::Storage)
+                    && self.storage_focus == StorageFocus::Value
+                {
+                    let body = self.storage_value_body();
+                    let lines: Vec<&str> = body.lines().collect();
+                    let n = lines.len().max(1);
+                    let idx = self.storage_value_line.min(n.saturating_sub(1));
+                    if let Some(line) = lines.get(idx) {
+                        let text = (*line).to_string();
+                        self.last_copied_value = Some(text.clone());
+                        if let Some(services) = self.cursor_services.as_ref() {
+                            services.copy(&NavigableValue::Plain(text));
+                        }
+                    }
+                    return Command::None;
+                }
                 let cursor_tab = matches!(self.active_tab_or_fallback(), AddressTab::Overview)
                     || (matches!(self.active_tab, AddressTab::Contract)
                         && matches!(self.active_contract_sub, ContractSubTab::Overview));
@@ -2339,6 +2380,7 @@ impl AddressDetailScreen {
                 }
                 KeyCode::Down | KeyCode::Tab | KeyCode::Right => {
                     self.storage_focus = StorageFocus::Value;
+                    self.storage_value_line = 0;
                     self.with_storage_value_scroll(|s| s.reset());
                 }
                 KeyCode::Backspace => {
@@ -2353,6 +2395,7 @@ impl AddressDetailScreen {
                         self.storage_result = None;
                         let _ = self.feed.storage_tx.send(StorageRequest { slot });
                         self.storage_focus = StorageFocus::Value;
+                        self.storage_value_line = 0;
                         self.with_storage_value_scroll(|s| s.reset());
                     }
                     Err(msg) => {
@@ -2361,46 +2404,39 @@ impl AddressDetailScreen {
                 },
                 _ => {}
             },
-            StorageFocus::Value => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if self.storage_value_scroll.get().offset() == 0 {
-                        self.storage_focus = StorageFocus::Slot;
-                    } else {
-                        self.with_storage_value_scroll(|s| {
-                            s.scroll_by(-1);
-                        });
+            StorageFocus::Value => {
+                let body = self.storage_value_body();
+                let n = body.lines().count().max(1);
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if self.storage_value_line > 0 {
+                            self.storage_value_line -= 1;
+                        } else {
+                            self.storage_focus = StorageFocus::Slot;
+                        }
                     }
+                    KeyCode::Down | KeyCode::Char('j') if self.storage_value_line + 1 < n => {
+                        self.storage_value_line += 1;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {}
+                    KeyCode::PageUp => {
+                        self.storage_value_line = self.storage_value_line.saturating_sub(10);
+                    }
+                    KeyCode::PageDown => {
+                        self.storage_value_line = (self.storage_value_line + 10).min(n - 1);
+                    }
+                    KeyCode::Home => {
+                        self.storage_value_line = 0;
+                    }
+                    KeyCode::End => {
+                        self.storage_value_line = n - 1;
+                    }
+                    KeyCode::Left => {
+                        self.storage_focus = StorageFocus::Slot;
+                    }
+                    _ => {}
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.with_storage_value_scroll(|s| {
-                        s.scroll_by(1);
-                    });
-                }
-                KeyCode::PageUp => {
-                    self.with_storage_value_scroll(|s| {
-                        s.page_up();
-                    });
-                }
-                KeyCode::PageDown => {
-                    self.with_storage_value_scroll(|s| {
-                        s.page_down();
-                    });
-                }
-                KeyCode::Home => {
-                    self.with_storage_value_scroll(|s| {
-                        s.home();
-                    });
-                }
-                KeyCode::End => {
-                    self.with_storage_value_scroll(|s| {
-                        s.end();
-                    });
-                }
-                KeyCode::Left => {
-                    self.storage_focus = StorageFocus::Slot;
-                }
-                _ => {}
-            },
+            }
         }
         Command::None
     }
@@ -2984,14 +3020,12 @@ Contract may be unverified or expose only events / constructors.",
             None => String::new(),
         };
         frame.render_widget(
-            Paragraph::new(args_body)
-                .wrap(Wrap { trim: false })
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(args_border)
-                        .title(args_title),
-                ),
+            Paragraph::new(args_body).wrap(Wrap { trim: false }).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(args_border)
+                    .title(args_title),
+            ),
             detail_chunks[1],
         );
         let result_body = match (
@@ -3108,17 +3142,34 @@ Contract may be unverified or expose only events / constructors.",
             ),
             chunks[0],
         );
-        let body = match (self.storage_slot_requested, self.storage_result.as_ref()) {
-            (Some(slot), Some(Ok(word))) => format_storage_word(slot, word),
-            (Some(_), Some(Err(msg))) => format!("ERROR: {msg}"),
-            (Some(_), None) => "Reading...".to_string(),
-            (None, None) => "(press Enter to read the current slot)".to_string(),
-            (None, Some(Err(msg))) => format!("ERROR: {msg}"),
-            (None, Some(Ok(_))) => unreachable!(),
-        };
+        let body = self.storage_value_body();
         let v_offset = self.bound_storage_value_for(&body, chunks[1]);
+        let line_strings: Vec<&str> = body.lines().collect();
+        let n = line_strings.len().max(1);
+        let sel = self.storage_value_line.min(n.saturating_sub(1));
+        let highlight_value = matches!(self.storage_focus, StorageFocus::Value);
+        let styled: Vec<Line<'static>> = if line_strings.is_empty() {
+            vec![Line::from(body.clone())]
+        } else {
+            line_strings
+                .into_iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let selected = highlight_value && i == sel;
+                    let style = if selected {
+                        Style::default()
+                            .bg(Color::Indexed(238))
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(line.to_string(), style))
+                })
+                .collect()
+        };
         frame.render_widget(
-            Paragraph::new(body)
+            Paragraph::new(styled)
                 .wrap(Wrap { trim: false })
                 .scroll((v_offset, 0))
                 .block(

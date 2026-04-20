@@ -189,6 +189,8 @@ pub struct TxDetailScreen {
     raw_row: usize,
     /// Pane focus inside the Logs tab (plan 13.4).
     logs_focus: LogsFocus,
+    /// Selected line inside the Raw log dump (copy + highlight).
+    logs_raw_line: usize,
     /// Bounded scroll used by tabs whose content is rendered as a
     /// single `Paragraph` (plan 13.3). Wrapped in a `Cell` so the
     /// render path can refresh `content_height` / `viewport_height`
@@ -228,6 +230,7 @@ impl TxDetailScreen {
             logs_field: 0,
             raw_row: 0,
             logs_focus: LogsFocus::List,
+            logs_raw_line: 0,
             scroll: Cell::new(ScrollState::new()),
             logs_raw_scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
@@ -471,6 +474,7 @@ impl Screen for TxDetailScreen {
             && self.logs_focus == LogsFocus::Detail
         {
             self.logs_focus = LogsFocus::Raw;
+            self.logs_raw_line = 0;
             self.with_logs_raw_scroll(|s| s.reset());
             return Command::None;
         }
@@ -576,6 +580,7 @@ impl TxDetailScreen {
         if target == TxTab::Logs {
             self.logs_focus = LogsFocus::List;
             self.logs_field = 0;
+            self.logs_raw_line = 0;
             self.with_logs_raw_scroll(|s| s.reset());
         }
         if target == TxTab::Raw {
@@ -629,6 +634,7 @@ impl TxDetailScreen {
                     } else {
                         self.logs_selected -= 1;
                         self.logs_field = 0;
+                        self.logs_raw_line = 0;
                     }
                 }
                 KeyCode::Down if log_count > 0 => {
@@ -636,10 +642,12 @@ impl TxDetailScreen {
                         self.logs_selected += 1;
                     }
                     self.logs_field = 0;
+                    self.logs_raw_line = 0;
                 }
                 KeyCode::Char('j') if log_count > 0 => {
                     self.logs_selected = (self.logs_selected + 1) % log_count;
                     self.logs_field = 0;
+                    self.logs_raw_line = 0;
                 }
                 KeyCode::Right | KeyCode::Enter if log_count > 0 => {
                     self.logs_focus = LogsFocus::Detail;
@@ -667,6 +675,7 @@ impl TxDetailScreen {
                             self.logs_field += 1;
                         } else {
                             self.logs_focus = LogsFocus::Raw;
+                            self.logs_raw_line = 0;
                             self.with_logs_raw_scroll(|s| s.reset());
                         }
                     }
@@ -681,40 +690,32 @@ impl TxDetailScreen {
                     self.logs_focus = LogsFocus::List;
                     return;
                 }
+                let log = &view.decoded_logs[self.logs_selected];
+                let raw_dump = log_raw_dump(log);
+                let line_count = raw_dump.lines().count().max(1);
                 match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
-                        if self.logs_raw_scroll.get().offset() == 0 {
-                            self.logs_focus = LogsFocus::Detail;
+                        if self.logs_raw_line > 0 {
+                            self.logs_raw_line -= 1;
                         } else {
-                            self.with_logs_raw_scroll(|s| {
-                                s.scroll_by(-1);
-                            });
+                            self.logs_focus = LogsFocus::Detail;
                         }
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.with_logs_raw_scroll(|s| {
-                            s.scroll_by(1);
-                        });
+                    KeyCode::Down | KeyCode::Char('j') if self.logs_raw_line + 1 < line_count => {
+                        self.logs_raw_line += 1;
                     }
+                    KeyCode::Down | KeyCode::Char('j') => {}
                     KeyCode::PageUp => {
-                        self.with_logs_raw_scroll(|s| {
-                            s.page_up();
-                        });
+                        self.logs_raw_line = self.logs_raw_line.saturating_sub(10);
                     }
                     KeyCode::PageDown => {
-                        self.with_logs_raw_scroll(|s| {
-                            s.page_down();
-                        });
+                        self.logs_raw_line = (self.logs_raw_line + 10).min(line_count - 1);
                     }
                     KeyCode::Home => {
-                        self.with_logs_raw_scroll(|s| {
-                            s.home();
-                        });
+                        self.logs_raw_line = 0;
                     }
                     KeyCode::End => {
-                        self.with_logs_raw_scroll(|s| {
-                            s.end();
-                        });
+                        self.logs_raw_line = line_count - 1;
                     }
                     KeyCode::Left | KeyCode::Backspace => {
                         self.logs_focus = LogsFocus::Detail;
@@ -843,7 +844,10 @@ impl TxDetailScreen {
                 match self.logs_focus {
                     LogsFocus::Detail => fields.get(self.logs_field).map(|f| f.copy_value.clone()),
                     LogsFocus::List => fields.first().map(|f| f.copy_value.clone()),
-                    LogsFocus::Raw => Some(log_raw_dump(log)),
+                    LogsFocus::Raw => log_raw_dump(log)
+                        .lines()
+                        .nth(self.logs_raw_line)
+                        .map(str::to_string),
                 }
             }),
             TxTab::Raw => self
@@ -994,9 +998,11 @@ impl TxDetailScreen {
         let decoded_lines: Vec<Line<'static>> = fields
             .iter()
             .enumerate()
-            .map(|(idx, field)| log_field_line(field, {
-                matches!(self.logs_focus, LogsFocus::Detail) && idx == self.logs_field
-            }))
+            .map(|(idx, field)| {
+                log_field_line(field, {
+                    matches!(self.logs_focus, LogsFocus::Detail) && idx == self.logs_field
+                })
+            })
             .collect();
         frame.render_widget(
             Paragraph::new(decoded_lines)
@@ -1011,12 +1017,38 @@ impl TxDetailScreen {
         );
 
         let raw_text = log_raw_dump(log);
-        let raw_lines = raw_text.lines().count() as u16;
+        let line_strings: Vec<&str> = raw_text.lines().collect();
+        let n_lines = line_strings.len().max(1);
+        let sel = self.logs_raw_line.min(n_lines.saturating_sub(1));
         let raw_viewport = detail_split[1].height.saturating_sub(2);
-        self.with_logs_raw_scroll(|s| s.set_dimensions(raw_lines, raw_viewport));
+        self.with_logs_raw_scroll(|s| {
+            s.set_dimensions(n_lines as u16, raw_viewport);
+            s.scroll_row_into_view(sel as u16);
+        });
         let raw_offset = self.logs_raw_scroll.get().offset();
+        let highlight_raw = matches!(self.logs_focus, LogsFocus::Raw);
+        let raw_styled: Vec<Line<'static>> = if line_strings.is_empty() {
+            vec![Line::from("(empty)")]
+        } else {
+            line_strings
+                .into_iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let selected = highlight_raw && i == sel;
+                    let style = if selected {
+                        Style::default()
+                            .bg(Color::Indexed(238))
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(line.to_string(), style))
+                })
+                .collect()
+        };
         frame.render_widget(
-            Paragraph::new(raw_text)
+            Paragraph::new(raw_styled)
                 .wrap(Wrap { trim: false })
                 .scroll((raw_offset, 0))
                 .block(

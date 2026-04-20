@@ -1,16 +1,18 @@
 //! Logs tab nested focus (list / decoded / raw).
 
+use std::sync::Arc;
+
 use blockexplorer_tui::{
-    adapters::ui::{Screen, TxDetailScreen, TxLogsPane, TxTab, tx_feed},
+    adapters::ui::{CursorServices, Screen, TxDetailScreen, TxLogsPane, TxTab, tx_feed},
     application::{
-        DecodedLog, DecodedSignature, LoadStatus, SignatureSource, TxView,
+        DecodedLog, DecodedSignature, LoadStatus, SignatureSource, TxView, ports::ClipboardPort,
     },
-    domain::{
-        Address, Chain, LogEntry, Transaction, TxHash, TxStatus, TxType, Wei,
-    },
+    domain::{Address, Chain, LogEntry, Transaction, TxHash, TxStatus, TxType, Wei},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
+
+use crate::support::stubs::{StubClipboard, StubNavigationFactory};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -81,4 +83,32 @@ fn logs_tab_moves_list_detail_raw_and_esc_peels() {
     assert_eq!(screen.logs_tab_pane(), Some(TxLogsPane::Decoded));
     screen.handle_key(key(KeyCode::Esc));
     assert_eq!(screen.logs_tab_pane(), Some(TxLogsPane::List));
+}
+
+#[test]
+fn logs_raw_pane_copies_selected_line_with_y() {
+    let (feed, sender) = tx_feed();
+    let clipboard = Arc::new(StubClipboard::new());
+    let nav = Arc::new(StubNavigationFactory::new());
+    let services = CursorServices::new(
+        clipboard.clone() as Arc<dyn ClipboardPort>,
+        nav,
+        Chain::Ethereum,
+    );
+    let mut screen = TxDetailScreen::loading(Chain::Ethereum, sample_log_view().tx.hash, feed)
+        .with_cursor_services(services);
+    sender.updates_tx.send(sample_log_view()).unwrap();
+    screen.tick();
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.active_tab(), TxTab::Logs);
+    screen.handle_key(key(KeyCode::Right));
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.logs_tab_pane(), Some(TxLogsPane::Raw));
+    screen.handle_key(key(KeyCode::Down));
+    screen.handle_key(key(KeyCode::Char('y')));
+    let copied = screen.last_copied_value().expect("copy");
+    assert!(
+        copied.contains("topic0"),
+        "expected raw line after first Down, got {copied:?}"
+    );
 }

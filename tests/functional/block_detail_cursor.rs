@@ -75,12 +75,7 @@ fn overview_exposes_block_hash_parent_hash_and_miner() {
     let labels: Vec<&str> = fields.iter().map(|f| f.label).collect();
     assert_eq!(
         labels,
-        vec![
-            "block_hash",
-            "parent_hash",
-            "timestamp",
-            "miner",
-        ]
+        vec!["block_hash", "parent_hash", "timestamp", "miner",]
     );
 }
 

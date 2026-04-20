@@ -116,6 +116,27 @@ impl ScrollState {
         changed
     }
 
+    /// Adjust the offset so `row` is visible inside the viewport (used
+    /// for line-wise selection that drives scroll).
+    pub fn scroll_row_into_view(&mut self, row: u16) {
+        if self.viewport_height == 0 {
+            return;
+        }
+        if self.content_height == 0 {
+            self.offset = 0;
+            return;
+        }
+        let max = self.max_offset();
+        let v = self.viewport_height;
+        let mut off = self.offset;
+        if row < off {
+            off = row;
+        } else if row >= off.saturating_add(v) {
+            off = row + 1 - v;
+        }
+        self.offset = off.min(max);
+    }
+
     /// Reset to the top without touching the cached dimensions.
     /// Called when the parent screen switches tabs or loads new
     /// content.
@@ -211,6 +232,18 @@ mod tests {
         assert_eq!(s.offset(), 20);
         assert!(s.page_up());
         assert_eq!(s.offset(), 10);
+    }
+
+    #[test]
+    fn scroll_row_into_view_keeps_row_visible() {
+        let mut s = ScrollState::new();
+        s.set_dimensions(50, 10);
+        s.scroll_row_into_view(25);
+        assert_eq!(s.offset(), 16);
+        s.scroll_row_into_view(5);
+        assert_eq!(s.offset(), 5);
+        s.scroll_row_into_view(12);
+        assert_eq!(s.offset(), 5);
     }
 
     #[test]

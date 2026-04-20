@@ -9,8 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block as RatBlock, Borders, List, ListItem, Paragraph, Tabs, Wrap},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -351,8 +351,29 @@ impl Screen for BlockDetailScreen {
             }
             (Some(block), BlockTab::Overview) => {
                 let body = overview_body(block);
+                let fields = self.navigable_fields();
+                let nav_len = fields.len();
+                let selected = self.cursor.active();
+                let styled: Vec<Line<'static>> = body
+                    .lines()
+                    .enumerate()
+                    .map(|(line_idx, text)| {
+                        let row_selected =
+                            navigable_field_index_for_overview_line(line_idx, nav_len)
+                                .is_some_and(|fi| selected == Some(fi));
+                        let style = if row_selected {
+                            Style::default()
+                                .bg(Color::Indexed(238))
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        Line::from(Span::styled(text.to_string(), style))
+                    })
+                    .collect();
                 frame.render_widget(
-                    Paragraph::new(body).wrap(Wrap { trim: false }).block(
+                    Paragraph::new(styled).wrap(Wrap { trim: false }).block(
                         RatBlock::default()
                             .borders(Borders::ALL)
                             .border_style(body_border)
@@ -617,6 +638,19 @@ fn header_for(current: Option<&Block>) -> String {
             short_hex(&b.hash.to_hex()),
         ),
         None => "Block (loading...)".to_string(),
+    }
+}
+
+/// Maps a line index in [`overview_body`] to a navigable field index.
+fn navigable_field_index_for_overview_line(line_idx: usize, nav_len: usize) -> Option<usize> {
+    match nav_len {
+        4 => (line_idx < 4).then_some(line_idx),
+        5 => match line_idx {
+            0..=3 => Some(line_idx),
+            4 => Some(4),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
