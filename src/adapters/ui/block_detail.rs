@@ -5,6 +5,8 @@
 //! through a `BlockFeed` channel pair. See `plan/3-block-detail.md`
 //! section 11.3.
 
+use std::borrow::Cow;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -285,6 +287,14 @@ impl Screen for BlockDetailScreen {
         "Block"
     }
 
+    fn breadcrumb_label(&self) -> Cow<'_, str> {
+        if let Some(b) = &self.current {
+            Cow::Owned(format!("Block {}", b.number.value()))
+        } else {
+            Cow::Borrowed("Block")
+        }
+    }
+
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -295,10 +305,17 @@ impl Screen for BlockDetailScreen {
             ])
             .split(area);
 
+        let palette = PalettePreset::DarkDefault.palette();
+
         // Header
         let header = header_for(self.current.as_ref());
         frame.render_widget(
-            Paragraph::new(header).block(RatBlock::default().borders(Borders::ALL).title("Block")),
+            Paragraph::new(header).block(
+                RatBlock::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.muted))
+                    .title("Block"),
+            ),
             chunks[0],
         );
 
@@ -316,7 +333,6 @@ impl Screen for BlockDetailScreen {
             BlockTab::Transactions => 1,
             BlockTab::BlobsAndWithdrawals => 2,
         };
-        let palette = PalettePreset::DarkDefault.palette();
         let tab_border =
             tab_strip_border_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
         let tab_hi =

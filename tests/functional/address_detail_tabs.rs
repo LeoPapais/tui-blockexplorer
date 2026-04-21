@@ -74,7 +74,7 @@ fn eoa_shows_four_main_tabs_and_no_subtabs() {
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Transfers,
-            AddressTab::Tokens
+            AddressTab::Portfolio,
         ],
     );
 }
@@ -91,7 +91,7 @@ fn plain_contract_shows_five_main_tabs_with_contract_subtabs() {
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Transfers,
-            AddressTab::Tokens,
+            AddressTab::Portfolio,
             AddressTab::Contract,
         ],
     );
@@ -115,7 +115,7 @@ fn erc20_shows_six_main_tabs_with_token_and_contract_subtabs() {
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Transfers,
-            AddressTab::Tokens,
+            AddressTab::Portfolio,
             AddressTab::Token,
             AddressTab::Contract,
         ],

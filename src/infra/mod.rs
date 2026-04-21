@@ -42,9 +42,10 @@ use crate::{
         rpc::{
             AlchemyAddressLookup, AlchemyAddressReader, AlchemyBlockLookup, AlchemyBlockReader,
             AlchemyContractReader, AlchemyEnsResolver, AlchemyEventLog, AlchemyGasOracleAdapter,
-            AlchemyNetworkStatusAdapter, AlchemyPortfolio, AlchemyProxyDetector, AlchemySimulation,
-            AlchemyStorage, AlchemyTokenReader, AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader,
-            AlchemyTxTracer, CircuitBreaker, CompositeProxyDetector, RpcClient,
+            AlchemyNetworkStatusAdapter, AlchemyNewHeadsStream, AlchemyPortfolio,
+            AlchemyProxyDetector, AlchemySimulation, AlchemyStorage, AlchemyTokenReader,
+            AlchemyTransfers, AlchemyTxLookup, AlchemyTxReader, AlchemyTxTracer, CircuitBreaker,
+            CompositeProxyDetector, RpcClient,
         },
         signatures::{
             CompositeSignatureDirectory, HttpSignatureDirectory, SamczsunSignatureDirectory,
@@ -785,7 +786,10 @@ fn build_live_stack(config: &AppConfig) -> ScreenStack {
     let chains = InMemoryChainRegistry::with_default(chain);
 
     let session = HomeSession::new(network, gas, chains, chain);
-    let (feed, _home_handle) = home_feed::start(session, home_feed::DEFAULT_REFRESH_PERIOD);
+    let ws_url = alchemy_ws_url(chain, key);
+    let new_heads = AlchemyNewHeadsStream::new(ws_url, Arc::new(OsRng::new()));
+    let (feed, _home_handle) =
+        home_feed::start_with_stream(session, new_heads, chain, home_feed::DEFAULT_REFRESH_PERIOD);
 
     // Build the `CursorServices` bundle ONCE per live stack so every
     // screen factory (Home, Settings, and the detail screens opened
@@ -871,6 +875,14 @@ fn alchemy_url(chain: Chain, api_key: &str) -> Url {
         subdomain = chain.alchemy_subdomain(),
     );
     Url::parse(&raw).expect("well-known Alchemy URL always parses")
+}
+
+fn alchemy_ws_url(chain: Chain, api_key: &str) -> Url {
+    let raw = format!(
+        "wss://{subdomain}.g.alchemy.com/v2/{api_key}",
+        subdomain = chain.alchemy_subdomain(),
+    );
+    Url::parse(&raw).expect("well-known Alchemy WebSocket URL always parses")
 }
 
 #[derive(Debug, Default)]

@@ -102,6 +102,19 @@ impl Chain {
             Chain::Arbitrum => "arb-mainnet",
         }
     }
+
+    /// Ticker for the chain's native gas token in portfolio / balance UI.
+    #[must_use]
+    pub const fn native_symbol(self) -> &'static str {
+        match self {
+            Chain::Polygon => "POL",
+            Chain::Ethereum
+            | Chain::EthereumSepolia
+            | Chain::Base
+            | Chain::Optimism
+            | Chain::Arbitrum => "ETH",
+        }
+    }
 }
 
 #[cfg(test)]

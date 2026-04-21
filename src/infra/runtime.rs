@@ -25,14 +25,14 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::Rect,
-    style::{Modifier, Style},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
 use tokio::{signal, sync::mpsc};
 
-use crate::adapters::ui::{Command, GlobalKeyMap, Screen, ScreenStack};
+use crate::adapters::ui::{Command, GlobalKeyMap, Screen, ScreenStack, render_breadcrumb};
 
 /// Events driving the dispatcher.
 #[derive(Debug)]
@@ -234,7 +234,7 @@ fn redraw(terminal: &mut Tui, stack: &ScreenStack) -> Result<()> {
                     modal.render(frame, area);
                 }
             } else {
-                draw_screen_with_footer(frame, area, top);
+                draw_screen_with_footer(frame, area, top, stack);
             }
         })?;
     }
@@ -245,8 +245,33 @@ fn redraw(terminal: &mut Tui, stack: &ScreenStack) -> Result<()> {
 /// screen's footer hints. Used by the runtime's redraw path and by
 /// footer render tests. See `plan/15-backlog.md` §8.13 and the TUI
 /// rules in `.cursor/rules/tui.mdc`.
-pub fn draw_screen_with_footer(frame: &mut Frame<'_>, area: Rect, screen: &dyn Screen) {
-    let (body, footer) = split_for_footer(area);
+pub fn draw_screen_with_footer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    screen: &dyn Screen,
+    stack: &ScreenStack,
+) {
+    if area.height < 3 {
+        let (body, footer) = split_for_footer(area);
+        screen.render(frame, body);
+        render_footer(frame, footer, screen);
+        return;
+    }
+
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+
+    let trail = render_breadcrumb(stack);
+    if !trail.is_empty() {
+        frame.render_widget(
+            Paragraph::new(trail).style(Style::default().fg(Color::DarkGray)),
+            vertical[0],
+        );
+    }
+
+    let (body, footer) = split_for_footer(vertical[1]);
     screen.render(frame, body);
     render_footer(frame, footer, screen);
 }

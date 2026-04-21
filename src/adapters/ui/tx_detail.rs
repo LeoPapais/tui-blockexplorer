@@ -22,6 +22,7 @@
 //!   via `PageUp` / `PageDown` / `Home` / `End`, now bounded by
 //!   `ScrollState` (see plan 13.3).
 
+use std::borrow::Cow;
 use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -379,6 +380,10 @@ impl Screen for TxDetailScreen {
         "Transaction"
     }
 
+    fn breadcrumb_label(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("Tx {}", short_hex(&self.hash.to_hex())))
+    }
+
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -389,6 +394,8 @@ impl Screen for TxDetailScreen {
             ])
             .split(area);
 
+        let palette = PalettePreset::DarkDefault.palette();
+
         let header = match self.current.as_ref() {
             Some(view) => format!("Tx {}", short_hex(&view.tx.hash.to_hex())),
             None => "Tx (loading...)".to_string(),
@@ -397,6 +404,7 @@ impl Screen for TxDetailScreen {
             Paragraph::new(header).block(
                 RatBlock::default()
                     .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.muted))
                     .title("Transaction"),
             ),
             chunks[0],
@@ -406,7 +414,6 @@ impl Screen for TxDetailScreen {
             .iter()
             .map(|t| Line::from(format!(" {} ", t.label())))
             .collect();
-        let palette = PalettePreset::DarkDefault.palette();
         let tab_border =
             tab_strip_border_style(self.focus_layer, DetailTabStrip::Main, false, &palette);
         let tab_hi =

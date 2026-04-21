@@ -41,6 +41,7 @@ external-only data policy).
 | 15 | [15-backlog.md](15-backlog.md)                                 | Backlog (pendências 0–14) | draft  |
 | 16 | [16-probe-findings-and-deferred.md](16-probe-findings-and-deferred.md) | Probe findings + consolidated deferred backlog | draft  |
 | 17 | [17-navigable-values.md](17-navigable-values.md)               | Navigable values + field cursor | done (MVP) |
+| 18 | [18-shell-navigation-and-feeds.md](18-shell-navigation-and-feeds.md) | Shell, WS home, address/tx polish | ready |
 
 Status values: `draft` (still in planning), `ready` (ready to implement), `done`
 (implemented and covered by passing tests), `deferred`, `abandoned` (explicitly

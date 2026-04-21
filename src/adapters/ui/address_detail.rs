@@ -4,7 +4,7 @@
 //! (`AddressDetailScreen`, `ContractDetailScreen`,
 //! `TokenDetailScreen`). Main tabs adapt to the loaded address:
 //!
-//! - **EOA**: `Overview`, `Transactions`, `Transfers`, `Tokens`.
+//! - **EOA**: `Overview`, `Transactions`, `Transfers`, `Portfolio`.
 //! - **Plain contract**: same three + `Contract` (sub-tabs Source,
 //!   ABI, Read, Events, Storage — the `Contract/Overview` sub-tab
 //!   keeps the contract dossier with proxy + compiler metadata).
@@ -22,7 +22,7 @@
 //! plumbing and the lazy-dispatch rules followed by
 //! `src/infra/address_feed::spawn`.
 
-use std::{any::Any, collections::HashMap};
+use std::{any::Any, borrow::Cow, collections::HashMap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -45,6 +45,7 @@ use crate::{
             tab_strip_highlight_style,
         },
         field_cursor::{CursorDir, CursorServices, FieldCursor, FieldEntry},
+        format::humanize_eth,
         highlight::highlight_solidity,
         screen::{Command, Screen},
         scroll::ScrollState,
@@ -251,7 +252,7 @@ pub fn address_feed() -> (AddressFeed, AddressFeedSender) {
 /// the user presses Enter on a row.
 pub type OpenTxFactory = Box<dyn Fn(TxHash) -> Box<dyn Screen> + Send + Sync>;
 
-/// Factory used by the Tokens main tab (and by the Token/Transfers
+/// Factory used by the Portfolio main tab (and by the Token/Transfers
 /// sub-tab) to open another AddressDetail when the user presses
 /// Enter on a holding. Kept under the old "token" name so existing
 /// BDD helpers keep compiling; the returned screen is always an
@@ -269,7 +270,7 @@ pub enum AddressTab {
     Transactions,
     /// Asset / token transfers (`alchemy_getAssetTransfers`).
     Transfers,
-    Tokens,
+    Portfolio,
     /// Visible only when the ERC-20 probe confirmed `IsToken`.
     Token,
     /// Visible only when the loaded overview reports `Contract`.
@@ -287,7 +288,7 @@ impl AddressTab {
             AddressTab::Overview => "Overview",
             AddressTab::Transactions => "Transactions",
             AddressTab::Transfers => "Transfers",
-            AddressTab::Tokens => "Tokens",
+            AddressTab::Portfolio => "Portfolio",
             AddressTab::Token => "Token",
             AddressTab::Contract => "Contract",
             AddressTab::ContractImpl => "Impl",
@@ -658,7 +659,7 @@ impl AddressDetailScreen {
     }
 
     /// Navigable values on the current tab. Populated for Overview
-    /// (address, ENS, delegated_to) and Tokens (each holding's
+    /// (address, ENS, delegated_to) and Portfolio (each holding's
     /// contract address). Other tabs return an empty list until the
     /// per-sub-tab follow-ups covered by `plan/15-backlog.md` §8.16
     /// are delivered.
@@ -684,7 +685,7 @@ impl AddressDetailScreen {
                 }
                 fields
             }
-            AddressTab::Tokens => self
+            AddressTab::Portfolio => self
                 .holdings
                 .as_ref()
                 .map(|items| {
@@ -741,7 +742,7 @@ impl AddressDetailScreen {
             AddressTab::Overview,
             AddressTab::Transactions,
             AddressTab::Transfers,
-            AddressTab::Tokens,
+            AddressTab::Portfolio,
         ];
         if matches!(self.token_probe, TokenProbeState::IsToken(_)) {
             tabs.push(AddressTab::Token);
@@ -750,7 +751,12 @@ impl AddressDetailScreen {
             && matches!(ov.kind, AddressKind::Contract)
         {
             tabs.push(AddressTab::Contract);
-            if self.contract_overview.as_ref().and_then(|c| c.proxy).is_some() {
+            if self
+                .contract_overview
+                .as_ref()
+                .and_then(|c| c.proxy)
+                .is_some()
+            {
                 tabs.push(AddressTab::ContractImpl);
             }
         }
@@ -986,7 +992,7 @@ impl AddressDetailScreen {
 
     fn active_list_state(&self) -> &ListState {
         match self.active_tab_or_fallback() {
-            AddressTab::Tokens => &self.token_list_state,
+            AddressTab::Portfolio => &self.token_list_state,
             AddressTab::Transfers => &self.transfers_list_state,
             AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
                 &self.token_transfers_list_state
@@ -997,7 +1003,7 @@ impl AddressDetailScreen {
 
     fn active_list_state_mut(&mut self) -> &mut ListState {
         match self.active_tab_or_fallback() {
-            AddressTab::Tokens => &mut self.token_list_state,
+            AddressTab::Portfolio => &mut self.token_list_state,
             AddressTab::Transfers => &mut self.transfers_list_state,
             AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => {
                 &mut self.token_transfers_list_state
@@ -1018,7 +1024,7 @@ impl AddressDetailScreen {
                 .as_ref()
                 .map(|p| p.events.len())
                 .unwrap_or(0),
-            AddressTab::Tokens => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
+            AddressTab::Portfolio => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
             AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => self
                 .token_transfers
                 .as_ref()
@@ -1097,9 +1103,7 @@ impl AddressDetailScreen {
             self.last_result_for_impl = None;
         }
         while let Ok(delivery) = self.feed.read_rx.try_recv() {
-            let mapped = delivery
-                .result
-                .map_err(|e| domain_error_message(&e));
+            let mapped = delivery.result.map_err(|e| domain_error_message(&e));
             match delivery.calldata_source {
                 ReadCalldataSource::ProxyArtifact => {
                     self.last_result = Some(mapped);
@@ -1176,7 +1180,11 @@ impl AddressDetailScreen {
     }
 
     fn clamp_file_selection_impl(&mut self) {
-        let len = self.source_impl.as_ref().map(|s| s.files.len()).unwrap_or(0);
+        let len = self
+            .source_impl
+            .as_ref()
+            .map(|s| s.files.len())
+            .unwrap_or(0);
         clamp_selection(&mut self.file_list_state_impl, len);
     }
 
@@ -1228,7 +1236,7 @@ impl AddressDetailScreen {
         let csv = match self.active_tab_or_fallback() {
             AddressTab::Transactions => csv_for_account_tx(self.account_tx_page.as_ref()),
             AddressTab::Transfers => csv_for_transfers(self.transfers.as_ref()),
-            AddressTab::Tokens => csv_for_holdings(self.holdings.as_ref()),
+            AddressTab::Portfolio => csv_for_holdings(self.holdings.as_ref()),
             AddressTab::Overview
             | AddressTab::Token
             | AddressTab::Contract
@@ -1485,7 +1493,10 @@ impl AddressDetailScreen {
 
     fn file_delta(&mut self, delta: i32) {
         let len = if self.contract_main_is_impl() {
-            self.source_impl.as_ref().map(|s| s.files.len()).unwrap_or(0)
+            self.source_impl
+                .as_ref()
+                .map(|s| s.files.len())
+                .unwrap_or(0)
         } else {
             self.source.as_ref().map(|s| s.files.len()).unwrap_or(0)
         };
@@ -1573,6 +1584,16 @@ impl Screen for AddressDetailScreen {
         "Address"
     }
 
+    fn breadcrumb_label(&self) -> Cow<'_, str> {
+        let s = self.address.to_hex();
+        let short = if s.len() <= 14 {
+            s
+        } else {
+            format!("{}...{}", &s[..8], &s[s.len().saturating_sub(4)..])
+        };
+        Cow::Owned(format!("Address {short}"))
+    }
+
     fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let active = self.active_tab_or_fallback();
         let has_sub = matches!(
@@ -1599,6 +1620,8 @@ impl Screen for AddressDetailScreen {
             .constraints(constraints)
             .split(area);
 
+        let palette = PalettePreset::DarkDefault.palette();
+
         // Header.
         let header = match self.current.as_ref() {
             Some(ov) => {
@@ -1618,11 +1641,15 @@ impl Screen for AddressDetailScreen {
             None => "Address (loading...)".to_string(),
         };
         frame.render_widget(
-            Paragraph::new(header).block(Block::default().borders(Borders::ALL).title("Address")),
+            Paragraph::new(header).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.muted))
+                    .title("Address"),
+            ),
             chunks[0],
         );
 
-        let palette = PalettePreset::DarkDefault.palette();
         let sub_visible = has_sub;
         let main_border = tab_strip_border_style(
             self.focus_layer,
@@ -1720,7 +1747,7 @@ impl Screen for AddressDetailScreen {
             AddressTab::Overview => self.render_overview(frame, body_rect),
             AddressTab::Transactions => self.render_transactions(frame, body_rect),
             AddressTab::Transfers => self.render_transfers(frame, body_rect),
-            AddressTab::Tokens => self.render_tokens(frame, body_rect),
+            AddressTab::Portfolio => self.render_tokens(frame, body_rect),
             AddressTab::Token => match self.active_token_sub {
                 TokenSubTab::Overview => self.render_token_overview(frame, body_rect),
                 TokenSubTab::Transfers => self.render_token_transfers(frame, body_rect),
@@ -1903,10 +1930,11 @@ impl AddressDetailScreen {
         // always pops (plan/15-backlog.md §8.16). Other tabs that
         // use Backspace for text input (Read/args, Storage/slot) are
         // dispatched further down; this arm only fires on Overview.
-        let contract_overview_cursor = matches!(
-            self.active_tab,
-            AddressTab::Contract | AddressTab::ContractImpl
-        ) && matches!(self.active_contract_sub, ContractSubTab::Overview);
+        let contract_overview_cursor =
+            matches!(
+                self.active_tab,
+                AddressTab::Contract | AddressTab::ContractImpl
+            ) && matches!(self.active_contract_sub, ContractSubTab::Overview);
         if matches!(key.code, KeyCode::Backspace)
             && (matches!(self.active_tab_or_fallback(), AddressTab::Overview)
                 || contract_overview_cursor)
@@ -2163,7 +2191,7 @@ impl AddressDetailScreen {
                 AddressTab::Overview => self.handle_overview_key(key),
                 AddressTab::Transactions
                 | AddressTab::Transfers
-                | AddressTab::Tokens => self.handle_list_key(key),
+                | AddressTab::Portfolio => self.handle_list_key(key),
                 AddressTab::Token => self.handle_token_key(key),
                 AddressTab::Contract | AddressTab::ContractImpl => self.handle_contract_key(key),
             };
@@ -2289,7 +2317,7 @@ impl AddressDetailScreen {
                     _ => Command::None,
                 }
             }
-            AddressTab::Tokens => {
+            AddressTab::Portfolio => {
                 let contract = self
                     .holdings
                     .as_ref()
@@ -3024,35 +3052,70 @@ impl AddressDetailScreen {
     }
 
     fn render_tokens(&self, frame: &mut Frame<'_>, area: Rect) {
+        let outline = self.body_outline();
         match self.holdings.as_ref() {
             None => frame.render_widget(
-                Paragraph::new("Loading tokens...")
-                    .block(Block::default().borders(Borders::ALL).title("Tokens")),
+                Paragraph::new("Loading portfolio...").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(outline)
+                        .title("Portfolio"),
+                ),
                 area,
             ),
-            Some(holdings) if holdings.is_empty() => frame.render_widget(
-                Paragraph::new("No ERC-20 holdings found for this address.")
-                    .block(Block::default().borders(Borders::ALL).title("Tokens")),
-                area,
-            ),
+            Some(holdings) if holdings.is_empty() => {
+                let body = match self.current.as_ref() {
+                    Some(ov) => format!(
+                        "Native {}: {}\n\nNo ERC-20 holdings found for this address.",
+                        self.chain.native_symbol(),
+                        humanize_eth(ov.balance)
+                    ),
+                    None => "No ERC-20 holdings found for this address.\n\n(Native balance appears when Overview loads.)".to_string(),
+                };
+                frame.render_widget(
+                    Paragraph::new(body).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(outline)
+                            .title("Portfolio"),
+                    ),
+                    area,
+                );
+            }
             Some(holdings) => {
                 let summary = portfolio_summary(holdings);
+                let mut headline = String::new();
+                match self.current.as_ref() {
+                    Some(ov) => {
+                        headline.push_str(&format!(
+                            "Native {}: {}\n",
+                            self.chain.native_symbol(),
+                            humanize_eth(ov.balance)
+                        ));
+                    }
+                    None => {
+                        headline.push_str("(Native balance loads with Overview…)\n");
+                    }
+                }
+                headline.push_str(&portfolio_header_line(&summary));
+
                 let chart_rows = u16::try_from(summary.top_by_usd.len().min(5)).unwrap_or(0);
                 let chart_block_height = if chart_rows == 0 { 0 } else { chart_rows + 2 };
                 let tokens_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(3),
+                        Constraint::Length(4),
                         Constraint::Length(chart_block_height),
                         Constraint::Min(3),
                     ])
                     .split(area);
 
                 frame.render_widget(
-                    Paragraph::new(portfolio_header_line(&summary)).block(
+                    Paragraph::new(headline).block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title("Portfolio USD"),
+                            .border_style(outline)
+                            .title("Portfolio summary"),
                     ),
                     tokens_chunks[0],
                 );
@@ -3060,8 +3123,12 @@ impl AddressDetailScreen {
                 if chart_block_height > 0 {
                     let bar_width = (tokens_chunks[1].width as usize).saturating_sub(30).max(5);
                     frame.render_widget(
-                        Paragraph::new(render_top_distribution(&summary, bar_width))
-                            .block(Block::default().borders(Borders::ALL).title("Top 5 by USD")),
+                        Paragraph::new(render_top_distribution(&summary, bar_width)).block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(outline)
+                                .title("Top 5 by USD"),
+                        ),
                         tokens_chunks[1],
                     );
                 }
@@ -3073,7 +3140,12 @@ impl AddressDetailScreen {
                 let mut state = self.token_list_state;
                 frame.render_stateful_widget(
                     List::new(items)
-                        .block(Block::default().borders(Borders::ALL).title("Tokens"))
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(outline)
+                                .title("ERC-20 holdings"),
+                        )
                         .highlight_style(
                             Style::default()
                                 .add_modifier(Modifier::BOLD)
@@ -3488,8 +3560,7 @@ Contract may be unverified or expose only events / constructors.",
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(area);
         let rf = self.read_focus_active();
-        let list_border =
-            self.split_pane_border(matches!(rf, ReadFocus::FunctionList));
+        let list_border = self.split_pane_border(matches!(rf, ReadFocus::FunctionList));
         let sig_border = self.split_pane_border(false);
         let args_border = self.split_pane_border(matches!(rf, ReadFocus::Args));
         let result_border = self.split_pane_border(matches!(rf, ReadFocus::Result));
@@ -3820,9 +3891,9 @@ Kind          {kind}\n\
 Balance       {balance} wei\n\
 Nonce         {nonce}\n\
 \n\
-Txs loaded       {tx_count}\n\
-Transfers loaded {xfer_count}\n\
-Tokens loaded    {token_count}\n\
+Txs loaded         {tx_count}\n\
+Transfers loaded   {xfer_count}\n\
+Portfolio loaded   {token_count}\n\
 \n\
 [Tab] cycle tabs    [Enter] open selection    [Esc] back",
                 addr = ov.address.to_hex(),

@@ -2,8 +2,8 @@
 //!
 //! `plan/0-general-architecture.md` §3 describes the shell chrome as
 //! a header, a breadcrumb row, the content area and a status bar.
-//! Today only the content area is rendered; this helper is the first
-//! ingredient for the breadcrumb row.
+//! The runtime draws the breadcrumb row above the screen body; this
+//! module holds the pure string builder fed by [`Screen::breadcrumb_label`].
 //!
 //! The helper is pure (no I/O, no `self`) so it can be unit-tested
 //! without instantiating a live runtime. Callers should feed it the
@@ -32,13 +32,13 @@ use super::ScreenStack;
 /// [`breadcrumb_segments`].
 pub const BREADCRUMB_SEPARATOR: &str = " > ";
 
-/// Return the breadcrumb titles bottom-up (root first).
+/// Return the breadcrumb labels bottom-up (root first).
 ///
-/// Pure helper exposed alongside [`render_breadcrumb`] for callers
-/// that want to colour individual crumbs differently in the UI
-/// (accent for the current screen, dim for everything else).
+/// Each segment uses [`super::Screen::breadcrumb_label`]. Pure helper
+/// exposed alongside [`render_breadcrumb`] for callers that want to
+/// colour individual crumbs differently in the UI.
 pub fn breadcrumb_segments(stack: &ScreenStack) -> Vec<String> {
-    stack.titles().map(str::to_owned).collect()
+    stack.breadcrumb_labels()
 }
 
 /// Render the breadcrumb trail for the current [`ScreenStack`].

@@ -123,6 +123,8 @@ pub fn detail_body_border_style(focus: DetailFocusLayer, palette: &Palette) -> S
             .fg(palette.accent)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(palette.foreground)
+        // Unfocused panes match inactive tab chrome (dim grey), not
+        // `foreground` which reads as a strong white on dark palettes.
+        Style::default().fg(palette.muted)
     }
 }

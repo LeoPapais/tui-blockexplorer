@@ -12,10 +12,7 @@
 use tokio::task::JoinHandle;
 
 use crate::{
-    adapters::ui::{
-        AddressFeedSender,
-        address_detail::ReadDelivery,
-    },
+    adapters::ui::{AddressFeedSender, address_detail::ReadDelivery},
     application::{
         ports::{
             AccountTransactionsPort, AddressReaderPort, ContractReaderPort, ContractSourcePort,

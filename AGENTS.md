@@ -91,5 +91,9 @@ changes are involved.
 - **`.cursor/agents/tab-hierarchy-navigation.md`** — implements
   hierarchical tab / subtab / content focus (←/→ tabs, ↑/↓ depth),
   border highlights, and ancestor styling.
+- **`.cursor/agents/plan18-worktree-slice.md`** — one alphabetical
+  slice (C–H) from `plan/18-shell-navigation-and-feeds.md` per
+  isolated **`/worktree`**; parent merges with **`/apply-worktree`**
+  then runs gates on main.
 - **`.cursor/BUGBOT.md`** — review rules for pull-request-time
   enforcement (delegates to the `.cursor/rules/`).

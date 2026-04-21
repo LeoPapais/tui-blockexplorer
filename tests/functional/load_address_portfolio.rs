@@ -120,3 +120,45 @@ async fn unsupported_price_still_renders_holding() {
         PriceLookup::Unsupported { provider } if provider == "alchemy-prices"
     );
 }
+
+/// plan/18 Slice C: portfolio port may return more than twenty rows; the
+/// use case must forward every row to the UI (adapter caps metadata fan-out).
+#[tokio::test]
+async fn forwards_all_rows_when_stub_returns_more_than_twenty_holdings() {
+    let port = StubPortfolioPort::new();
+    let prices = StubPricesPort::new();
+    let owner = addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+    let mut rows = Vec::new();
+    for i in 0..25u8 {
+        let mut bytes = [0u8; 20];
+        bytes[0] = 0xde;
+        bytes[1] = 0xad;
+        bytes[19] = i;
+        let contract = Address::from_bytes(bytes);
+        rows.push(TokenHolding {
+            metadata: TokenMetadata {
+                address: contract,
+                symbol: format!("T{i}"),
+                name: format!("Token {i}"),
+                decimals: 6,
+            },
+            balance: Wei::new(100 + u128::from(i)),
+            price: PriceLookup::Pending,
+        });
+        prices.set_single(
+            contract,
+            TokenPrice {
+                currency: "usd".into(),
+                value: 1.0,
+                as_of: UnixTimestamp::from_seconds(1),
+            },
+        );
+    }
+    port.set_holdings(owner, rows);
+
+    let got = load_address_portfolio::run(&port, &prices, owner, Chain::Ethereum)
+        .await
+        .expect("ok");
+
+    assert_eq!(got.len(), 25);
+}

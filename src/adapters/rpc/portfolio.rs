@@ -18,8 +18,9 @@ use crate::{
 };
 
 /// Upper bound on the number of metadata calls issued per
-/// `get_token_balances`. Keeps large wallets responsive.
-const MAX_HOLDINGS: usize = 20;
+/// `get_token_balances`. Keeps large wallets responsive while surfacing
+/// deep ERC-20 books (see plan/18 Slice C).
+const MAX_HOLDINGS: usize = 100;
 
 #[derive(Debug, Deserialize)]
 struct RawBalancesResult {

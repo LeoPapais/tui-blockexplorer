@@ -269,10 +269,10 @@ async fn opens_address_detail_with_transfers(world: &mut AppWorld, addr_hex: Str
 // block_detail.rs and simply sends a Tab key press to whatever screen
 // is on top, so it already drives the AddressDetailScreen correctly.
 
-#[when("the user switches to the Tokens tab")]
-async fn switches_to_tokens_tab(world: &mut AppWorld) {
+#[when("the user switches to the Portfolio tab")]
+async fn switches_to_portfolio_tab(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
-    // Overview -> Transactions -> Transfers -> Tokens
+    // Overview -> Transactions -> Transfers -> Portfolio (three Tabs from Overview).
     press_key(stack, KeyCode::Tab);
     press_key(stack, KeyCode::Tab);
     press_key(stack, KeyCode::Tab);
@@ -336,18 +336,18 @@ async fn opens_address_detail_with_full_feeds(world: &mut AppWorld, addr_hex: St
     stack.push(screen);
 }
 
-#[then(regex = r#"^once loaded, the Tokens tab lists (\d+) holdings$"#)]
-async fn tokens_tab_lists_n(world: &mut AppWorld, expected: u32) {
+#[then(regex = r#"^once loaded, the Portfolio tab lists (\d+) holdings$"#)]
+async fn portfolio_tab_lists_n(world: &mut AppWorld, expected: u32) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| current(s).holdings().is_some()).await;
     let screen = current(stack);
-    assert_eq!(screen.active_tab(), AddressTab::Tokens);
+    assert_eq!(screen.active_tab(), AddressTab::Portfolio);
     let count = screen.holdings().map(|h| h.len()).unwrap_or(0);
     assert_eq!(count, expected as usize);
 }
 
-#[then("once loaded, the Tokens tab reports no holdings")]
-async fn tokens_tab_empty(world: &mut AppWorld) {
+#[then("once loaded, the Portfolio tab reports no holdings")]
+async fn portfolio_tab_empty(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| current(s).holdings().is_some()).await;
     let screen = current(stack);
@@ -563,10 +563,10 @@ async fn overview_loaded_then_y_copies(world: &mut AppWorld, expected: String) {
     assert_eq!(copied.as_deref(), Some(expected.as_str()));
 }
 
-#[when("the user presses e on the Tokens tab")]
-async fn presses_e_on_tokens(world: &mut AppWorld) {
+#[when("the user presses e on the Portfolio tab")]
+async fn presses_e_on_portfolio(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
-    assert_eq!(current(stack).active_tab(), AddressTab::Tokens);
+    assert_eq!(current(stack).active_tab(), AddressTab::Portfolio);
     press_key(stack, KeyCode::Char('e'));
 }
 
@@ -626,9 +626,9 @@ async fn portfolio_feed_knows_priced(world: &mut AppWorld, addr_hex: String) {
 }
 
 #[then(
-    regex = r#"^once loaded, the Tokens tab shows a USD total of "\$([0-9.]+)" and (\d+) token[s]? not priced$"#
+    regex = r#"^once loaded, the Portfolio tab shows a USD total of "\$([0-9.]+)" and (\d+) token[s]? not priced$"#
 )]
-async fn tokens_tab_shows_usd_total(
+async fn portfolio_tab_shows_usd_total(
     world: &mut AppWorld,
     expected_total: f64,
     expected_not: usize,
@@ -648,8 +648,8 @@ async fn tokens_tab_shows_usd_total(
     assert_eq!(summary.not_priced, expected_not);
 }
 
-#[then(regex = r#"^the Tokens tab renders at least (\d+) distribution chart rows$"#)]
-async fn tokens_tab_renders_chart(world: &mut AppWorld, expected_rows: usize) {
+#[then(regex = r#"^the Portfolio tab renders at least (\d+) distribution chart rows$"#)]
+async fn portfolio_tab_renders_chart(world: &mut AppWorld, expected_rows: usize) {
     use blockexplorer_tui::adapters::ui::address_detail::{
         portfolio_summary, render_top_distribution,
     };
@@ -664,8 +664,8 @@ async fn tokens_tab_renders_chart(world: &mut AppWorld, expected_rows: usize) {
     );
 }
 
-#[then(regex = r#"^the clipboard sink holds a Tokens CSV with (\d+) data rows$"#)]
-async fn clipboard_has_tokens_csv(world: &mut AppWorld, expected_rows: usize) {
+#[then(regex = r#"^the clipboard sink holds a Portfolio CSV with (\d+) data rows$"#)]
+async fn clipboard_has_portfolio_csv(world: &mut AppWorld, expected_rows: usize) {
     let stack = world.stack.as_ref().expect("stack");
     let screen = current(stack);
     let csv = screen
@@ -1255,7 +1255,7 @@ async fn active_main_tab_is(world: &mut AppWorld, label: String) {
         "Overview" => AddressTab::Overview,
         "Transactions" => AddressTab::Transactions,
         "Transfers" => AddressTab::Transfers,
-        "Tokens" => AddressTab::Tokens,
+        "Portfolio" => AddressTab::Portfolio,
         "Token" => AddressTab::Token,
         "Contract" => AddressTab::Contract,
         "Impl" => AddressTab::ContractImpl,

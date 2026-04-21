@@ -184,7 +184,7 @@ Uma única tela (`AddressDetailScreen`) cobre EOAs, contratos e
 tokens ERC-20. As abas aparecem dinamicamente de acordo com o
 tipo do endereço:
 
-- EOA: `Overview`, `Transactions`, `Tokens`.
+- EOA: `Overview`, `Transactions`, `Portfolio`.
 - Contrato: as três acima mais `Contract`.
 - Token ERC-20: as quatro acima mais `Token`.
 

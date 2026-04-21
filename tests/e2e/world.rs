@@ -90,7 +90,7 @@ pub struct AppWorld {
     /// Normal transactions (`txlist`) stub feeding the **Transactions** tab.
     pub account_transactions_stub: StubAccountTransactionsPort,
 
-    /// Portfolio stub feeding the Tokens tab on Address Detail.
+    /// Portfolio stub feeding the **Portfolio** tab on Address Detail.
     pub portfolio_stub: StubPortfolioPort,
 
     /// Address captured by the latest "the transfers feed knows ..."

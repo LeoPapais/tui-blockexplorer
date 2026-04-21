@@ -274,7 +274,7 @@ fn e_on_tokens_exports_csv_with_price_columns() {
     screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab));
-    assert_eq!(screen.active_tab(), AddressTab::Tokens);
+    assert_eq!(screen.active_tab(), AddressTab::Portfolio);
 
     screen.handle_key(key(KeyCode::Char('e')));
 

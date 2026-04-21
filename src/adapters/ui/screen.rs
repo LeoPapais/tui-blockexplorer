@@ -2,6 +2,8 @@
 //!
 //! See `plan/12-screen-runtime.md` sections 2 and 7.
 
+use std::borrow::Cow;
+
 use crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};
 
@@ -85,6 +87,14 @@ impl Eq for Command {}
 pub trait Screen: Send + 'static {
     /// Short name used on the breadcrumb and for logging.
     fn title(&self) -> &str;
+
+    /// Human-readable segment for the global breadcrumb row (plan/18).
+    ///
+    /// Defaults to [`Screen::title`]; detail screens override with
+    /// shortened hashes or block numbers where helpful.
+    fn breadcrumb_label(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self.title())
+    }
 
     /// Draw the screen at `area` within `frame`.
     fn render(&self, frame: &mut Frame<'_>, area: Rect);
@@ -189,12 +199,20 @@ impl ScreenStack {
 
     /// Iterate over screen titles bottom-up (root first, top last).
     ///
-    /// Drives `adapters::ui::breadcrumb::render_breadcrumb` without
-    /// exposing the internal `Box<dyn Screen>` storage. Modals are
-    /// intentionally excluded — the breadcrumb describes the back
-    /// stack the user sees once they close the current modal.
+    /// Used for logging and tests. The on-screen trail uses
+    /// [`ScreenStack::breadcrumb_labels`] / [`Screen::breadcrumb_label`].
+    /// Modals are intentionally excluded from the stack iteration.
     pub fn titles(&self) -> impl Iterator<Item = &str> + '_ {
         self.screens.iter().map(|s| s.title())
+    }
+
+    /// Breadcrumb segments for the navigation trail (root → current).
+    #[must_use]
+    pub fn breadcrumb_labels(&self) -> Vec<String> {
+        self.screens
+            .iter()
+            .map(|s| s.breadcrumb_label().into_owned())
+            .collect()
     }
 
     /// Clear every screen and any modal. Called in response to

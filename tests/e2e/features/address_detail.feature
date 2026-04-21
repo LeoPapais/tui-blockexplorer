@@ -36,21 +36,21 @@ Feature: Address detail
     And the user switches to the Transfers tab
     Then once loaded, the Transfers tab lists 2 transfers
 
-  Scenario: Tokens tab lists holdings and opens AddressDetail focused on Token
+  Scenario: Portfolio tab lists holdings and opens AddressDetail focused on Token
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
     And the portfolio feed knows 2 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-    And the user switches to the Tokens tab
-    Then once loaded, the Tokens tab lists 2 holdings
+    And the user switches to the Portfolio tab
+    Then once loaded, the Portfolio tab lists 2 holdings
     When the user selects the first holding and presses Enter
     Then an "Address" screen is on top
 
-  Scenario: Tokens tab empty state
+  Scenario: Portfolio tab empty state
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
     And the portfolio feed knows 0 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-    And the user switches to the Tokens tab
-    Then once loaded, the Tokens tab reports no holdings
+    And the user switches to the Portfolio tab
+    Then once loaded, the Portfolio tab reports no holdings
 
   Scenario: Contract tab appears for contract addresses
     Given the address reader knows contract "0x1d88182ff972b826f7663591c6270271644171a2" with balance 0 and nonce 1
@@ -101,19 +101,19 @@ Feature: Address detail
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
     And the portfolio feed knows 2 holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-    And the user switches to the Tokens tab
-    Then once loaded, the Tokens tab lists 2 holdings
-    When the user presses e on the Tokens tab
-    Then the clipboard sink holds a Tokens CSV with 2 data rows
+    And the user switches to the Portfolio tab
+    Then once loaded, the Portfolio tab lists 2 holdings
+    When the user presses e on the Portfolio tab
+    Then the clipboard sink holds a Portfolio CSV with 2 data rows
 
-  Scenario: Tokens tab shows USD totals and a distribution chart
+  Scenario: Portfolio tab shows USD totals and a distribution chart
     # plan/6-address-detail.md §11 "Shipped", plan/15-backlog.md §8.7.
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 1 and nonce 1
     And the portfolio feed knows priced holdings for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with full feeds for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-    And the user switches to the Tokens tab
-    Then once loaded, the Tokens tab shows a USD total of "$2.00" and 1 token not priced
-    And the Tokens tab renders at least 2 distribution chart rows
+    And the user switches to the Portfolio tab
+    Then once loaded, the Portfolio tab shows a USD total of "$2.00" and 1 token not priced
+    And the Portfolio tab renders at least 2 distribution chart rows
 
   # ---------------------------------------------------------------------------
   # Contract sub-tabs (migrated from the deleted contract_detail.feature; see
