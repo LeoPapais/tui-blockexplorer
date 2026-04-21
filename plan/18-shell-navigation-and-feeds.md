@@ -2,14 +2,10 @@
 
 Status: **ready** (accepted product goals; implement in ordered slices).
 
-**Progress (repo):** Slices **A**, **B**, and **C** are implemented (Portfolio tab,
-native line, `Chain::native_symbol`, `MAX_HOLDINGS` = 100, tests + BDD strings).
-Slices **D–H** must be implemented **one per isolated git worktree** using the
-**`plan18-worktree-slice`** subagent (see
-[`.cursor/agents/plan18-worktree-slice.md`](../.cursor/agents/plan18-worktree-slice.md)):
-parent runs **`/worktree`**, delegates the slice with `WORKTREE_PATH`, then
-**`/apply-worktree`** → **`/delete-worktree`** → gates on **main** (see
-[`AGENTS.md`](../AGENTS.md) and [`.cursor/README.md`](../.cursor/README.md)).
+**Progress (repo):** Slices **A–E** are implemented. **D** and **E** landed via
+isolated **`/worktree`** + subagent + cherry-pick/merge, then **`/delete-worktree`**
+and gates on **main** (see [`.cursor/README.md`](../.cursor/README.md)).
+Remaining slices **F–H**: same pipeline with **`plan18-worktree-slice`**.
 
 Cross-references: [plan/0-general-architecture.md](0-general-architecture.md) (shell),
 [plan/1-home.md](1-home.md) §12.5 (WebSocket home feed),
