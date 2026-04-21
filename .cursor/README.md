@@ -84,6 +84,8 @@ subagent’s session:
    (same gates as [AGENTS.md](../AGENTS.md)). If green, **commit** on
    the branch the user expects (usually `main`).
 
+For **plan/18** slices delegated to [`.cursor/agents/plan18-worktree-slice.md`](agents/plan18-worktree-slice.md): the subagent works only in `WORKTREE_PATH`. After merging (**`/apply-worktree`** with the script below, or **`git cherry-pick <worktree-commit>`** onto `main` when the worktree already has a single feature commit), run **`/delete-worktree`**, then on **main** run `cargo test`, `cargo test --test e2e` when Cucumber steps change, and `cargo clippy --all-targets -- -D warnings`. The **orchestrating** agent is responsible for those gates and for leaving **`main` with a passing commit** (either the cherry-picked commit or an explicit follow-up commit if the merge was partial).
+
 Do **not** use this pipeline for readonly subagents (for example
 `plan-guard`) or when the task explicitly does not touch tracked files.
 
