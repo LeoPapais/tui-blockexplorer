@@ -224,13 +224,7 @@ async fn account_tx_feed_knows_n(world: &mut AppWorld, count: u32, addr_hex: Str
         "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc",
     ];
     let txs: Vec<AccountTx> = (0..count as usize)
-        .map(|i| {
-            sample_account_tx(
-                21_000_000 - i as u64,
-                hashes[i % hashes.len()],
-                &addr_hex,
-            )
-        })
+        .map(|i| sample_account_tx(21_000_000 - i as u64, hashes[i % hashes.len()], &addr_hex))
         .collect();
     for tx in &txs {
         seed_tx_reader(world, tx.tx_hash);

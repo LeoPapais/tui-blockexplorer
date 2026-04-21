@@ -8,8 +8,8 @@
 
 use blockexplorer_tui::{
     adapters::ui::{
-        AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, HomeScreen, Screen,
-        ScreenStack, SettingsScreen, TxDetailScreen, address_feed, block_feed, tx_feed,
+        AddressDetailScreen, AppConfigSnapshot, BlockDetailScreen, HomeScreen, Screen, ScreenStack,
+        SettingsScreen, TxDetailScreen, address_feed, block_feed, tx_feed,
     },
     domain::{
         Address, AddressKind, AddressOverview, Block, BlockHash, BlockNumber, Chain, Transaction,

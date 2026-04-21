@@ -4,9 +4,7 @@
 
 use blockexplorer_tui::{
     application::use_cases::load_address_account_transactions,
-    domain::{
-        AccountTx, AccountTxPage, Address, BlockNumber, Chain, TxHash, Wei,
-    },
+    domain::{AccountTx, AccountTxPage, Address, BlockNumber, Chain, TxHash, Wei},
 };
 use pretty_assertions::assert_eq;
 

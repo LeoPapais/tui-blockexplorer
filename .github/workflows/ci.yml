@@ -52,19 +52,18 @@ jobs:
       # the testing.mdc contract "no network in tests" a hard,
       # enforceable property of CI.
       #
-      # Adapters that talk HTTP use `wiremock` on 127.0.0.1, which
-      # survives the loss of external routes because the MockServer
-      # binds to the loopback device that wiremock brings up inside
-      # the namespace (or falls back to a Unix socket when loopback
-      # is absent — see `wiremock`'s 0.6 docs).
+      # Adapters that talk HTTP use `wiremock` on 127.0.0.1. A fresh
+      # network namespace from `unshare -n` creates `lo` but leaves it
+      # **DOWN**, so connections to localhost fail until we bring it up
+      # (`ip link set lo up`).
       - name: cargo test --lib --bins  (no network)
-        run: unshare -rn -- bash -c 'cargo test --lib --bins --locked'
+        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
 
       - name: cargo test --tests  (no network)
-        run: unshare -rn -- bash -c 'cargo test --test functional --locked'
+        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --test functional --locked'
 
       - name: cargo test --test e2e  (no network)
-        run: unshare -rn -- bash -c 'cargo test --test e2e --locked'
+        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
 
       - name: scripts/check-layers.sh
         run: bash scripts/check-layers.sh

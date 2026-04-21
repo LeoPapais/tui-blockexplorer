@@ -12,8 +12,8 @@ use super::client::{EtherscanClient, EtherscanError};
 use crate::{
     application::ports::AccountTransactionsPort,
     domain::{
-        AccountTx, AccountTxCursor, AccountTxPage, Address, BlockNumber, Chain, DomainError, TxHash,
-        Wei,
+        AccountTx, AccountTxCursor, AccountTxPage, Address, BlockNumber, Chain, DomainError,
+        TxHash, Wei,
     },
 };
 
@@ -92,15 +92,11 @@ fn parse_txlist_response(
         .map_err(|e| DomainError::Internal(format!("etherscan txlist decode: {e}")))?;
 
     if parsed.result.is_array() {
-        let arr = parsed
-            .result
-            .as_array()
-            .expect("checked is_array");
+        let arr = parsed.result.as_array().expect("checked is_array");
         let mut txs = Vec::with_capacity(arr.len());
         for row in arr {
-            let raw: RawTxRow = serde_json::from_value(row.clone()).map_err(|e| {
-                DomainError::Internal(format!("etherscan txlist row decode: {e}"))
-            })?;
+            let raw: RawTxRow = serde_json::from_value(row.clone())
+                .map_err(|e| DomainError::Internal(format!("etherscan txlist row decode: {e}")))?;
             txs.push(map_row(chain, raw)?);
         }
         let next_cursor = if txs.len() == TXLIST_OFFSET as usize {
@@ -119,10 +115,7 @@ fn parse_txlist_response(
 
     // Empty / not found: often `status=0`, `message` like "No transactions found", `result=[]`.
     if parsed.result.is_string() {
-        let s = parsed
-            .result
-            .as_str()
-            .expect("checked is_string");
+        let s = parsed.result.as_str().expect("checked is_string");
         if s.is_empty() {
             return Ok(AccountTxPage::default());
         }

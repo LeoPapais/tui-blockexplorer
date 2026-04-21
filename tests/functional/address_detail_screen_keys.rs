@@ -229,10 +229,7 @@ fn e_on_transactions_exports_csv_with_header_and_rows() {
         .last_copied_value()
         .expect("CSV blob written to clipboard sink");
     let lines: Vec<&str> = csv.lines().collect();
-    assert_eq!(
-        lines[0], "block,tx_hash,from,to,value_wei",
-        "header row",
-    );
+    assert_eq!(lines[0], "block,tx_hash,from,to,value_wei", "header row",);
     assert_eq!(lines.len(), 3, "header + 2 rows");
     assert!(lines[1].starts_with("21000000,0xaaaa"));
     assert!(lines[1].contains("0xd8da6bf26964af9d7eed9e03e53415d37aa96045"));

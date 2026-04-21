@@ -17,10 +17,10 @@ use cucumber::World;
 use crate::support::stubs::FrozenClock;
 
 use crate::support::stubs::{
-    StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
-    StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
-    StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
-    StubAccountTransactionsPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
+    StubAccountTransactionsPort, StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort,
+    StubBlockReaderPort, StubChainRegistry, StubContractReaderPort, StubContractSourcePort,
+    StubEnsResolverPort, StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort,
+    StubNewHeadsStreamPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
     StubSignatureDirectoryPort, StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort,
     StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
     StubTxSimulationPort, StubTxTracePort,

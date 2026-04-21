@@ -730,10 +730,7 @@ impl AddressDetailScreen {
                             NavigableValue::Plain(ov.total_supply.to_string()),
                         ));
                         let price_cell = format_price_lookup(&self.token_price);
-                        fields.push(FieldEntry::new(
-                            "price",
-                            NavigableValue::Plain(price_cell),
-                        ));
+                        fields.push(FieldEntry::new("price", NavigableValue::Plain(price_cell)));
                         let mcap_line = {
                             let synth = TokenOverview {
                                 metadata: ov.metadata.clone(),
@@ -1073,11 +1070,7 @@ impl AddressDetailScreen {
                 .as_ref()
                 .map(|p| p.txs.len())
                 .unwrap_or(0),
-            AddressTab::Transfers => self
-                .transfers
-                .as_ref()
-                .map(|p| p.events.len())
-                .unwrap_or(0),
+            AddressTab::Transfers => self.transfers.as_ref().map(|p| p.events.len()).unwrap_or(0),
             AddressTab::Portfolio => self.holdings.as_ref().map(|h| h.len()).unwrap_or(0),
             AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Transfers) => self
                 .token_transfers
@@ -2271,9 +2264,9 @@ impl AddressDetailScreen {
         if self.focus_layer == DetailFocusLayer::Content {
             return match self.active_tab_or_fallback() {
                 AddressTab::Overview => self.handle_overview_key(key),
-                AddressTab::Transactions
-                | AddressTab::Transfers
-                | AddressTab::Portfolio => self.handle_list_key(key),
+                AddressTab::Transactions | AddressTab::Transfers | AddressTab::Portfolio => {
+                    self.handle_list_key(key)
+                }
                 AddressTab::Token => self.handle_token_key(key),
                 AddressTab::Contract | AddressTab::ContractImpl => self.handle_contract_key(key),
             };
@@ -3175,9 +3168,7 @@ impl AddressDetailScreen {
             .border_style(self.body_outline())
             .title("Transfers");
         match self.transfers.as_ref() {
-            None => {
-                frame.render_widget(Paragraph::new("Loading transfers...").block(block), area)
-            }
+            None => frame.render_widget(Paragraph::new("Loading transfers...").block(block), area),
             Some(page) if page.events.is_empty() => frame.render_widget(
                 Paragraph::new("No asset transfers found for this address.").block(block),
                 area,
@@ -3961,8 +3952,8 @@ Contract may be unverified or expose only events / constructors.",
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(4), Constraint::Min(3)])
             .split(area);
-        let show_caret = matches!(self.storage_focus, StorageFocus::Slot)
-            && (self.frame_tick % 12 < 6);
+        let show_caret =
+            matches!(self.storage_focus, StorageFocus::Slot) && (self.frame_tick % 12 < 6);
         let caret = if show_caret { '|' } else { ' ' };
         let prompt = format!(
             "Slot (decimal or 0x-hex): {}{caret}\n[Enter] to read, [Backspace] to edit",
@@ -4235,10 +4226,7 @@ fn csv_for_account_tx(page: Option<&AccountTxPage>) -> String {
         return buf;
     };
     for tx in &page.txs {
-        let to = tx
-            .to
-            .map(|a| a.to_hex())
-            .unwrap_or_else(|| "".to_string());
+        let to = tx.to.map(|a| a.to_hex()).unwrap_or_else(|| "".to_string());
         buf.push_str(&format!(
             "{block},{tx},{from},{to},{value}\n",
             block = tx.block_number.value(),
