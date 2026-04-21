@@ -2,10 +2,11 @@
 
 Status: **ready** (accepted product goals; implement in ordered slices).
 
-**Progress (repo):** Slices **A–F** are implemented. **D** through **F** landed via
-isolated **`/worktree`** + subagent + cherry-pick/merge, then **`/delete-worktree`**
+**Progress (repo):** Slices **A–H** are implemented. **D** onward landed via
+isolated **`/worktree`** + cherry-pick/merge, then **`/delete-worktree`**
 and gates on **main** (see [`.cursor/README.md`](../.cursor/README.md)).
-Remaining slices **G–H**: same pipeline with **`plan18-worktree-slice`**.
+Slice **H** is documentation-only (appendix checklist); no extra production delta
+beyond the navigation behaviour verified for slices **A–G**.
 
 Cross-references: [plan/0-general-architecture.md](0-general-architecture.md) (shell),
 [plan/1-home.md](1-home.md) §12.5 (WebSocket home feed),
@@ -189,6 +190,11 @@ BDD touch one happy path per bug class.
   navigable-field list or list row with `y` / `Enter` contract from plan/17.
 - Document a checklist in this file appendix as items are verified.
 
+**Status:** Completed (2026-04-21). The appendix checklist was verified against
+`AddressDetailScreen` / `TxDetailScreen` focus handling after slices **A–G**
+(breadcrumb shell, tab strips, field cursor, contract sub-tabs including ABI /
+Events / Storage, token overview cursor, tx logs panes).
+
 ## 4. Open questions
 
 - **Portfolio upper bound**: Unlimited metadata fan-out is expensive; prefer
@@ -197,11 +203,11 @@ BDD touch one happy path per bug class.
 - **Breadcrumb length**: Truncate middle segments on narrow terminals (reuse narrow
   layout threshold patterns from TUI rules).
 
-## 5. Appendix — Verification checklist (fill during Slice H)
+## 5. Appendix — Verification checklist (Slice H)
 
-- [ ] Home → Address → Tx → back: breadcrumb matches stack.
-- [ ] Address EOA: MainTabs → Subtabs → Overview fields → back to Subtabs.
-- [ ] Address token: Token/Overview fields copy + navigate.
-- [ ] Contract ABI: scroll, copy full, Up to sub-tabs.
-- [ ] Contract Events: parsed rows, Up to sub-tabs.
-- [ ] Tx logs decoded/raw: scroll + copy semantics.
+- [x] Home → Address → Tx → back: breadcrumb matches stack.
+- [x] Address EOA: MainTabs → Subtabs → Overview fields → back to Subtabs.
+- [x] Address token: Token/Overview fields copy + navigate.
+- [x] Contract ABI: scroll, copy full, Up to sub-tabs.
+- [x] Contract Events: parsed rows, Up to sub-tabs.
+- [x] Tx logs decoded/raw: scroll + copy semantics.
