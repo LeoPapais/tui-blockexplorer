@@ -42,6 +42,7 @@ fn it_shows_impl_main_tab_when_contract_overview_has_proxy() {
         vec![
             AddressTab::Overview,
             AddressTab::Transactions,
+            AddressTab::Transfers,
             AddressTab::Tokens,
             AddressTab::Contract,
             AddressTab::ContractImpl,

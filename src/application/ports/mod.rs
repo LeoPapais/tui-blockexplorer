@@ -3,6 +3,7 @@
 //! One file per capability. Each trait is documented with a link to the plan
 //! section that introduced it.
 
+pub mod account_transactions;
 pub mod address_lookup;
 pub mod address_reader;
 pub mod block_lookup;
@@ -38,6 +39,7 @@ pub mod tx_reader;
 pub mod tx_simulation;
 pub mod tx_trace;
 
+pub use account_transactions::AccountTransactionsPort;
 pub use address_lookup::AddressLookupPort;
 pub use address_reader::AddressReaderPort;
 pub use block_lookup::BlockLookupPort;

@@ -20,9 +20,10 @@ use crate::support::stubs::{
     StubAddressLookupPort, StubAddressReaderPort, StubBlockLookupPort, StubBlockReaderPort,
     StubChainRegistry, StubContractReaderPort, StubContractSourcePort, StubEnsResolverPort,
     StubEventLogPort, StubGasOraclePort, StubNetworkStatusPort, StubNewHeadsStreamPort,
-    StubPortfolioPort, StubPricesPort, StubProxyDetectionPort, StubSignatureDirectoryPort,
-    StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort, StubTokenSearchPort,
-    StubTransfersPort, StubTxLookupPort, StubTxReaderPort, StubTxSimulationPort, StubTxTracePort,
+    StubAccountTransactionsPort, StubPortfolioPort, StubPricesPort, StubProxyDetectionPort,
+    StubSignatureDirectoryPort, StubStoragePort, StubTokenPriceStreamPort, StubTokenReaderPort,
+    StubTokenSearchPort, StubTransfersPort, StubTxLookupPort, StubTxReaderPort,
+    StubTxSimulationPort, StubTxTracePort,
 };
 
 pub type AppHomeSession = HomeSession<StubNetworkStatusPort, StubGasOraclePort, StubChainRegistry>;
@@ -83,8 +84,11 @@ pub struct AppWorld {
     /// Address-detail stub.
     pub address_reader_stub: StubAddressReaderPort,
 
-    /// Unified transfers stub feeding the Transactions tab.
+    /// Unified transfers stub feeding the **Transfers** tab (asset transfers).
     pub transfers_stub: StubTransfersPort,
+
+    /// Normal transactions (`txlist`) stub feeding the **Transactions** tab.
+    pub account_transactions_stub: StubAccountTransactionsPort,
 
     /// Portfolio stub feeding the Tokens tab on Address Detail.
     pub portfolio_stub: StubPortfolioPort,

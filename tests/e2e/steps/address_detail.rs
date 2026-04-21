@@ -8,9 +8,10 @@ use std::time::Duration;
 use blockexplorer_tui::{
     adapters::ui::{AddressDetailScreen, AddressTab, Command, ScreenStack},
     domain::{
-        Address, AddressKind, AddressOverview, BlockNumber, Chain, PriceLookup, PricePoint,
-        PriceSeries, PriceWindow, TokenHolding, TokenMetadata, TokenOverview, TokenPrice,
-        TransferAsset, TransferCategory, TransferEvent, TransferPage, TxHash, UnixTimestamp, Wei,
+        AccountTx, AccountTxPage, Address, AddressKind, AddressOverview, BlockNumber, Chain,
+        PriceLookup, PricePoint, PriceSeries, PriceWindow, TokenHolding, TokenMetadata,
+        TokenOverview, TokenPrice, TransferAsset, TransferCategory, TransferEvent, TransferPage,
+        TxHash, UnixTimestamp, Wei,
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -201,6 +202,49 @@ async fn transfers_feed_knows_n(world: &mut AppWorld, count: u32, addr_hex: Stri
     world.last_address = Some(address);
 }
 
+fn sample_account_tx(block: u64, hash_hex: &str, addr_hex: &str) -> AccountTx {
+    AccountTx {
+        chain: Chain::Ethereum,
+        block_number: BlockNumber::new(block),
+        tx_hash: TxHash::from_hex(hash_hex).unwrap(),
+        from: Address::from_hex(addr_hex).unwrap(),
+        to: Some(Address::from_hex("0x0000000000000000000000000000000000000099").unwrap()),
+        value: Wei::new(1_000_000_000_000_000_000),
+    }
+}
+
+#[given(
+    regex = r#"^the account transactions feed knows (\d+) executed txs for "(0x[0-9a-fA-F]{40})"$"#
+)]
+async fn account_tx_feed_knows_n(world: &mut AppWorld, count: u32, addr_hex: String) {
+    let address = Address::from_hex(&addr_hex).unwrap();
+    let hashes = [
+        "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
+        "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb",
+        "0xcccc016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394cc",
+    ];
+    let txs: Vec<AccountTx> = (0..count as usize)
+        .map(|i| {
+            sample_account_tx(
+                21_000_000 - i as u64,
+                hashes[i % hashes.len()],
+                &addr_hex,
+            )
+        })
+        .collect();
+    for tx in &txs {
+        seed_tx_reader(world, tx.tx_hash);
+    }
+    world.account_transactions_stub.set_page(
+        address,
+        AccountTxPage {
+            txs,
+            next_cursor: None,
+        },
+    );
+    world.last_address = Some(address);
+}
+
 #[when(regex = r#"^the user opens AddressDetail with transfers for "(0x[0-9a-fA-F]{40})"$"#)]
 async fn opens_address_detail_with_transfers(world: &mut AppWorld, addr_hex: String) {
     build_stack(world);
@@ -208,8 +252,15 @@ async fn opens_address_detail_with_transfers(world: &mut AppWorld, addr_hex: Str
     let reader = world.address_reader_stub.clone();
     let transfers = world.transfers_stub.clone();
     let tx_reader = world.tx_reader_stub.clone();
-    let screen =
-        spawn_address_detail_with_transfers(Chain::Ethereum, addr, reader, transfers, tx_reader);
+    let account_tx = world.account_transactions_stub.clone();
+    let screen = spawn_address_detail_with_transfers(
+        Chain::Ethereum,
+        addr,
+        reader,
+        transfers,
+        account_tx,
+        tx_reader,
+    );
     let stack = world.stack.as_mut().unwrap();
     stack.push(screen);
 }
@@ -221,9 +272,8 @@ async fn opens_address_detail_with_transfers(world: &mut AppWorld, addr_hex: Str
 #[when("the user switches to the Tokens tab")]
 async fn switches_to_tokens_tab(world: &mut AppWorld) {
     let stack = world.stack.as_mut().expect("stack");
-    // Tab bar cycle is Overview -> Transactions -> Tokens, so two
-    // presses land on Tokens regardless of the starting tab as long
-    // as we begin on Overview (the default).
+    // Overview -> Transactions -> Transfers -> Tokens
+    press_key(stack, KeyCode::Tab);
     press_key(stack, KeyCode::Tab);
     press_key(stack, KeyCode::Tab);
 }
@@ -268,6 +318,7 @@ async fn opens_address_detail_with_full_feeds(world: &mut AppWorld, addr_hex: St
     let addr = Address::from_hex(&addr_hex).unwrap();
     let reader = world.address_reader_stub.clone();
     let transfers = world.transfers_stub.clone();
+    let account_tx = world.account_transactions_stub.clone();
     let portfolio = world.portfolio_stub.clone();
     let tx_reader = world.tx_reader_stub.clone();
     let token_reader = world.token_reader_stub.clone();
@@ -276,6 +327,7 @@ async fn opens_address_detail_with_full_feeds(world: &mut AppWorld, addr_hex: St
         addr,
         reader,
         transfers,
+        account_tx,
         portfolio,
         tx_reader,
         token_reader,
@@ -348,8 +400,34 @@ async fn tab_bar_no_contract(world: &mut AppWorld) {
     );
 }
 
-#[then(regex = r#"^once loaded, the Transactions tab lists (\d+) transfers$"#)]
-async fn transactions_tab_lists_n(world: &mut AppWorld, expected: u32) {
+#[then(regex = r#"^once loaded, the Transactions tab lists (\d+) executed transactions$"#)]
+async fn transactions_tab_lists_executed(world: &mut AppWorld, expected: u32) {
+    let stack = world.stack.as_mut().expect("stack");
+    tick_until(stack, |s| {
+        current(s)
+            .account_transactions()
+            .map(|p| !p.txs.is_empty())
+            .unwrap_or(false)
+    })
+    .await;
+    let screen = current(stack);
+    assert_eq!(screen.active_tab(), AddressTab::Transactions);
+    let count = screen
+        .account_transactions()
+        .map(|p| p.txs.len())
+        .unwrap_or(0);
+    assert_eq!(count, expected as usize);
+}
+
+#[when("the user switches to the Transfers tab")]
+async fn switches_to_transfers_tab(world: &mut AppWorld) {
+    let stack = world.stack.as_mut().expect("stack");
+    press_key(stack, KeyCode::Tab);
+    press_key(stack, KeyCode::Tab);
+}
+
+#[then(regex = r#"^once loaded, the Transfers tab lists (\d+) transfers$"#)]
+async fn transfers_tab_lists_n(world: &mut AppWorld, expected: u32) {
     let stack = world.stack.as_mut().expect("stack");
     tick_until(stack, |s| {
         current(s)
@@ -359,7 +437,7 @@ async fn transactions_tab_lists_n(world: &mut AppWorld, expected: u32) {
     })
     .await;
     let screen = current(stack);
-    assert_eq!(screen.active_tab(), AddressTab::Transactions);
+    assert_eq!(screen.active_tab(), AddressTab::Transfers);
     let count = screen.transfers().map(|p| p.events.len()).unwrap_or(0);
     assert_eq!(count, expected as usize);
 }
@@ -393,6 +471,7 @@ async fn opens_address_detail_with_erc20_probe(world: &mut AppWorld, addr_hex: S
     let addr = Address::from_hex(&addr_hex).unwrap();
     let reader = world.address_reader_stub.clone();
     let transfers = world.transfers_stub.clone();
+    let account_tx = world.account_transactions_stub.clone();
     let portfolio = world.portfolio_stub.clone();
     let tx_reader = world.tx_reader_stub.clone();
     let token_reader = world.token_reader_stub.clone();
@@ -402,6 +481,7 @@ async fn opens_address_detail_with_erc20_probe(world: &mut AppWorld, addr_hex: S
         addr,
         reader,
         transfers,
+        account_tx,
         portfolio,
         tx_reader,
         token_reader,
@@ -1174,6 +1254,7 @@ async fn active_main_tab_is(world: &mut AppWorld, label: String) {
     let expected = match label.as_str() {
         "Overview" => AddressTab::Overview,
         "Transactions" => AddressTab::Transactions,
+        "Transfers" => AddressTab::Transfers,
         "Tokens" => AddressTab::Tokens,
         "Token" => AddressTab::Token,
         "Contract" => AddressTab::Contract,

@@ -20,14 +20,21 @@ Feature: Address detail
     Then an "Address" screen is on top
     And once the address is loaded, the Overview shows kind "Contract"
 
-  Scenario: Transactions tab lists transfers and opens TxDetail
+  Scenario: Transactions tab lists executed transactions and opens TxDetail
+    Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
+    And the account transactions feed knows 2 executed txs for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    When the user opens AddressDetail with transfers for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    And the user switches to the Transactions tab
+    Then once loaded, the Transactions tab lists 2 executed transactions
+    When the user selects the first transfer and presses Enter
+    Then a "Transaction" screen is on top
+
+  Scenario: Transfers tab lists asset transfers
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5
     And the transfers feed knows 2 events for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
     When the user opens AddressDetail with transfers for "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
-    And the user switches to the Transactions tab
-    Then once loaded, the Transactions tab lists 2 transfers
-    When the user selects the first transfer and presses Enter
-    Then a "Transaction" screen is on top
+    And the user switches to the Transfers tab
+    Then once loaded, the Transfers tab lists 2 transfers
 
   Scenario: Tokens tab lists holdings and opens AddressDetail focused on Token
     Given the address reader knows EOA "0xd8da6bf26964af9d7eed9e03e53415d37aa96045" with balance 100 and nonce 5

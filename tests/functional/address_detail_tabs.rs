@@ -65,7 +65,7 @@ fn build(ov: AddressOverview, token: Option<TokenOverview>) -> AddressDetailScre
 }
 
 #[test]
-fn eoa_shows_three_main_tabs_and_no_subtabs() {
+fn eoa_shows_four_main_tabs_and_no_subtabs() {
     let screen = build(eoa_overview(), None);
     let tabs = screen.tabs();
     assert_eq!(
@@ -73,13 +73,14 @@ fn eoa_shows_three_main_tabs_and_no_subtabs() {
         vec![
             AddressTab::Overview,
             AddressTab::Transactions,
+            AddressTab::Transfers,
             AddressTab::Tokens
         ],
     );
 }
 
 #[test]
-fn plain_contract_shows_four_main_tabs_with_contract_subtabs() {
+fn plain_contract_shows_five_main_tabs_with_contract_subtabs() {
     let mut screen = build(contract_overview(), None);
     // Simulate a "NotToken" probe result by flipping to None.
     // (Using `set_token_overview_for_test(None)` lands on NotToken.)
@@ -89,6 +90,7 @@ fn plain_contract_shows_four_main_tabs_with_contract_subtabs() {
         vec![
             AddressTab::Overview,
             AddressTab::Transactions,
+            AddressTab::Transfers,
             AddressTab::Tokens,
             AddressTab::Contract,
         ],
@@ -97,13 +99,14 @@ fn plain_contract_shows_four_main_tabs_with_contract_subtabs() {
     // sub-tab once.
     screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab));
+    screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab)); // -> Contract main tab
     assert_eq!(screen.active_tab(), AddressTab::Contract);
     assert_eq!(screen.active_contract_sub(), ContractSubTab::Overview);
 }
 
 #[test]
-fn erc20_shows_five_main_tabs_with_token_and_contract_subtabs() {
+fn erc20_shows_six_main_tabs_with_token_and_contract_subtabs() {
     let screen = build(contract_overview(), Some(token_overview()));
     let tabs = screen.tabs();
     assert_eq!(
@@ -111,6 +114,7 @@ fn erc20_shows_five_main_tabs_with_token_and_contract_subtabs() {
         vec![
             AddressTab::Overview,
             AddressTab::Transactions,
+            AddressTab::Transfers,
             AddressTab::Tokens,
             AddressTab::Token,
             AddressTab::Contract,
@@ -122,7 +126,7 @@ fn erc20_shows_five_main_tabs_with_token_and_contract_subtabs() {
 fn bracket_keys_rotate_contract_subtabs() {
     let mut screen = build(contract_overview(), None);
     // Navigate to the Contract main tab.
-    for _ in 0..3 {
+    for _ in 0..4 {
         screen.handle_key(key(KeyCode::Tab));
     }
     assert_eq!(screen.active_tab(), AddressTab::Contract);
@@ -150,9 +154,8 @@ fn bracket_keys_rotate_contract_subtabs() {
 #[test]
 fn bracket_keys_rotate_token_subtabs() {
     let mut screen = build(contract_overview(), Some(token_overview()));
-    // Token main tab is the 4th entry (index 3): Overview,
-    // Transactions, Tokens, Token.
-    for _ in 0..3 {
+    // Token main tab: Overview, Transactions, Transfers, Tokens, Token.
+    for _ in 0..4 {
         screen.handle_key(key(KeyCode::Tab));
     }
     assert_eq!(screen.active_tab(), AddressTab::Token);
@@ -172,7 +175,7 @@ fn bracket_keys_rotate_token_subtabs() {
 #[test]
 fn switching_to_contract_tab_defaults_to_overview_subtab() {
     let mut screen = build(contract_overview(), None);
-    for _ in 0..3 {
+    for _ in 0..4 {
         screen.handle_key(key(KeyCode::Tab));
     }
     assert_eq!(screen.active_tab(), AddressTab::Contract);

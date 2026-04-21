@@ -23,6 +23,7 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::match_same_arms)]
 
+pub mod account_transactions;
 pub mod address;
 pub mod block;
 pub mod chain;
@@ -46,6 +47,7 @@ pub mod tx;
 pub mod tx_simulation;
 pub mod tx_trace;
 
+pub use account_transactions::{AccountTx, AccountTxCursor, AccountTxPage};
 pub use address::{Address, AddressOverview};
 pub use block::{
     Block, BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxCursor, BlockTxPage,

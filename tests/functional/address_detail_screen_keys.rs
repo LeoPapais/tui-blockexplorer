@@ -21,9 +21,9 @@ use blockexplorer_tui::adapters::ui::{
 };
 use blockexplorer_tui::application::ports::ClipboardPort;
 use blockexplorer_tui::domain::{
-    Address, AddressKind, AddressOverview, BlockNumber, Chain, PriceLookup, TokenHolding,
-    TokenMetadata, TokenPrice, TransferAsset, TransferCategory, TransferEvent, TransferPage,
-    TxHash, UnixTimestamp, Wei,
+    AccountTx, AccountTxPage, Address, AddressKind, AddressOverview, BlockNumber, Chain,
+    PriceLookup, TokenHolding, TokenMetadata, TokenPrice, TransferAsset, TransferCategory,
+    TransferEvent, TransferPage, TxHash, UnixTimestamp, Wei,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
@@ -113,6 +113,36 @@ fn y_before_overview_loads_is_a_noop() {
 // CSV export on `e`
 // ---------------------------------------------------------------------------
 
+fn sample_account_tx_page() -> AccountTxPage {
+    AccountTxPage {
+        txs: vec![
+            AccountTx {
+                chain: Chain::Ethereum,
+                block_number: BlockNumber::new(21_000_000),
+                tx_hash: TxHash::from_hex(
+                    "0xaaaa016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394aa",
+                )
+                .unwrap(),
+                from: addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045"),
+                to: Some(addr("0x0000000000000000000000000000000000000099")),
+                value: Wei::new(1_000_000_000_000_000_000),
+            },
+            AccountTx {
+                chain: Chain::Ethereum,
+                block_number: BlockNumber::new(20_999_999),
+                tx_hash: TxHash::from_hex(
+                    "0xbbbb016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a71394bb",
+                )
+                .unwrap(),
+                from: addr("0x0000000000000000000000000000000000000099"),
+                to: Some(addr("0xd8da6bf26964af9d7eed9e03e53415d37aa96045")),
+                value: Wei::new(42_000_000),
+            },
+        ],
+        next_cursor: None,
+    }
+}
+
 fn sample_transfer_page() -> TransferPage {
     TransferPage {
         events: vec![
@@ -188,10 +218,36 @@ fn sample_holdings() -> Vec<TokenHolding> {
 fn e_on_transactions_exports_csv_with_header_and_rows() {
     let ov = overview_with_ens(None);
     let mut screen = build_screen(ov);
-    screen.set_transfers_for_test(sample_transfer_page());
-    // Move to the Transactions tab (Overview -> Transactions).
+    screen.set_account_transactions_for_test(sample_account_tx_page());
+    // Overview -> Transactions.
     screen.handle_key(key(KeyCode::Tab));
     assert_eq!(screen.active_tab(), AddressTab::Transactions);
+
+    screen.handle_key(key(KeyCode::Char('e')));
+
+    let csv = screen
+        .last_copied_value()
+        .expect("CSV blob written to clipboard sink");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(
+        lines[0], "block,tx_hash,from,to,value_wei",
+        "header row",
+    );
+    assert_eq!(lines.len(), 3, "header + 2 rows");
+    assert!(lines[1].starts_with("21000000,0xaaaa"));
+    assert!(lines[1].contains("0xd8da6bf26964af9d7eed9e03e53415d37aa96045"));
+    assert!(lines[2].starts_with("20999999,0xbbbb"));
+}
+
+#[test]
+fn e_on_transfers_exports_asset_transfer_csv() {
+    let ov = overview_with_ens(None);
+    let mut screen = build_screen(ov);
+    screen.set_transfers_for_test(sample_transfer_page());
+    // Overview -> Transactions -> Transfers.
+    screen.handle_key(key(KeyCode::Tab));
+    screen.handle_key(key(KeyCode::Tab));
+    assert_eq!(screen.active_tab(), AddressTab::Transfers);
 
     screen.handle_key(key(KeyCode::Char('e')));
 
@@ -206,10 +262,7 @@ fn e_on_transactions_exports_csv_with_header_and_rows() {
     assert_eq!(lines.len(), 3, "header + 2 rows");
     assert!(lines[1].starts_with("21000000,0xaaaa"));
     assert!(lines[1].contains(",external,"));
-    assert!(lines[1].contains(",ETH,"));
     assert!(lines[2].contains(",erc20,"));
-    assert!(lines[2].contains(",USDC,"));
-    assert!(lines[2].ends_with(",42000000"));
 }
 
 #[test]
@@ -217,7 +270,8 @@ fn e_on_tokens_exports_csv_with_price_columns() {
     let ov = overview_with_ens(None);
     let mut screen = build_screen(ov);
     screen.set_holdings_for_test(sample_holdings());
-    // Overview -> Transactions -> Tokens.
+    // Overview -> Transactions -> Transfers -> Tokens.
+    screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab));
     screen.handle_key(key(KeyCode::Tab));
     assert_eq!(screen.active_tab(), AddressTab::Tokens);

@@ -22,6 +22,7 @@
 
 pub mod classify_address;
 pub mod invoke_read_function;
+pub mod load_address_account_transactions;
 pub mod load_address_overview;
 pub mod load_address_portfolio;
 pub mod load_address_transfers;

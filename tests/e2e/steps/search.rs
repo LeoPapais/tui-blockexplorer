@@ -449,46 +449,56 @@ pub(crate) fn spawn_address_detail<R: AddressReaderPort + Clone + 'static>(
     Box::new(AddressDetailScreen::loading(chain, address, feed))
 }
 
-/// Address-detail spawner used by the Transactions-tab scenarios.
-/// Reuses the real [`infra::address_feed::spawn`] wiring, so the
-/// transfers stream also populates from the stub `TransfersPort`.
-/// Wires Enter-on-a-transfer to open a TxDetail screen through the
+/// Address-detail spawner used by the Transactions / Transfers tab scenarios.
+/// Mirrors [`infra::address_feed::spawn`] fan-out: asset transfers and
+/// account `txlist` pages are loaded in parallel with the overview.
+/// Wires Enter on either list to open a TxDetail screen through the
 /// supplied tx reader stub.
 #[allow(dead_code)]
 pub(crate) fn spawn_address_detail_with_transfers<
     R: AddressReaderPort + Clone + 'static,
     T: blockexplorer_tui::application::ports::TransfersPort + Clone + 'static,
+    A: blockexplorer_tui::application::ports::AccountTransactionsPort + Clone + 'static,
     Tx: TxReaderPort + Clone + 'static,
 >(
     chain: Chain,
     address: Address,
     reader: R,
     transfers: T,
+    account_transactions: A,
     tx_reader: Tx,
 ) -> Box<dyn blockexplorer_tui::adapters::ui::Screen> {
     use blockexplorer_tui::adapters::ui::{AddressFeedSender, address_detail::OpenTxFactory};
     let (feed, sender) = address_feed();
     let reader_for_task = reader.clone();
     let transfers_for_task = transfers.clone();
+    let account_tx_for_task = account_transactions.clone();
     tokio::spawn(async move {
         let AddressFeedSender {
             updates_tx,
+            account_transactions_tx,
             transfers_tx,
             mut input_rx,
             ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
-            let (ov, page) = tokio::join!(
+            let (ov, tr_page, acct_page) = tokio::join!(
                 reader_for_task.get(addr, chain),
                 transfers_for_task.get_for_address(addr, chain, None),
+                account_tx_for_task.list_for_address(addr, chain, None),
             );
             if let Ok(Some(ov)) = ov
                 && updates_tx.send(ov).is_err()
             {
                 break;
             }
-            if let Ok(page) = page
+            if let Ok(page) = tr_page
                 && transfers_tx.send(page).is_err()
+            {
+                break;
+            }
+            if let Ok(page) = acct_page
+                && account_transactions_tx.send(page).is_err()
             {
                 break;
             }
@@ -512,10 +522,11 @@ pub(crate) fn spawn_address_detail_with_transfers<
 /// Address-detail spawner wired up to overview + transfers +
 /// portfolio stubs, plus an open_token factory that spawns a
 /// TokenDetail screen through the stub token reader.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn spawn_address_detail_with_full_feeds<
     R: AddressReaderPort + Clone + 'static,
     T: blockexplorer_tui::application::ports::TransfersPort + Clone + 'static,
+    A: blockexplorer_tui::application::ports::AccountTransactionsPort + Clone + 'static,
     P: blockexplorer_tui::application::ports::PortfolioPort + Clone + 'static,
     Tx: TxReaderPort + Clone + 'static,
     Tok: blockexplorer_tui::application::ports::TokenReaderPort + Clone + 'static,
@@ -524,6 +535,7 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
     address: Address,
     reader: R,
     transfers: T,
+    account_transactions: A,
     portfolio: P,
     tx_reader: Tx,
     token_reader: Tok,
@@ -534,19 +546,22 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
     let (feed, sender) = address_feed();
     let reader_for_task = reader.clone();
     let transfers_for_task = transfers.clone();
+    let account_tx_for_task = account_transactions.clone();
     let portfolio_for_task = portfolio.clone();
     tokio::spawn(async move {
         let AddressFeedSender {
             updates_tx,
+            account_transactions_tx,
             transfers_tx,
             portfolio_tx,
             mut input_rx,
             ..
         } = sender;
         while let Some(addr) = input_rx.recv().await {
-            let (ov, page, holdings) = tokio::join!(
+            let (ov, tr_page, acct_page, holdings) = tokio::join!(
                 reader_for_task.get(addr, chain),
                 transfers_for_task.get_for_address(addr, chain, None),
+                account_tx_for_task.list_for_address(addr, chain, None),
                 portfolio_for_task.get_token_balances(addr, chain),
             );
             if let Ok(Some(ov)) = ov
@@ -554,8 +569,13 @@ pub(crate) fn spawn_address_detail_with_full_feeds<
             {
                 break;
             }
-            if let Ok(page) = page
+            if let Ok(page) = tr_page
                 && transfers_tx.send(page).is_err()
+            {
+                break;
+            }
+            if let Ok(page) = acct_page
+                && account_transactions_tx.send(page).is_err()
             {
                 break;
             }
@@ -646,6 +666,7 @@ pub(crate) fn spawn_address_detail_with_reverse_ens<
 pub(crate) fn spawn_address_detail_with_erc20_probe<
     R: AddressReaderPort + Clone + Send + Sync + 'static,
     T: blockexplorer_tui::application::ports::TransfersPort + Clone + Send + Sync + 'static,
+    A: blockexplorer_tui::application::ports::AccountTransactionsPort + Clone + Send + Sync + 'static,
     P: blockexplorer_tui::application::ports::PortfolioPort + Clone + Send + Sync + 'static,
     Tx: TxReaderPort + Clone + Send + Sync + 'static,
     Tok: blockexplorer_tui::application::ports::TokenReaderPort + Clone + Send + Sync + 'static,
@@ -655,6 +676,7 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
     address: Address,
     reader: R,
     transfers: T,
+    account_transactions: A,
     portfolio: P,
     tx_reader: Tx,
     token_reader: Tok,
@@ -668,6 +690,7 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
     tokio::spawn(async move {
         let blockexplorer_tui::adapters::ui::AddressFeedSender {
             updates_tx,
+            account_transactions_tx,
             transfers_tx,
             portfolio_tx,
             token_overview_tx,
@@ -685,10 +708,11 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
                 maybe_addr = input_rx.recv() => {
                     let Some(addr) = maybe_addr else { break; };
                     current_addr = Some(addr);
-                    let (ov_res, tr_res, pf_res) = tokio::join!(
+                    let (ov_res, tr_res, pf_res, acct_res) = tokio::join!(
                         reader.get(addr, chain),
                         transfers.get_for_address(addr, chain, None),
                         portfolio.get_token_balances(addr, chain),
+                        account_transactions.list_for_address(addr, chain, None),
                     );
                     let kind_contract = matches!(
                         ov_res.as_ref(),
@@ -704,6 +728,11 @@ pub(crate) fn spawn_address_detail_with_erc20_probe<
                     }
                     if let Ok(page) = tr_res
                         && transfers_tx.send(page).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(page) = acct_res
+                        && account_transactions_tx.send(page).is_err()
                     {
                         break;
                     }

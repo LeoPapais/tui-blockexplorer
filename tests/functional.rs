@@ -115,6 +115,12 @@ mod alchemy_tx_trace;
 #[path = "functional/load_address_transfers.rs"]
 mod load_address_transfers;
 
+#[path = "functional/load_address_account_transactions.rs"]
+mod load_address_account_transactions;
+
+#[path = "functional/etherscan_account_transactions.rs"]
+mod etherscan_account_transactions;
+
 #[path = "functional/alchemy_transfers.rs"]
 mod alchemy_transfers;
 

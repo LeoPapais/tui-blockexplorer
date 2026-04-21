@@ -18,13 +18,13 @@ use crate::{
     },
     application::{
         ports::{
-            AddressReaderPort, ContractReaderPort, ContractSourcePort, EnsResolverPort,
-            EventLogPort, NetworkStatusPort, PortfolioPort, PricesPort, ProxyDetectionPort,
-            StoragePort, TokenPriceStreamPort, TokenReaderPort, TransfersPort,
+            AccountTransactionsPort, AddressReaderPort, ContractReaderPort, ContractSourcePort,
+            EnsResolverPort, EventLogPort, NetworkStatusPort, PortfolioPort, PricesPort,
+            ProxyDetectionPort, StoragePort, TokenPriceStreamPort, TokenReaderPort, TransfersPort,
         },
         use_cases::{
-            load_address_overview, load_address_portfolio, load_contract_events_page,
-            load_contract_overview,
+            load_address_account_transactions, load_address_overview, load_address_portfolio,
+            load_contract_events_page, load_contract_overview,
         },
     },
     domain::{Address, AddressKind, Chain, PriceWindow},
@@ -34,10 +34,11 @@ use crate::{
 /// branches internally on `AddressKind` / ERC-20 probe to keep EOAs
 /// at zero extra RPC calls.
 #[allow(clippy::too_many_arguments)]
-pub fn spawn<R, T, P, K, Pr, E, Pd, S, Cr, El, St, N, Ps>(
+pub fn spawn<R, T, A, P, K, Pr, E, Pd, S, Cr, El, St, N, Ps>(
     chain: Chain,
     reader: R,
     transfers: T,
+    account_transactions: A,
     portfolio: P,
     token_reader: K,
     prices: Pr,
@@ -54,6 +55,7 @@ pub fn spawn<R, T, P, K, Pr, E, Pd, S, Cr, El, St, N, Ps>(
 where
     R: AddressReaderPort + Clone + Send + Sync + 'static,
     T: TransfersPort + Clone + Send + Sync + 'static,
+    A: AccountTransactionsPort + Clone + Send + Sync + 'static,
     P: PortfolioPort + Clone + Send + Sync + 'static,
     K: TokenReaderPort + Clone + Send + Sync + 'static,
     Pr: PricesPort + Clone + Send + Sync + 'static,
@@ -69,6 +71,7 @@ where
     tokio::spawn(async move {
         let AddressFeedSender {
             updates_tx,
+            account_transactions_tx,
             transfers_tx,
             portfolio_tx,
             token_overview_tx,
@@ -112,13 +115,20 @@ where
                     // Always-on fan-out.
                     let reader_cl = reader.clone();
                     let transfers_cl = transfers.clone();
+                    let account_tx_cl = account_transactions.clone();
                     let portfolio_cl = portfolio.clone();
                     let prices_for_portfolio = prices.clone();
                     let ens_cl = ens.clone();
-                    let (ov_res, tr_res, pf_res) = tokio::join!(
+                    let (ov_res, tr_res, pf_res, acct_res) = tokio::join!(
                         load_address_overview::run(&reader_cl, &ens_cl, addr, chain),
                         transfers_cl.get_for_address(addr, chain, None),
                         load_address_portfolio::run(&portfolio_cl, &prices_for_portfolio, addr, chain),
+                        load_address_account_transactions::run(
+                            &account_tx_cl,
+                            addr,
+                            chain,
+                            None,
+                        ),
                     );
 
                     let overview_clone = match ov_res.as_ref() {
@@ -132,6 +142,11 @@ where
                     }
                     if let Ok(page) = tr_res
                         && transfers_tx.send(page).is_err()
+                    {
+                        break;
+                    }
+                    if let Ok(page) = acct_res
+                        && account_transactions_tx.send(page).is_err()
                     {
                         break;
                     }

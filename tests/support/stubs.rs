@@ -17,21 +17,21 @@ use blockexplorer_tui::{
     application::{
         SignatureSource,
         ports::{
-            AddressLookupPort, AddressReaderPort, BlockLookupPort, BlockRange, BlockReaderPort,
-            BlockReceiptsPort, ChainRegistryPort, ClipboardPort, Clock, ContractReaderPort,
-            ContractSourcePort, EnsResolverPort, EventLogPort, GasOraclePort, LabelPort,
-            NetworkStatusPort, NewHeadsStreamPort, PortfolioPort, PricesPort, ProxyDetectionPort,
-            Rng, SignatureDirectoryPort, SignatureHit, StoragePort, TokenPriceStreamPort,
-            TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort, TxReaderPort,
-            TxSimulationPort, TxTracePort,
+            AccountTransactionsPort, AddressLookupPort, AddressReaderPort, BlockLookupPort,
+            BlockRange, BlockReaderPort, BlockReceiptsPort, ChainRegistryPort, ClipboardPort,
+            Clock, ContractReaderPort, ContractSourcePort, EnsResolverPort, EventLogPort,
+            GasOraclePort, LabelPort, NetworkStatusPort, NewHeadsStreamPort, PortfolioPort,
+            PricesPort, ProxyDetectionPort, Rng, SignatureDirectoryPort, SignatureHit, StoragePort,
+            TokenPriceStreamPort, TokenReaderPort, TokenSearchPort, TransfersPort, TxLookupPort,
+            TxReaderPort, TxSimulationPort, TxTracePort,
         },
     },
     domain::{
-        AbiFunction, AbiValue, Address, AddressKind, AddressOverview, AssetChange, Block,
-        BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode, Chain,
-        ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label, LogEntry,
-        NavigableValue, NetworkStatus, NewHead, PriceLookup, PriceSeries, PriceWindow, ProxyInfo,
-        StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
+        AbiFunction, AbiValue, AccountTxCursor, AccountTxPage, Address, AddressKind, AddressOverview,
+        AssetChange, Block, BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode,
+        Chain, ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label,
+        LogEntry, NavigableValue, NetworkStatus, NewHead, PriceLookup, PriceSeries, PriceWindow,
+        ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
         TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
@@ -1192,6 +1192,47 @@ impl TxTracePort for StubTxTracePort {
             return Err(DomainError::FeatureUnavailable);
         }
         canned.ok_or(DomainError::FeatureUnavailable)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub: AccountTransactionsPort
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct AccountTransactionsState {
+    by_address: HashMap<Address, AccountTxPage>,
+}
+
+#[derive(Default, Clone)]
+pub struct StubAccountTransactionsPort {
+    inner: Arc<Mutex<AccountTransactionsState>>,
+}
+
+impl StubAccountTransactionsPort {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_page(&self, address: Address, page: AccountTxPage) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.by_address.insert(address, page);
+    }
+}
+
+impl AccountTransactionsPort for StubAccountTransactionsPort {
+    async fn list_for_address(
+        &self,
+        address: Address,
+        _chain: Chain,
+        _cursor: Option<AccountTxCursor>,
+    ) -> Result<AccountTxPage, DomainError> {
+        let state = self.inner.lock().expect("stub lock poisoned");
+        Ok(state
+            .by_address
+            .get(&address)
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

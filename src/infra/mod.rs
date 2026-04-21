@@ -34,8 +34,8 @@ use crate::{
         clock::SystemClock,
         config::InMemoryChainRegistry,
         etherscan::{
-            CachedEtherscanProxyHint, EtherscanClient, EtherscanContractSource, EtherscanProxyHint,
-            EtherscanTokenSearch,
+            AccountTransactionsAdapter, CachedEtherscanProxyHint, EtherscanClient,
+            EtherscanContractSource, EtherscanProxyHint, EtherscanTokenSearch,
         },
         prices::{AlchemyPrices, PollingTokenPriceStream, PricesClient},
         rng::OsRng,
@@ -151,12 +151,14 @@ fn live_address_detail_screen(
     let storage = AlchemyStorage::new(rpc.clone());
     let network_status = AlchemyNetworkStatusAdapter::new(rpc.clone());
     let price_stream = PollingTokenPriceStream::with_default_interval(prices.clone());
+    let account_transactions = AccountTransactionsAdapter::from_optional_key(etherscan_key.clone());
 
     let (feed, sender) = address_feed();
     std::mem::drop(address_feed::spawn(
         chain,
         reader,
         transfers,
+        account_transactions,
         portfolio,
         token_reader,
         prices,
