@@ -2,10 +2,10 @@
 
 Status: **ready** (accepted product goals; implement in ordered slices).
 
-**Progress (repo):** Slices **A–E** are implemented. **D** and **E** landed via
+**Progress (repo):** Slices **A–F** are implemented. **D** through **F** landed via
 isolated **`/worktree`** + subagent + cherry-pick/merge, then **`/delete-worktree`**
 and gates on **main** (see [`.cursor/README.md`](../.cursor/README.md)).
-Remaining slices **F–H**: same pipeline with **`plan18-worktree-slice`**.
+Remaining slices **G–H**: same pipeline with **`plan18-worktree-slice`**.
 
 Cross-references: [plan/0-general-architecture.md](0-general-architecture.md) (shell),
 [plan/1-home.md](1-home.md) §12.5 (WebSocket home feed),
