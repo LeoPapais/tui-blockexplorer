@@ -319,6 +319,9 @@ mod tx_logs_focus;
 #[path = "functional/address_detail_cursor.rs"]
 mod address_detail_cursor;
 
+#[path = "functional/plan18_slice_g_address_detail.rs"]
+mod plan18_slice_g_address_detail;
+
 #[path = "functional/arboard_clipboard.rs"]
 mod arboard_clipboard;
 

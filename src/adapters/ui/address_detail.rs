@@ -500,6 +500,8 @@ pub struct AddressDetailScreen {
     open_tx: Option<OpenTxFactory>,
     open_token: Option<OpenTokenFactory>,
     last_copied_value: Option<String>,
+    /// Increments every [`Screen::tick`] for lightweight UI rhythm (storage caret).
+    frame_tick: u32,
     /// Field cursor for the Overview tab. Inactive by default; the
     /// user activates it by pressing an arrow key. See
     /// `plan/17-navigable-values.md` §4.
@@ -639,6 +641,7 @@ impl AddressDetailScreen {
             open_tx,
             open_token,
             last_copied_value: None,
+            frame_tick: 0,
             cursor: FieldCursor::new(),
             cursor_services: None,
         }
@@ -659,10 +662,9 @@ impl AddressDetailScreen {
     }
 
     /// Navigable values on the current tab. Populated for Overview
-    /// (address, ENS, delegated_to) and Portfolio (each holding's
-    /// contract address). Other tabs return an empty list until the
-    /// per-sub-tab follow-ups covered by `plan/15-backlog.md` §8.16
-    /// are delivered.
+    /// (address, ENS, delegated_to), Portfolio (each holding's
+    /// contract address), Token/Overview (metadata + headline
+    /// figures), and Contract/Impl Overview (address + proxy).
     #[must_use]
     pub fn navigable_fields(&self) -> Vec<FieldEntry> {
         match self.active_tab_or_fallback() {
@@ -700,6 +702,58 @@ impl AddressDetailScreen {
                         .collect()
                 })
                 .unwrap_or_default(),
+            AddressTab::Token if matches!(self.active_token_sub, TokenSubTab::Overview) => {
+                match &self.token_probe {
+                    TokenProbeState::IsToken(ov) => {
+                        let mut fields = vec![FieldEntry::new(
+                            "address",
+                            NavigableValue::TokenAddress(ov.metadata.address),
+                        )];
+                        if !ov.metadata.symbol.is_empty() {
+                            fields.push(FieldEntry::new(
+                                "symbol",
+                                NavigableValue::Plain(ov.metadata.symbol.clone()),
+                            ));
+                        }
+                        if !ov.metadata.name.is_empty() {
+                            fields.push(FieldEntry::new(
+                                "name",
+                                NavigableValue::Plain(ov.metadata.name.clone()),
+                            ));
+                        }
+                        fields.push(FieldEntry::new(
+                            "decimals",
+                            NavigableValue::Plain(ov.metadata.decimals.to_string()),
+                        ));
+                        fields.push(FieldEntry::new(
+                            "total_supply_raw",
+                            NavigableValue::Plain(ov.total_supply.to_string()),
+                        ));
+                        let price_cell = format_price_lookup(&self.token_price);
+                        fields.push(FieldEntry::new(
+                            "price",
+                            NavigableValue::Plain(price_cell),
+                        ));
+                        let mcap_line = {
+                            let synth = TokenOverview {
+                                metadata: ov.metadata.clone(),
+                                total_supply: ov.total_supply,
+                                price: self.token_price.clone(),
+                            };
+                            synth
+                                .market_cap()
+                                .map(format_market_cap)
+                                .unwrap_or_else(|| "-".to_string())
+                        };
+                        fields.push(FieldEntry::new(
+                            "market_cap",
+                            NavigableValue::Plain(mcap_line),
+                        ));
+                        fields
+                    }
+                    _ => Vec::new(),
+                }
+            }
             AddressTab::Contract
                 if matches!(self.active_contract_sub, ContractSubTab::Overview) =>
             {
@@ -1532,14 +1586,22 @@ impl AddressDetailScreen {
         let content_lines = body.lines().count() as u16;
         let viewport = area.height.saturating_sub(2);
         self.with_contract_scroll(|s| s.set_dimensions(content_lines, viewport));
-        self.contract_scroll.get().offset()
+        if self.contract_main_is_impl() {
+            self.impl_contract_scroll.get().offset()
+        } else {
+            self.contract_scroll.get().offset()
+        }
     }
 
     fn bound_read_result_for(&self, body: &str, area: Rect) -> u16 {
         let content_lines = body.lines().count() as u16;
         let viewport = area.height.saturating_sub(2);
         self.with_read_result_scroll(|s| s.set_dimensions(content_lines, viewport));
-        self.read_result_scroll.get().offset()
+        if self.contract_main_is_impl() {
+            self.read_result_scroll_impl.get().offset()
+        } else {
+            self.read_result_scroll.get().offset()
+        }
     }
 
     fn bound_storage_value_for(&self, body: &str, area: Rect) -> u16 {
@@ -1779,6 +1841,7 @@ impl Screen for AddressDetailScreen {
     }
 
     fn tick(&mut self) -> Command {
+        self.frame_tick = self.frame_tick.wrapping_add(1);
         self.drain_feed();
         // Fire the first Events request lazily once the user enters
         // the Events sub-tab, so we never issue eth_getLogs for
@@ -1823,7 +1886,7 @@ impl Screen for AddressDetailScreen {
             AddressTab::Contract | AddressTab::ContractImpl
         ) && matches!(self.active_contract_sub, ContractSubTab::Abi)
         {
-            hints.push(("Y", "Copy ABI"));
+            hints.push(("y", "Copy ABI"));
         }
         hints
     }
@@ -1935,9 +1998,12 @@ impl AddressDetailScreen {
                 self.active_tab,
                 AddressTab::Contract | AddressTab::ContractImpl
             ) && matches!(self.active_contract_sub, ContractSubTab::Overview);
+        let token_overview_cursor = matches!(self.active_tab, AddressTab::Token)
+            && matches!(self.active_token_sub, TokenSubTab::Overview);
         if matches!(key.code, KeyCode::Backspace)
             && (matches!(self.active_tab_or_fallback(), AddressTab::Overview)
-                || contract_overview_cursor)
+                || contract_overview_cursor
+                || token_overview_cursor)
             && self.cursor.is_active()
         {
             self.cursor.deactivate();
@@ -1970,11 +2036,21 @@ impl AddressDetailScreen {
                     }
                     return Command::None;
                 }
+                if matches!(
+                    self.active_tab,
+                    AddressTab::Contract | AddressTab::ContractImpl
+                ) && matches!(self.active_contract_sub, ContractSubTab::Abi)
+                {
+                    self.copy_abi_to_clipboard();
+                    return Command::None;
+                }
                 let cursor_tab = matches!(self.active_tab_or_fallback(), AddressTab::Overview)
                     || (matches!(
                         self.active_tab,
                         AddressTab::Contract | AddressTab::ContractImpl
-                    ) && matches!(self.active_contract_sub, ContractSubTab::Overview));
+                    ) && matches!(self.active_contract_sub, ContractSubTab::Overview))
+                    || (matches!(self.active_tab_or_fallback(), AddressTab::Token)
+                        && matches!(self.active_token_sub, TokenSubTab::Overview));
                 if cursor_tab && self.cursor.is_active() {
                     let fields = self.navigable_fields();
                     if let Some(entry) = self.cursor.current(&fields) {
@@ -2054,6 +2130,7 @@ impl AddressDetailScreen {
                         return Command::None;
                     }
                     AddressTab::Token => {
+                        self.cursor.deactivate();
                         self.active_token_sub = self.active_token_sub.previous();
                         self.scroll = 0;
                         return Command::None;
@@ -2074,6 +2151,7 @@ impl AddressDetailScreen {
                         return Command::None;
                     }
                     AddressTab::Token => {
+                        self.cursor.deactivate();
                         self.active_token_sub = self.active_token_sub.next();
                         self.scroll = 0;
                         return Command::None;
@@ -2121,6 +2199,7 @@ impl AddressDetailScreen {
                             self.reset_contract_subtab_ui_state();
                         }
                         AddressTab::Token => {
+                            self.cursor.deactivate();
                             self.active_token_sub = self.active_token_sub.previous();
                             self.scroll = 0;
                         }
@@ -2135,6 +2214,7 @@ impl AddressDetailScreen {
                             self.reset_contract_subtab_ui_state();
                         }
                         AddressTab::Token => {
+                            self.cursor.deactivate();
                             self.active_token_sub = self.active_token_sub.next();
                             self.scroll = 0;
                         }
@@ -2163,6 +2243,7 @@ impl AddressDetailScreen {
                     return Command::None;
                 }
                 AddressTab::Token => {
+                    self.cursor.deactivate();
                     self.active_token_sub = self.active_token_sub.next();
                     self.scroll = 0;
                     return Command::None;
@@ -2178,6 +2259,7 @@ impl AddressDetailScreen {
                     return Command::None;
                 }
                 AddressTab::Token => {
+                    self.cursor.deactivate();
                     self.active_token_sub = self.active_token_sub.previous();
                     self.scroll = 0;
                     return Command::None;
@@ -2242,6 +2324,66 @@ impl AddressDetailScreen {
                 self.scroll = self.scroll.saturating_sub(1);
             }
             KeyCode::Char('j') => {
+                self.scroll = self.scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(10);
+            }
+            KeyCode::Home => {
+                self.scroll = 0;
+            }
+            _ => {}
+        }
+        Command::None
+    }
+
+    fn handle_token_overview_key(&mut self, key: KeyEvent) -> Command {
+        let fields = self.navigable_fields();
+        let n = fields.len();
+        match key.code {
+            KeyCode::Up if !self.cursor.is_active() => {
+                self.focus_layer = DetailFocusLayer::Subtabs;
+                return Command::None;
+            }
+            KeyCode::Up if self.cursor.active() == Some(0) => {
+                self.focus_layer = DetailFocusLayer::Subtabs;
+                return Command::None;
+            }
+            KeyCode::Left => {
+                self.cursor.move_in(n, CursorDir::Left);
+                return Command::None;
+            }
+            KeyCode::Right => {
+                self.cursor.move_in(n, CursorDir::Right);
+                return Command::None;
+            }
+            KeyCode::Up => {
+                self.cursor.move_in(n, CursorDir::Up);
+                return Command::None;
+            }
+            KeyCode::Down => {
+                self.cursor.move_in(n, CursorDir::Down);
+                return Command::None;
+            }
+            KeyCode::Enter if self.cursor.is_active() => {
+                if let (Some(entry), Some(services)) =
+                    (self.cursor.current(&fields), self.cursor_services.as_ref())
+                    && let Some(screen) = services.open(&entry.value)
+                {
+                    return Command::Push(screen);
+                }
+                return Command::None;
+            }
+            _ => {}
+        }
+        match key.code {
+            KeyCode::Char('k') => {
+                self.scroll = self.scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.scroll = self.scroll.saturating_add(1);
             }
             KeyCode::PageUp => {
@@ -2379,41 +2521,7 @@ impl AddressDetailScreen {
                 }
                 _ => Command::None,
             },
-            TokenSubTab::Overview => match key.code {
-                KeyCode::Up if self.scroll == 0 => {
-                    self.focus_layer = DetailFocusLayer::Subtabs;
-                    Command::None
-                }
-                KeyCode::Up => {
-                    self.scroll = self.scroll.saturating_sub(1);
-                    Command::None
-                }
-                KeyCode::Down => {
-                    self.scroll = self.scroll.saturating_add(1);
-                    Command::None
-                }
-                KeyCode::Char('k') => {
-                    self.scroll = self.scroll.saturating_sub(1);
-                    Command::None
-                }
-                KeyCode::Char('j') => {
-                    self.scroll = self.scroll.saturating_add(1);
-                    Command::None
-                }
-                KeyCode::PageUp => {
-                    self.scroll = self.scroll.saturating_sub(10);
-                    Command::None
-                }
-                KeyCode::PageDown => {
-                    self.scroll = self.scroll.saturating_add(10);
-                    Command::None
-                }
-                KeyCode::Home => {
-                    self.scroll = 0;
-                    Command::None
-                }
-                _ => Command::None,
-            },
+            TokenSubTab::Overview => self.handle_token_overview_key(key),
             TokenSubTab::Chart => match key.code {
                 KeyCode::Up => {
                     self.focus_layer = DetailFocusLayer::Subtabs;
@@ -2536,17 +2644,52 @@ impl AddressDetailScreen {
         Command::None
     }
 
-    /// ABI sub-tab scrolls only with `j` / `k` (no arrow / page keys).
+    /// ABI sub-tab: arrow / page scroll; `Up` at scroll offset `0`
+    /// returns focus to the sub-tab strip (plan/18 slice G).
     fn handle_abi_scroll_key(&mut self, key: KeyEvent) -> Command {
         match key.code {
+            KeyCode::Up => {
+                let off = if self.contract_main_is_impl() {
+                    self.impl_contract_scroll.get().offset()
+                } else {
+                    self.contract_scroll.get().offset()
+                };
+                if off == 0 {
+                    self.focus_layer = DetailFocusLayer::Subtabs;
+                } else {
+                    self.with_contract_scroll(|s| {
+                        s.scroll_by(-1);
+                    });
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.with_contract_scroll(|s| {
+                    s.scroll_by(1);
+                });
+            }
             KeyCode::Char('k') => {
                 self.with_contract_scroll(|s| {
                     s.scroll_by(-1);
                 });
             }
-            KeyCode::Char('j') => {
+            KeyCode::PageUp => {
                 self.with_contract_scroll(|s| {
-                    s.scroll_by(1);
+                    s.page_up();
+                });
+            }
+            KeyCode::PageDown => {
+                self.with_contract_scroll(|s| {
+                    s.page_down();
+                });
+            }
+            KeyCode::Home => {
+                self.with_contract_scroll(|s| {
+                    s.home();
+                });
+            }
+            KeyCode::End => {
+                self.with_contract_scroll(|s| {
+                    s.end();
                 });
             }
             _ => {}
@@ -2843,6 +2986,17 @@ impl AddressDetailScreen {
     }
 
     fn handle_events_key(&mut self, key: KeyEvent) -> Command {
+        if matches!(key.code, KeyCode::Up) {
+            let off = if self.contract_main_is_impl() {
+                self.impl_contract_scroll.get().offset()
+            } else {
+                self.contract_scroll.get().offset()
+            };
+            if off == 0 {
+                self.focus_layer = DetailFocusLayer::Subtabs;
+                return Command::None;
+            }
+        }
         match key.code {
             KeyCode::Char('r') | KeyCode::Enter => {
                 self.events = None;
@@ -3597,15 +3751,23 @@ Contract may be unverified or expose only events / constructors.",
             columns[0],
             &mut state,
         );
-        let detail_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(4),
-                Constraint::Min(5),
-                Constraint::Min(5),
-            ])
-            .split(columns[1]);
         let function = self.selected_function();
+        let hide_args = function.map(|f| f.inputs.is_empty()).unwrap_or(true);
+        let detail_chunks = if hide_args {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(4), Constraint::Min(8)])
+                .split(columns[1])
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(4),
+                    Constraint::Min(5),
+                    Constraint::Min(5),
+                ])
+                .split(columns[1])
+        };
         let meta_text = match function {
             Some(f) => {
                 let mutability = if f.is_read_only {
@@ -3635,55 +3797,61 @@ Contract may be unverified or expose only events / constructors.",
             ),
             detail_chunks[0],
         );
-        let args_title = match rf {
-            ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
-            ReadFocus::Result => "Arguments",
-            ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
-        };
-        let arg_buffers = if self.contract_main_is_impl() {
-            &self.arg_buffers_impl
-        } else {
-            &self.arg_buffers
-        };
-        let arg_cursor = if self.contract_main_is_impl() {
-            self.arg_cursor_impl
-        } else {
-            self.arg_cursor
-        };
-        let args_body = match function {
-            Some(f) if f.inputs.is_empty() => "(no arguments)".to_string(),
-            Some(f) => {
-                let mut lines = Vec::with_capacity(f.inputs.len());
-                for (idx, (param, buf)) in f.inputs.iter().zip(arg_buffers.iter()).enumerate() {
-                    let cursor = if matches!(rf, ReadFocus::Args) && idx == arg_cursor {
-                        ">"
-                    } else {
-                        " "
-                    };
-                    lines.push(format!(
-                        "{cursor} {name} ({ty}) = {buf}",
-                        name = if param.name.is_empty() {
-                            format!("arg{idx}")
+        if !hide_args {
+            let args_title = match rf {
+                ReadFocus::Args => "Arguments (focused, [Enter] to execute)",
+                ReadFocus::Result => "Arguments",
+                ReadFocus::FunctionList => "Arguments ([Tab*] to focus)",
+            };
+            let arg_buffers = if self.contract_main_is_impl() {
+                &self.arg_buffers_impl
+            } else {
+                &self.arg_buffers
+            };
+            let arg_cursor = if self.contract_main_is_impl() {
+                self.arg_cursor_impl
+            } else {
+                self.arg_cursor
+            };
+            let args_body = match function {
+                Some(f) => {
+                    let mut lines = Vec::with_capacity(f.inputs.len());
+                    for (idx, (param, buf)) in f.inputs.iter().zip(arg_buffers.iter()).enumerate() {
+                        let cursor = if matches!(rf, ReadFocus::Args) && idx == arg_cursor {
+                            ">"
                         } else {
-                            param.name.clone()
-                        },
-                        ty = param.kind.canonical(),
-                        buf = buf,
-                    ));
+                            " "
+                        };
+                        lines.push(format!(
+                            "{cursor} {name} ({ty}) = {buf}",
+                            name = if param.name.is_empty() {
+                                format!("arg{idx}")
+                            } else {
+                                param.name.clone()
+                            },
+                            ty = param.kind.canonical(),
+                            buf = buf,
+                        ));
+                    }
+                    lines.join("\n")
                 }
-                lines.join("\n")
-            }
-            None => String::new(),
+                None => String::new(),
+            };
+            frame.render_widget(
+                Paragraph::new(args_body).wrap(Wrap { trim: false }).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(args_border)
+                        .title(args_title),
+                ),
+                detail_chunks[1],
+            );
+        }
+        let result_rect = if hide_args {
+            detail_chunks[1]
+        } else {
+            detail_chunks[2]
         };
-        frame.render_widget(
-            Paragraph::new(args_body).wrap(Wrap { trim: false }).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(args_border)
-                    .title(args_title),
-            ),
-            detail_chunks[1],
-        );
         let (last_res, last_for) = if self.contract_main_is_impl() {
             (&self.last_result_impl, &self.last_result_for_impl)
         } else {
@@ -3709,9 +3877,15 @@ Contract may be unverified or expose only events / constructors.",
             (Some(Err(msg)), Some(sig), Some(current)) if sig == current => {
                 format!("ERROR: {msg}")
             }
-            _ => "(press Enter on the arguments pane to execute)".to_string(),
+            _ => {
+                if hide_args {
+                    "(press Enter on the function list to execute)".to_string()
+                } else {
+                    "(press Enter on the arguments pane to execute)".to_string()
+                }
+            }
         };
-        let res_offset = self.bound_read_result_for(&result_body, detail_chunks[2]);
+        let res_offset = self.bound_read_result_for(&result_body, result_rect);
         frame.render_widget(
             Paragraph::new(result_body)
                 .wrap(Wrap { trim: false })
@@ -3722,7 +3896,7 @@ Contract may be unverified or expose only events / constructors.",
                         .border_style(result_border)
                         .title("Result"),
                 ),
-            detail_chunks[2],
+            result_rect,
         );
     }
 
@@ -3787,8 +3961,11 @@ Contract may be unverified or expose only events / constructors.",
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(4), Constraint::Min(3)])
             .split(area);
+        let show_caret = matches!(self.storage_focus, StorageFocus::Slot)
+            && (self.frame_tick % 12 < 6);
+        let caret = if show_caret { '|' } else { ' ' };
         let prompt = format!(
-            "Slot (decimal or 0x-hex): {}\n[Enter] to read, [Backspace] to edit",
+            "Slot (decimal or 0x-hex): {}{caret}\n[Enter] to read, [Backspace] to edit",
             self.slot_buffer,
         );
         let slot_border = self.split_pane_border(matches!(self.storage_focus, StorageFocus::Slot));
