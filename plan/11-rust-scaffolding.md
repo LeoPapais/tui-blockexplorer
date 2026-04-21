@@ -286,10 +286,13 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   7. `scripts/check-layers.sh` (see §9.7).
 - **Network disabled for test steps.** Runners are granted full
   network during build / fetch, but steps 3–5 run under
-  `unshare -rn -- bash -c 'cargo test …'`. `unshare -rn` drops the
-  runner into a fresh network namespace with no interfaces; any
-  accidental real HTTP call instantly fails with `ENETUNREACH`, which
-  is the loud failure mode `.cursor/rules/testing.mdc` requires. When
+  `unshare -rn -- bash -c 'ip link set lo up && cargo test …'`.
+  `unshare -rn` drops the runner into a fresh network namespace: there
+  is no route to the internet, and `lo` starts **DOWN** until
+  `ip link set lo up`, which keeps `wiremock` on `127.0.0.1` working.
+  Any accidental real HTTP call to a non-loopback address fails with
+  `ENETUNREACH`, which is the loud failure mode `.cursor/rules/testing.mdc`
+  requires. When
   `unshare` is not available (e.g. hosted-runner policy changes) the
   workflow falls back to the `NO_NETWORK=1` env guard read by the test
   harness; that fallback is documented in the README.
