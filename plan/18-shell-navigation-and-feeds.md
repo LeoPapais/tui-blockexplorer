@@ -1,6 +1,6 @@
 # 18 — Shell chrome, live feeds, address/tx polish, contract navigation
 
-Status: **ready** (accepted product goals; implement in ordered slices).
+Status: **done** (slices A–H delivered; see progress note below).
 
 **Progress (repo):** Slices **A–H** are implemented. **D** onward landed via
 isolated **`/worktree`** + cherry-pick/merge, then **`/delete-worktree`**
