@@ -109,49 +109,83 @@ where
                     active_is_token = false;
                     price_stream_rx = None;
 
-                    // Always-on fan-out.
+                    // Always-on fan-out (plan/16-unified-address-detail.md §5 step 1):
+                    // `load_address_overview`, transfers, portfolio, and account `txlist`
+                    // run concurrently, but each result is pushed to its channel as soon as
+                    // that branch finishes so the first UI paint is not blocked on the
+                    // slowest peer (previously a single `tokio::join!` deferred all sends).
                     let reader_cl = reader.clone();
                     let transfers_cl = transfers.clone();
                     let account_tx_cl = account_transactions.clone();
                     let portfolio_cl = portfolio.clone();
                     let prices_for_portfolio = prices.clone();
                     let ens_cl = ens.clone();
-                    let (ov_res, tr_res, pf_res, acct_res) = tokio::join!(
-                        load_address_overview::run(&reader_cl, &ens_cl, addr, chain),
-                        transfers_cl.get_for_address(addr, chain, None),
-                        load_address_portfolio::run(&portfolio_cl, &prices_for_portfolio, addr, chain),
-                        load_address_account_transactions::run(
-                            &account_tx_cl,
-                            addr,
-                            chain,
-                            None,
-                        ),
-                    );
+                    let updates_tx_ov = updates_tx.clone();
+                    let transfers_tx_cl = transfers_tx.clone();
+                    let account_transactions_tx_cl = account_transactions_tx.clone();
+                    let portfolio_tx_cl = portfolio_tx.clone();
+                    let ((halt_o, ov_res), (halt_t, _tr_res), (halt_p, _pf_res), (halt_a, _acct_res)) =
+                        tokio::join!(
+                            async {
+                                let r =
+                                    load_address_overview::run(&reader_cl, &ens_cl, addr, chain)
+                                        .await;
+                                let halt = if let Ok(ov) = &r {
+                                    updates_tx_ov.send(ov.clone()).is_err()
+                                } else {
+                                    false
+                                };
+                                (halt, r)
+                            },
+                            async {
+                                let r = transfers_cl.get_for_address(addr, chain, None).await;
+                                let halt = if let Ok(page) = &r {
+                                    transfers_tx_cl.send(page.clone()).is_err()
+                                } else {
+                                    false
+                                };
+                                (halt, r)
+                            },
+                            async {
+                                let r = load_address_portfolio::run(
+                                    &portfolio_cl,
+                                    &prices_for_portfolio,
+                                    addr,
+                                    chain,
+                                )
+                                .await;
+                                let halt = if let Ok(holdings) = &r {
+                                    portfolio_tx_cl.send(holdings.clone()).is_err()
+                                } else {
+                                    false
+                                };
+                                (halt, r)
+                            },
+                            async {
+                                let r = load_address_account_transactions::run(
+                                    &account_tx_cl,
+                                    addr,
+                                    chain,
+                                    None,
+                                )
+                                .await;
+                                let halt = if let Ok(page) = &r {
+                                    account_transactions_tx_cl.send(page.clone()).is_err()
+                                } else {
+                                    false
+                                };
+                                (halt, r)
+                            },
+                        );
+
+                    if halt_o || halt_t || halt_p || halt_a {
+                        break;
+                    }
 
                     let overview_clone = match ov_res.as_ref() {
                         Ok(ov) => Some(ov.clone()),
                         Err(_) => None,
                     };
-                    if let Some(ov) = overview_clone.clone()
-                        && updates_tx.send(ov).is_err()
-                    {
-                        break;
-                    }
-                    if let Ok(page) = tr_res
-                        && transfers_tx.send(page).is_err()
-                    {
-                        break;
-                    }
-                    if let Ok(page) = acct_res
-                        && account_transactions_tx.send(page).is_err()
-                    {
-                        break;
-                    }
-                    if let Ok(holdings) = pf_res
-                        && portfolio_tx.send(holdings).is_err()
-                    {
-                        break;
-                    }
 
                     let Some(overview) = overview_clone else { continue };
                     if !matches!(overview.kind, AddressKind::Contract) {

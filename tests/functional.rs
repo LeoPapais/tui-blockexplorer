@@ -124,6 +124,9 @@ mod etherscan_account_transactions;
 #[path = "functional/alchemy_transfers.rs"]
 mod alchemy_transfers;
 
+#[path = "functional/incremental_feeds.rs"]
+mod incremental_feeds;
+
 #[path = "functional/load_address_portfolio.rs"]
 mod load_address_portfolio;
 

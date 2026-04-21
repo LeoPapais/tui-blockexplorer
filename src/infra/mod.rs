@@ -17,7 +17,7 @@ pub mod logging;
 pub mod navigate;
 pub mod runtime;
 pub mod search_feed;
-mod tx_feed;
+pub mod tx_feed;
 
 use anyhow::{Context, Result};
 use reqwest::Client;

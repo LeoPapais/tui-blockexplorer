@@ -27,12 +27,12 @@ use blockexplorer_tui::{
         },
     },
     domain::{
-        AbiFunction, AbiValue, AccountTxCursor, AccountTxPage, Address, AddressKind, AddressOverview,
-        AssetChange, Block, BlockHash, BlockId, BlockNumber, BlockSummary, BlockTxReceipt, CallNode,
-        Chain, ContractAbi, ContractSource, DecodedValue, DomainError, GasSnapshot, Gwei, Label,
-        LogEntry, NavigableValue, NetworkStatus, NewHead, PriceLookup, PriceSeries, PriceWindow,
-        ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview, TokenPrice, Transaction,
-        TransferCursor, TransferPage, TxHash, TxSummary, Wei,
+        AbiFunction, AbiValue, AccountTxCursor, AccountTxPage, Address, AddressKind,
+        AddressOverview, AssetChange, Block, BlockHash, BlockId, BlockNumber, BlockSummary,
+        BlockTxReceipt, CallNode, Chain, ContractAbi, ContractSource, DecodedValue, DomainError,
+        GasSnapshot, Gwei, Label, LogEntry, NavigableValue, NetworkStatus, NewHead, PriceLookup,
+        PriceSeries, PriceWindow, ProxyInfo, StateDiff, TokenHolding, TokenMetadata, TokenOverview,
+        TokenPrice, Transaction, TransferCursor, TransferPage, TxHash, TxSummary, Wei,
     },
 };
 use serde::Deserialize;
@@ -934,6 +934,9 @@ impl ContractSourcePort for StubContractSourcePort {
 struct SignatureState {
     selectors: HashMap<[u8; 4], SignatureHit>,
     topics: HashMap<[u8; 32], SignatureHit>,
+    /// Optional delay before answering (plan/18 Slice E: prove bare
+    /// `TxView` emission wins the race against decoding).
+    delay: Option<Duration>,
 }
 
 #[derive(Default, Clone)]
@@ -989,6 +992,12 @@ impl StubSignatureDirectoryPort {
             },
         );
     }
+
+    /// Hold every lookup for `delay` before returning canned data.
+    pub fn set_delay(&self, delay: Duration) {
+        let mut state = self.inner.lock().expect("stub lock poisoned");
+        state.delay = Some(delay);
+    }
 }
 
 impl SignatureDirectoryPort for StubSignatureDirectoryPort {
@@ -996,6 +1005,13 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
         &self,
         selector: [u8; 4],
     ) -> Result<Option<SignatureHit>, DomainError> {
+        let delay = {
+            let state = self.inner.lock().expect("stub lock poisoned");
+            state.delay
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.selectors.get(&selector).cloned())
     }
@@ -1004,6 +1020,13 @@ impl SignatureDirectoryPort for StubSignatureDirectoryPort {
         &self,
         topic: [u8; 32],
     ) -> Result<Option<SignatureHit>, DomainError> {
+        let delay = {
+            let state = self.inner.lock().expect("stub lock poisoned");
+            state.delay
+        };
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
         let state = self.inner.lock().expect("stub lock poisoned");
         Ok(state.topics.get(&topic).cloned())
     }
@@ -1228,11 +1251,7 @@ impl AccountTransactionsPort for StubAccountTransactionsPort {
         _cursor: Option<AccountTxCursor>,
     ) -> Result<AccountTxPage, DomainError> {
         let state = self.inner.lock().expect("stub lock poisoned");
-        Ok(state
-            .by_address
-            .get(&address)
-            .cloned()
-            .unwrap_or_default())
+        Ok(state.by_address.get(&address).cloned().unwrap_or_default())
     }
 }
 

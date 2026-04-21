@@ -25,7 +25,7 @@ use crate::{
             TxSimulationPort, TxTracePort,
         },
     },
-    domain::{Address, Chain, DomainError, LogEntry, TxHash},
+    domain::{Address, Chain, DomainError, LogEntry, Transaction, TxHash},
 };
 
 pub async fn run<R: TxReaderPort>(
@@ -59,7 +59,26 @@ where
     let Some(tx) = reader.get(hash, chain).await? else {
         return Err(DomainError::NotFound);
     };
+    Ok(run_decoding_for_transaction(contract_source, signatures, proxy_detector, tx, chain).await)
+}
 
+/// ABI + signature-directory decoding for a [`Transaction`] already
+/// loaded from [`TxReaderPort`]. Used by `infra::tx_feed::spawn_full`
+/// so the UI can emit a bare [`TxView`] immediately after `get`
+/// returns and await this pass without blocking the first paint on
+/// slow directory / ABI calls (plan/18 §Slice E).
+pub async fn run_decoding_for_transaction<C, S, P>(
+    contract_source: &C,
+    signatures: &S,
+    proxy_detector: &P,
+    tx: Transaction,
+    chain: Chain,
+) -> TxView
+where
+    C: ContractSourcePort,
+    S: SignatureDirectoryPort,
+    P: ProxyDetectionPort,
+{
     // --- Method signature decoding --------------------------------
     let decoded_method = match tx.selector() {
         Some(selector) => {
@@ -86,14 +105,14 @@ where
         });
     }
 
-    Ok(TxView {
+    TxView {
         tx,
         decoded_method,
         decoded_logs,
         asset_changes: LoadStatus::Pending,
         state_diff: LoadStatus::Pending,
         call_tree: LoadStatus::Pending,
-    })
+    }
 }
 
 /// Resolve asset changes for a loaded [`TxView`]. Uses

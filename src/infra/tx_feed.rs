@@ -2,12 +2,14 @@
 //! `TxView` values. Mirrors `block_feed.rs` and `search_feed.rs` for
 //! the TxDetail screen.
 //!
-//! Every live caller uses [`spawn_full`]: the decoding happens
-//! up-front and the heavier asset-change / state-diff tabs populate
-//! concurrently so none of the tabs stays stuck in "Pending..."
-//! indefinitely. Composite adapters (Etherscan or Noop,
-//! Sourcify or Noop) let the caller opt out of individual decoders
-//! without having to pick a different spawn path.
+//! Every live caller uses [`spawn_full`]: after `TxReaderPort::get`
+//! returns, a **bare** [`TxView`] (decoded logs still raw) is sent
+//! immediately so the Overview tab can paint hash / status / block /
+//! gas without waiting on ABI or signature-directory work; decoding
+//! then runs and the richer view is sent before the heavier
+//! asset-change / state-diff / call-tree joins. Composite adapters
+//! (Etherscan or Noop, Sourcify or Noop) let the caller opt out of
+//! individual decoders without having to pick a different spawn path.
 //!
 //! See `plan/4-tx-detail.md` sections 12.3, 12.4.2 and 12.4.3, plus
 //! `plan/15-backlog.md` section 3.3 for the proxy-following cascade.
@@ -61,18 +63,24 @@ where
         } = sender;
 
         while let Some(hash) = input_rx.recv().await {
-            let Ok(mut view) = load_tx_overview::run_with_decoding(
-                &reader,
+            let tx = match reader.get(hash, chain).await {
+                Ok(Some(t)) => t,
+                Ok(None) | Err(_) => continue,
+            };
+
+            let bare = TxView::bare(tx.clone());
+            if !send_or_break(&updates_tx, bare) {
+                break;
+            }
+
+            let mut view = load_tx_overview::run_decoding_for_transaction(
                 &contract_source,
                 &signatures,
                 &proxy_detector,
-                hash,
+                tx,
                 chain,
             )
-            .await
-            else {
-                continue;
-            };
+            .await;
 
             if !send_or_break(&updates_tx, view.clone()) {
                 break;
