@@ -128,3 +128,31 @@ pub fn detail_body_border_style(focus: DetailFocusLayer, palette: &Palette) -> S
         Style::default().fg(palette.muted)
     }
 }
+
+/// Border style for the top hash / id header on detail screens.
+///
+/// When focus is on main tabs, sub-tabs, or body, the header is not the
+/// active chrome region — keep it dimmed like an unfocused body outline.
+/// See `plan/18-shell-navigation-and-feeds.md` Slice A / Slice F.
+#[must_use]
+pub fn detail_header_border_style(focus: DetailFocusLayer, palette: &Palette) -> Style {
+    match focus {
+        DetailFocusLayer::Content | DetailFocusLayer::MainTabs | DetailFocusLayer::Subtabs => {
+            detail_body_border_style(DetailFocusLayer::MainTabs, palette)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::ui::theme::PalettePreset;
+
+    #[test]
+    fn detail_header_border_style_matches_unfocused_body_chrome() {
+        let palette = PalettePreset::DarkDefault.palette();
+        let header = detail_header_border_style(DetailFocusLayer::Content, &palette);
+        let body_unfocused = detail_body_border_style(DetailFocusLayer::MainTabs, &palette);
+        assert_eq!(header, body_unfocused);
+    }
+}

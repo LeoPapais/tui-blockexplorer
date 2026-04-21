@@ -38,8 +38,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::{
     adapters::ui::{
         detail_focus::{
-            DetailFocusLayer, DetailTabStrip, detail_body_border_style, tab_strip_border_style,
-            tab_strip_highlight_style,
+            DetailFocusLayer, DetailTabStrip, detail_body_border_style, detail_header_border_style,
+            tab_strip_border_style, tab_strip_highlight_style,
         },
         field_cursor::CursorServices,
         format::{humanize_eth, humanize_gas_units, humanize_gwei, humanize_token_units},
@@ -198,6 +198,8 @@ pub struct TxDetailScreen {
     /// through `&self` and `handle_key` can then clamp the offset
     /// against up-to-date dimensions.
     scroll: Cell<ScrollState>,
+    /// Scroll for the Decoded fields pane on the Logs tab.
+    logs_decoded_scroll: Cell<ScrollState>,
     /// Scroll for the Raw log pane on the Logs tab.
     logs_raw_scroll: Cell<ScrollState>,
     /// Last value produced by the `y` "copy" binding. The real
@@ -233,6 +235,7 @@ impl TxDetailScreen {
             logs_focus: LogsFocus::List,
             logs_raw_line: 0,
             scroll: Cell::new(ScrollState::new()),
+            logs_decoded_scroll: Cell::new(ScrollState::new()),
             logs_raw_scroll: Cell::new(ScrollState::new()),
             last_copied_value: None,
             resimulate_count: 0,
@@ -336,6 +339,20 @@ impl TxDetailScreen {
         self.resimulate_count
     }
 
+    /// Vertical scroll offset for the Logs → Decoded pane (tests only).
+    #[cfg(test)]
+    #[must_use]
+    pub fn logs_decoded_scroll_offset_for_test(&self) -> u16 {
+        self.logs_decoded_scroll.get().offset()
+    }
+
+    /// Vertical scroll offset for the Logs → Raw pane (tests only).
+    #[cfg(test)]
+    #[must_use]
+    pub fn logs_raw_scroll_offset_for_test(&self) -> u16 {
+        self.logs_raw_scroll.get().offset()
+    }
+
     fn drain_feed(&mut self) {
         while let Ok(view) = self.feed.updates_rx.try_recv() {
             self.current = Some(view);
@@ -345,9 +362,17 @@ impl TxDetailScreen {
             self.logs_field = 0;
             self.raw_row = 0;
             self.logs_focus = LogsFocus::List;
+            self.logs_raw_line = 0;
             self.with_scroll(|s| s.reset());
+            self.with_logs_decoded_scroll(|s| s.reset());
             self.with_logs_raw_scroll(|s| s.reset());
         }
+    }
+
+    fn with_logs_decoded_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
+        let mut s = self.logs_decoded_scroll.get();
+        f(&mut s);
+        self.logs_decoded_scroll.set(s);
     }
 
     fn with_logs_raw_scroll(&self, f: impl FnOnce(&mut ScrollState)) {
@@ -395,6 +420,7 @@ impl Screen for TxDetailScreen {
             .split(area);
 
         let palette = PalettePreset::DarkDefault.palette();
+        let header_border = detail_header_border_style(self.focus_layer, &palette);
 
         let header = match self.current.as_ref() {
             Some(view) => format!("Tx {}", short_hex(&view.tx.hash.to_hex())),
@@ -404,7 +430,7 @@ impl Screen for TxDetailScreen {
             Paragraph::new(header).block(
                 RatBlock::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(palette.muted))
+                    .border_style(header_border)
                     .title("Transaction"),
             ),
             chunks[0],
@@ -588,6 +614,7 @@ impl TxDetailScreen {
             self.logs_focus = LogsFocus::List;
             self.logs_field = 0;
             self.logs_raw_line = 0;
+            self.with_logs_decoded_scroll(|s| s.reset());
             self.with_logs_raw_scroll(|s| s.reset());
         }
         if target == TxTab::Raw {
@@ -642,6 +669,7 @@ impl TxDetailScreen {
                         self.logs_selected -= 1;
                         self.logs_field = 0;
                         self.logs_raw_line = 0;
+                        self.with_logs_decoded_scroll(|s| s.reset());
                     }
                 }
                 KeyCode::Down if log_count > 0 => {
@@ -650,15 +678,18 @@ impl TxDetailScreen {
                     }
                     self.logs_field = 0;
                     self.logs_raw_line = 0;
+                    self.with_logs_decoded_scroll(|s| s.reset());
                 }
                 KeyCode::Char('j') if log_count > 0 => {
                     self.logs_selected = (self.logs_selected + 1) % log_count;
                     self.logs_field = 0;
                     self.logs_raw_line = 0;
+                    self.with_logs_decoded_scroll(|s| s.reset());
                 }
                 KeyCode::Right | KeyCode::Enter if log_count > 0 => {
                     self.logs_focus = LogsFocus::Detail;
                     self.logs_field = 0;
+                    self.with_logs_decoded_scroll(|s| s.reset());
                 }
                 _ => {}
             },
@@ -686,8 +717,21 @@ impl TxDetailScreen {
                             self.with_logs_raw_scroll(|s| s.reset());
                         }
                     }
+                    KeyCode::PageUp => {
+                        self.logs_field = self.logs_field.saturating_sub(10);
+                    }
+                    KeyCode::PageDown => {
+                        self.logs_field = (self.logs_field + 10).min(fields.len() - 1);
+                    }
+                    KeyCode::Home => {
+                        self.logs_field = 0;
+                    }
+                    KeyCode::End => {
+                        self.logs_field = fields.len() - 1;
+                    }
                     KeyCode::Left | KeyCode::Backspace => {
                         self.logs_focus = LogsFocus::List;
+                        self.with_logs_decoded_scroll(|s| s.reset());
                     }
                     _ => {}
                 }
@@ -854,7 +898,7 @@ impl TxDetailScreen {
                     LogsFocus::Raw => log_raw_dump(log)
                         .lines()
                         .nth(self.logs_raw_line)
-                        .map(str::to_string),
+                        .map(raw_log_line_copy_value),
                 }
             }),
             TxTab::Raw => self
@@ -889,7 +933,7 @@ impl TxDetailScreen {
         if self.focus_layer == DetailFocusLayer::Content && pane_focused {
             detail_body_border_style(DetailFocusLayer::Content, &palette)
         } else {
-            Style::default().fg(palette.foreground)
+            detail_body_border_style(DetailFocusLayer::MainTabs, &palette)
         }
     }
 
@@ -1011,9 +1055,17 @@ impl TxDetailScreen {
                 })
             })
             .collect();
+        let n_decoded = decoded_lines.len() as u16;
+        let decoded_viewport = detail_split[0].height.saturating_sub(2);
+        self.with_logs_decoded_scroll(|s| {
+            s.set_dimensions(n_decoded, decoded_viewport);
+            s.scroll_row_into_view(self.logs_field as u16);
+        });
+        let decoded_offset = self.logs_decoded_scroll.get().offset();
         frame.render_widget(
             Paragraph::new(decoded_lines)
                 .wrap(Wrap { trim: false })
+                .scroll((decoded_offset, 0))
                 .block(
                     RatBlock::default()
                         .borders(Borders::ALL)
@@ -1344,6 +1396,15 @@ fn log_raw_dump(log: &DecodedLog) -> String {
     }
     s.push_str(&format!("data: 0x{}", hex::encode(&log.raw.data)));
     s
+}
+
+/// Clipboard payload for one line of [`log_raw_dump`]: the value after
+/// `label: ` only (plan/18 Slice F).
+fn raw_log_line_copy_value(line: &str) -> String {
+    line.trim()
+        .split_once(": ")
+        .map(|(_, rest)| rest.trim().to_string())
+        .unwrap_or_else(|| line.trim().to_string())
 }
 
 fn raw_rows_for_view(view: &TxView) -> Vec<OverviewRow> {
@@ -1952,6 +2013,147 @@ fn render_call_node(node: &CallNode, prefix: &str, is_last: bool, out: &mut Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ratatui::{Terminal, backend::TestBackend};
+
+    use crate::domain::{
+        Address, BlockNumber, Chain, LogEntry, Transaction, TxHash, TxStatus, TxType, Wei,
+    };
+
+    #[test]
+    fn raw_log_line_copy_value_strips_label_prefix() {
+        assert_eq!(raw_log_line_copy_value("topic0: 0x010203"), "0x010203");
+        assert_eq!(
+            raw_log_line_copy_value("contract: a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        );
+        assert_eq!(raw_log_line_copy_value("data: 0xabcd"), "0xabcd");
+    }
+
+    #[test]
+    fn logs_decoded_scroll_nonzero_when_field_cursor_past_viewport() {
+        let addr = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+        let raw = LogEntry {
+            address: addr,
+            topics: (0..26).map(|_| [7u8; 32]).collect(),
+            data: vec![0u8; 32],
+        };
+        let decoded = DecodedLog {
+            raw,
+            signature: None,
+        };
+        let tx = Transaction {
+            chain: Chain::Ethereum,
+            hash: TxHash::from_hex(
+                "0xabcd016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a7139401",
+            )
+            .unwrap(),
+            status: TxStatus::Success,
+            block_number: Some(BlockNumber::new(21_345_678)),
+            block_hash: None,
+            tx_index: Some(0),
+            from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            to: Some(addr),
+            value: Wei::new(0),
+            gas_price: Wei::new(0),
+            gas_used: Some(0),
+            gas_limit: 0,
+            nonce: 0,
+            tx_type: TxType::DynamicFee,
+            input: Vec::new(),
+            logs: Vec::new(),
+            raw_json: "{}".to_string(),
+        };
+        let view = TxView {
+            tx,
+            decoded_logs: vec![decoded],
+            decoded_method: None,
+            call_tree: LoadStatus::Unsupported,
+            asset_changes: LoadStatus::Unsupported,
+            state_diff: LoadStatus::Unsupported,
+        };
+        let (feed, sender) = tx_feed();
+        let mut screen = TxDetailScreen::loading(Chain::Ethereum, view.tx.hash, feed);
+        sender.updates_tx.send(view).unwrap();
+        screen.tick();
+        screen.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        screen.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        for _ in 0..20 {
+            screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let backend = TestBackend::new(120, 28);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| screen.render(frame, frame.area()))
+            .expect("draw");
+        assert!(
+            screen.logs_decoded_scroll_offset_for_test() > 0,
+            "decoded pane should scroll when the field cursor sits past the viewport"
+        );
+    }
+
+    #[test]
+    fn logs_raw_scroll_nonzero_when_line_cursor_past_viewport() {
+        let addr = Address::from_hex("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+        let raw = LogEntry {
+            address: addr,
+            topics: (0..22).map(|_| [3u8; 32]).collect(),
+            data: vec![5u8; 32],
+        };
+        let decoded = DecodedLog {
+            raw,
+            signature: None,
+        };
+        let tx = Transaction {
+            chain: Chain::Ethereum,
+            hash: TxHash::from_hex(
+                "0xabcd016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a7139401",
+            )
+            .unwrap(),
+            status: TxStatus::Success,
+            block_number: Some(BlockNumber::new(21_345_678)),
+            block_hash: None,
+            tx_index: Some(0),
+            from: Address::from_hex("0xd8da6bf26964af9d7eed9e03e53415d37aa96045").unwrap(),
+            to: Some(addr),
+            value: Wei::new(0),
+            gas_price: Wei::new(0),
+            gas_used: Some(0),
+            gas_limit: 0,
+            nonce: 0,
+            tx_type: TxType::DynamicFee,
+            input: Vec::new(),
+            logs: Vec::new(),
+            raw_json: "{}".to_string(),
+        };
+        let view = TxView {
+            tx,
+            decoded_logs: vec![decoded],
+            decoded_method: None,
+            call_tree: LoadStatus::Unsupported,
+            asset_changes: LoadStatus::Unsupported,
+            state_diff: LoadStatus::Unsupported,
+        };
+        let (feed, sender) = tx_feed();
+        let mut screen = TxDetailScreen::loading(Chain::Ethereum, view.tx.hash, feed);
+        sender.updates_tx.send(view).unwrap();
+        screen.tick();
+        screen.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        screen.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        screen.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        for _ in 0..16 {
+            screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let backend = TestBackend::new(120, 28);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| screen.render(frame, frame.area()))
+            .expect("draw");
+        assert!(
+            screen.logs_raw_scroll_offset_for_test() > 0,
+            "raw log pane should scroll when the line cursor sits past the viewport"
+        );
+    }
 
     #[test]
     fn previous_wraps_from_first_tab_to_last() {

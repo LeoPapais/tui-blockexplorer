@@ -108,7 +108,16 @@ fn logs_raw_pane_copies_selected_line_with_y() {
     screen.handle_key(key(KeyCode::Char('y')));
     let copied = screen.last_copied_value().expect("copy");
     assert!(
-        copied.contains("topic0"),
-        "expected raw line after first Down, got {copied:?}"
+        !copied.contains("topic0:"),
+        "raw log copy must be value-only (plan/18 Slice F), got {copied:?}"
+    );
+    assert!(
+        copied.starts_with("0x"),
+        "expected hex payload after label strip, got {copied:?}"
+    );
+    assert_eq!(
+        clipboard.last_copied().as_deref(),
+        Some(copied.as_str()),
+        "clipboard sink must match last_copied_value"
     );
 }
