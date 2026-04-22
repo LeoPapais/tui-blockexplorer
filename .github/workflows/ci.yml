@@ -53,25 +53,17 @@ jobs:
       # ENETUNREACH. `lo` starts DOWN — bring it up for wiremock on
       # 127.0.0.1.
       #
-      # `sudo` resets `PATH` (no rustup `cargo`). Forward PATH plus the
-      # job-level Rust env vars into the sandboxed shell.
+      # See `scripts/ci-run-no-network.sh`: sudo + unshare must forward
+      # PATH, HOME, RUSTUP_HOME, CARGO_HOME so rustup uses the runner's
+      # toolchain (not /root/.rustup, which would try to download over DNS).
       - name: cargo test --lib --bins  (no network)
-        run: >-
-          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
-          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
-          unshare -n -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
+        run: bash scripts/ci-run-no-network.sh cargo test --lib --bins --locked
 
       - name: cargo test --tests  (no network)
-        run: >-
-          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
-          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
-          unshare -n -- bash -c 'ip link set lo up && cargo test --test functional --locked'
+        run: bash scripts/ci-run-no-network.sh cargo test --test functional --locked
 
       - name: cargo test --test e2e  (no network)
-        run: >-
-          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
-          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
-          unshare -n -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
+        run: bash scripts/ci-run-no-network.sh cargo test --test e2e --locked
 
       - name: scripts/check-layers.sh
         run: bash scripts/check-layers.sh
