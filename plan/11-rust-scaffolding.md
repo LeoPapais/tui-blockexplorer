@@ -288,7 +288,8 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   7. `scripts/check-layers.sh` (see §9.7).
 - **Network disabled for test steps.** Runners are granted full
   network during build / fetch, but steps 3–5 run under
-  `sudo unshare -n -- bash -c 'ip link set lo up && cargo test …'`.
+  `sudo env PATH=$PATH RUSTFLAGS=… unshare -n -- bash -c 'ip link set lo up && cargo test …'`
+  (plain `sudo` drops rustup from `PATH`, so `cargo` must be forwarded).
   `sudo unshare -n` creates a network namespace only (no `-r` user
   namespace remap — GitHub-hosted runners deny `uid_map` writes for
   `unshare -rn`). There is no route to the internet, and `lo` starts

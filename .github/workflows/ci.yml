@@ -52,14 +52,26 @@ jobs:
       # External routes are absent; accidental RPC calls fail with
       # ENETUNREACH. `lo` starts DOWN — bring it up for wiremock on
       # 127.0.0.1.
+      #
+      # `sudo` resets `PATH` (no rustup `cargo`). Forward PATH plus the
+      # job-level Rust env vars into the sandboxed shell.
       - name: cargo test --lib --bins  (no network)
-        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
+        run: >-
+          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
+          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
+          unshare -n -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
 
       - name: cargo test --tests  (no network)
-        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --test functional --locked'
+        run: >-
+          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
+          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
+          unshare -n -- bash -c 'ip link set lo up && cargo test --test functional --locked'
 
       - name: cargo test --test e2e  (no network)
-        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
+        run: >-
+          sudo env "PATH=$PATH" "RUSTFLAGS=$RUSTFLAGS" "RUST_BACKTRACE=$RUST_BACKTRACE"
+          "CARGO_TERM_COLOR=$CARGO_TERM_COLOR"
+          unshare -n -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
 
       - name: scripts/check-layers.sh
         run: bash scripts/check-layers.sh
