@@ -247,7 +247,9 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   - `[bans]` — `multiple-versions = "warn"`; intentionally left as a
     warning because the dep graph already contains legitimate duplicate
     versions (e.g. `getrandom` 0.2/0.3/0.4) that we cannot force-unify.
-- `cargo deny check` runs in CI on every push and PR.
+- `cargo deny check` runs in CI on every push and PR via
+  `taiki-e/install-action` with a pinned `cargo-deny` release so the
+  advisory database (including CVSS 4.0 metadata) keeps parsing.
 
 ### 9.5 Pre-commit hook
 
@@ -286,10 +288,12 @@ rules in `.cursor/rules/rust-style.mdc`, `.cursor/rules/testing.mdc` and
   7. `scripts/check-layers.sh` (see §9.7).
 - **Network disabled for test steps.** Runners are granted full
   network during build / fetch, but steps 3–5 run under
-  `unshare -rn -- bash -c 'ip link set lo up && cargo test …'`.
-  `unshare -rn` drops the runner into a fresh network namespace: there
-  is no route to the internet, and `lo` starts **DOWN** until
-  `ip link set lo up`, which keeps `wiremock` on `127.0.0.1` working.
+  `sudo unshare -n -- bash -c 'ip link set lo up && cargo test …'`.
+  `sudo unshare -n` creates a network namespace only (no `-r` user
+  namespace remap — GitHub-hosted runners deny `uid_map` writes for
+  `unshare -rn`). There is no route to the internet, and `lo` starts
+  **DOWN** until `ip link set lo up`, which keeps `wiremock` on
+  `127.0.0.1` working.
   Any accidental real HTTP call to a non-loopback address fails with
   `ENETUNREACH`, which is the loud failure mode `.cursor/rules/testing.mdc`
   requires. When

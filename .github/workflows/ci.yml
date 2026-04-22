@@ -46,24 +46,20 @@ jobs:
 
       # --- Tests run with the network namespace torn down. -------
       #
-      # `unshare -rn` drops the step into a fresh network namespace
-      # with no interfaces, so any accidental `reqwest::Client::new`
-      # / real RPC call fails instantly with ENETUNREACH. This makes
-      # the testing.mdc contract "no network in tests" a hard,
-      # enforceable property of CI.
-      #
-      # Adapters that talk HTTP use `wiremock` on 127.0.0.1. A fresh
-      # network namespace from `unshare -n` creates `lo` but leaves it
-      # **DOWN**, so connections to localhost fail until we bring it up
-      # (`ip link set lo up`).
+      # `sudo unshare -n` creates a **network** namespace only (no `-r`
+      # user-namespace remap). GitHub-hosted runners reject `unshare -rn`
+      # with `write failed /proc/self/uid_map: Operation not permitted`.
+      # External routes are absent; accidental RPC calls fail with
+      # ENETUNREACH. `lo` starts DOWN — bring it up for wiremock on
+      # 127.0.0.1.
       - name: cargo test --lib --bins  (no network)
-        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
+        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --lib --bins --locked'
 
       - name: cargo test --tests  (no network)
-        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --test functional --locked'
+        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --test functional --locked'
 
       - name: cargo test --test e2e  (no network)
-        run: unshare -rn -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
+        run: sudo unshare -n -- bash -c 'ip link set lo up && cargo test --test e2e --locked'
 
       - name: scripts/check-layers.sh
         run: bash scripts/check-layers.sh
@@ -76,8 +72,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+      # EmbarkStudios/cargo-deny-action bundles an older cargo-deny that
+      # cannot parse RustSec advisories using CVSS 4.0. Pin a current
+      # release so advisory-db loads cleanly.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
         with:
-          command: check
-          arguments: --all-features
+          tool: cargo-deny@0.19.4
+      - name: cargo deny check
+        run: cargo deny --all-features check
